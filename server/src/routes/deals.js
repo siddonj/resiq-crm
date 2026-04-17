@@ -39,4 +39,27 @@ router.patch('/:id/stage', auth, async (req, res) => {
   }
 });
 
+router.put('/:id', auth, async (req, res) => {
+  const { title, contact_id, stage, value, service_line, close_date, notes } = req.body;
+  try {
+    const result = await pool.query(
+      'UPDATE deals SET title=$1, contact_id=$2, stage=$3, value=$4, service_line=$5, close_date=$6, notes=$7 WHERE id=$8 AND user_id=$9 RETURNING *',
+      [title, contact_id, stage || 'lead', value, service_line || null, close_date || null, notes || null, req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM deals WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;
