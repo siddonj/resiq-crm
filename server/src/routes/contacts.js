@@ -26,6 +26,20 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
+router.put('/:id', auth, async (req, res) => {
+  const { name, email, phone, company, type, service_line, notes } = req.body;
+  try {
+    const result = await pool.query(
+      'UPDATE contacts SET name=$1, email=$2, phone=$3, company=$4, type=$5, service_line=$6, notes=$7 WHERE id=$8 AND user_id=$9 RETURNING *',
+      [name, email, phone, company, type || 'prospect', service_line || null, notes, req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.delete('/:id', auth, async (req, res) => {
   try {
     await pool.query('DELETE FROM contacts WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);

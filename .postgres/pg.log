@@ -28,3 +28,19 @@
 2026-04-17 22:53:11.702 UTC [31889] FATAL:  lock file "postmaster.pid" already exists
 2026-04-17 22:53:11.702 UTC [31889] HINT:  Is another postmaster (PID 29358) running in data directory "/workspaces/resiq-crm/.postgres/data"?
 2026-04-17 22:54:22.948 UTC [29359] LOG:  checkpoint complete: wrote 997 buffers (6.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=99.573 s, sync=0.029 s, total=99.611 s; sync files=338, longest=0.009 s, average=0.001 s; distance=4725 kB, estimate=4725 kB; lsn=0/198CD88, redo lsn=0/198CD50
+2026-04-17 23:05:35.604 UTC [37422] ERROR:  permission denied for table users
+2026-04-17 23:05:35.604 UTC [37422] STATEMENT:  SELECT id FROM users WHERE email = $1
+2026-04-17 23:05:49.680 UTC [37616] ERROR:  permission denied for table users
+2026-04-17 23:05:49.680 UTC [37616] STATEMENT:  SELECT id FROM users WHERE email = $1
+2026-04-17 23:08:38.593 UTC [44661] ERROR:  permission denied for table users
+2026-04-17 23:08:38.593 UTC [44661] STATEMENT:  SELECT id FROM users WHERE email = $1
+2026-04-17 23:09:12.638 UTC [51724] ERROR:  permission denied for table users
+2026-04-17 23:09:12.638 UTC [51724] STATEMENT:  SELECT id FROM users WHERE email = $1
+2026-04-17 23:09:17.845 UTC [52954] ERROR:  permission denied for table users
+2026-04-17 23:09:17.845 UTC [52954] STATEMENT:  SELECT id FROM users WHERE email = $1
+2026-04-17 23:09:31.682 UTC [55451] ERROR:  permission denied for table users
+2026-04-17 23:09:31.682 UTC [55451] STATEMENT:  SELECT id FROM users WHERE email = $1
+2026-04-17 23:12:44.304 UTC [29359] LOG:  checkpoint starting: time
+2026-04-17 23:12:46.150 UTC [29359] LOG:  checkpoint complete: wrote 19 buffers (0.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=1.808 s, sync=0.006 s, total=1.847 s; sync files=15, longest=0.004 s, average=0.001 s; distance=17 kB, estimate=4254 kB; lsn=0/1991330, redo lsn=0/19912F8
+2026-04-17 23:17:44.251 UTC [29359] LOG:  checkpoint starting: time
+2026-04-17 23:17:44.782 UTC [29359] LOG:  checkpoint complete: wrote 6 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.503 s, sync=0.003 s, total=0.532 s; sync files=5, longest=0.002 s, average=0.001 s; distance=1 kB, estimate=3829 kB; lsn=0/1991810, redo lsn=0/19917D8
