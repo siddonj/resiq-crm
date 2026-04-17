@@ -24,3 +24,7 @@
 2026-04-17 22:52:01.161 UTC [31176] LOG:  invalid length of startup packet
 2026-04-17 22:52:01.176 UTC [31177] LOG:  invalid length of startup packet
 2026-04-17 22:52:01.194 UTC [31178] LOG:  invalid length of startup packet
+2026-04-17 22:52:43.338 UTC [29359] LOG:  checkpoint starting: time
+2026-04-17 22:53:11.702 UTC [31889] FATAL:  lock file "postmaster.pid" already exists
+2026-04-17 22:53:11.702 UTC [31889] HINT:  Is another postmaster (PID 29358) running in data directory "/workspaces/resiq-crm/.postgres/data"?
+2026-04-17 22:54:22.948 UTC [29359] LOG:  checkpoint complete: wrote 997 buffers (6.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=99.573 s, sync=0.029 s, total=99.611 s; sync files=338, longest=0.009 s, average=0.001 s; distance=4725 kB, estimate=4725 kB; lsn=0/198CD88, redo lsn=0/198CD50
