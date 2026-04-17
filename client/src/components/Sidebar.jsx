@@ -33,10 +33,7 @@ export default function Sidebar() {
       </nav>
       <div className="border-t border-white/10 pt-4 mt-4">
         <p className="text-xs text-gray-400 mb-2">{user?.name}</p>
-        <button
-          onClick={logout}
-          className="text-xs text-gray-400 hover:text-white transition"
-        >
+        <button onClick={logout} className="text-xs text-gray-400 hover:text-white transition">
           Sign out
         </button>
       </div>

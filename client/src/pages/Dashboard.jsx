@@ -1,8 +1,8 @@
 import { Routes, Route } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
+import Overview from './Overview'
 import Contacts from './Contacts'
 import Pipeline from './Pipeline'
-import Overview from './Overview'
 
 export default function Dashboard() {
   return (
