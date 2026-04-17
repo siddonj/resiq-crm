@@ -1,0 +1,26 @@
+2026-04-17 22:47:33.191 UTC [29282] LOG:  starting PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+2026-04-17 22:47:33.191 UTC [29282] LOG:  could not bind IPv6 address "::1": Address already in use
+2026-04-17 22:47:33.191 UTC [29282] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-04-17 22:47:33.191 UTC [29282] LOG:  could not bind IPv4 address "127.0.0.1": Address already in use
+2026-04-17 22:47:33.191 UTC [29282] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-04-17 22:47:33.191 UTC [29282] WARNING:  could not create listen socket for "localhost"
+2026-04-17 22:47:33.191 UTC [29282] FATAL:  could not create any TCP/IP sockets
+2026-04-17 22:47:33.193 UTC [29282] LOG:  database system is shut down
+2026-04-17 22:47:43.236 UTC [29358] LOG:  starting PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+2026-04-17 22:47:43.237 UTC [29358] LOG:  listening on IPv6 address "::1", port 5433
+2026-04-17 22:47:43.237 UTC [29358] LOG:  listening on IPv4 address "127.0.0.1", port 5433
+2026-04-17 22:47:43.239 UTC [29358] LOG:  listening on Unix socket "/workspaces/resiq-crm/.postgres/run/.s.PGSQL.5433"
+2026-04-17 22:47:43.244 UTC [29361] LOG:  database system was shut down at 2026-04-17 22:47:26 UTC
+2026-04-17 22:47:43.249 UTC [29358] LOG:  database system is ready to accept connections
+2026-04-17 22:47:53.675 UTC [29444] LOG:  invalid length of startup packet
+2026-04-17 22:47:53.688 UTC [29445] LOG:  invalid length of startup packet
+2026-04-17 22:47:53.701 UTC [29446] LOG:  invalid length of startup packet
+2026-04-17 22:47:53.714 UTC [29447] LOG:  invalid length of startup packet
+2026-04-17 22:51:51.603 UTC [31098] LOG:  invalid length of startup packet
+2026-04-17 22:51:51.617 UTC [31099] LOG:  invalid length of startup packet
+2026-04-17 22:51:51.631 UTC [31100] LOG:  invalid length of startup packet
+2026-04-17 22:51:51.644 UTC [31101] LOG:  invalid length of startup packet
+2026-04-17 22:52:01.147 UTC [31175] LOG:  invalid length of startup packet
+2026-04-17 22:52:01.161 UTC [31176] LOG:  invalid length of startup packet
+2026-04-17 22:52:01.176 UTC [31177] LOG:  invalid length of startup packet
+2026-04-17 22:52:01.194 UTC [31178] LOG:  invalid length of startup packet

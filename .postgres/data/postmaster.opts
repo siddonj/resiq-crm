@@ -1,0 +1,1 @@
+/usr/lib/postgresql/16/bin/postgres "-D" "/workspaces/resiq-crm/.postgres/data" "-p" "5433" "-k" "/workspaces/resiq-crm/.postgres/run"
