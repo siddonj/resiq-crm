@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import ShareModal from '../components/ShareModal'
+import ActivityLog from '../components/ActivityLog'
 
 const STAGES = [
   { key: 'lead', label: 'Lead' },
@@ -35,14 +36,35 @@ export default function Pipeline() {
   const [formError, setFormError] = useState('')
   const [draggedDeal, setDraggedDeal] = useState(null)
   const [sharingDeal, setSharingDeal] = useState(null)
+  const [activityDeal, setActivityDeal] = useState(null)
+  const [search, setSearch] = useState('')
+  const [filterServiceLine, setFilterServiceLine] = useState('')
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
 
   const fetchDeals = () => {
-    axios.get('/api/deals', authHeaders)
+    const params = {}
+    if (search) params.search = search
+    if (filterServiceLine) params.service_line = filterServiceLine
+    axios.get('/api/deals', { ...authHeaders, params })
       .then(r => setDeals(r.data))
       .catch(console.error)
       .finally(() => setLoading(false))
+  }
+
+  const handleExport = async () => {
+    const params = {}
+    if (search) params.search = search
+    if (filterServiceLine) params.service_line = filterServiceLine
+    const res = await axios.get('/api/deals/export', { ...authHeaders, params, responseType: 'blob' })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'deals.csv'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
   }
 
   const fetchContacts = () => {
@@ -54,9 +76,10 @@ export default function Pipeline() {
   useEffect(() => {
     fetchDeals()
     fetchContacts()
-  }, [token])
+  }, [token, search, filterServiceLine])
 
   const dealsByStage = (stage) => deals.filter(d => d.stage === stage)
+
 
   const openModal = () => { setForm(EMPTY_FORM); setFormError(''); setEditingId(null); setShowModal(true) }
   const openEdit = (d) => {
@@ -142,14 +165,40 @@ export default function Pipeline() {
 
   return (
     <div className="p-8">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="font-syne text-2xl font-bold text-navy">Pipeline</h2>
-        <button
-          onClick={openModal}
-          className="bg-teal text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
+        <div className="flex gap-2">
+          <button
+            onClick={handleExport}
+            className="border border-gray-200 text-gray-600 text-sm font-medium px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Export CSV
+          </button>
+          <button
+            onClick={openModal}
+            className="bg-teal text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
+          >
+            + Add Deal
+          </button>
+        </div>
+      </div>
+
+      <div className="flex gap-3 mb-6">
+        <input
+          type="text"
+          placeholder="Search deals..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="flex-1 max-w-xs border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+        />
+        <select
+          value={filterServiceLine}
+          onChange={e => setFilterServiceLine(e.target.value)}
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal"
         >
-          + Add Deal
-        </button>
+          <option value="">All Service Lines</option>
+          {SERVICE_LINES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
       </div>
 
       {loading ? (
@@ -206,6 +255,12 @@ export default function Pipeline() {
                           <p className="text-gray-400 text-xs mt-1">{new Date(deal.close_date).toLocaleDateString()}</p>
                         )}
                         <div className="mt-2 flex items-center gap-3">
+                          <button
+                            onClick={() => setActivityDeal(deal)}
+                            className="text-xs text-gray-400 hover:text-teal transition-colors"
+                          >
+                            Log
+                          </button>
                           {deal.access_permission === 'edit' && (
                             <button
                               onClick={() => openEdit(deal)}
@@ -233,6 +288,21 @@ export default function Pipeline() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Activity Modal */}
+      {activityDeal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="font-syne text-lg font-bold text-navy">Activity — {activityDeal.title}</h3>
+              <button onClick={() => setActivityDeal(null)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+            </div>
+            <div className="px-6 py-5">
+              <ActivityLog dealId={activityDeal.id} />
+            </div>
+          </div>
         </div>
       )}
 

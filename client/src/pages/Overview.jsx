@@ -3,6 +3,7 @@ import ContactsSummary from '../components/dashboard/ContactsSummary'
 import PipelineSummary from '../components/dashboard/PipelineSummary'
 import EmailMetrics from '../components/dashboard/EmailMetrics'
 import WorkflowMetrics from '../components/dashboard/WorkflowMetrics'
+import DueReminders from '../components/dashboard/DueReminders'
 
 export default function Overview() {
   const [lastUpdated, setLastUpdated] = useState(new Date())
@@ -45,6 +46,8 @@ export default function Overview() {
       </div>
 
       <div className="space-y-8">
+        <DueReminders />
+
         {/* Contact Management Section */}
         <div className="bg-white rounded-xl shadow-sm p-6">
           <ContactsSummary />

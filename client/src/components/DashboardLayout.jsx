@@ -6,6 +6,7 @@ const navItems = [
   { to: '/contacts', label: 'Contacts', icon: '👥' },
   { to: '/pipeline', label: 'Pipeline', icon: '🔁' },
   { to: '/workflows', label: 'Workflows', icon: '⚡' },
+  { to: '/reminders', label: 'Reminders', icon: '🔔' },
   { to: '/settings', label: 'Settings', icon: '⚙️' },
 ]
 

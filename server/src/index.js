@@ -12,6 +12,8 @@ const usersRoutes = require('./routes/users');
 const teamsRoutes = require('./routes/teams');
 const auditLogsRoutes = require('./routes/auditLogs');
 const sharingRoutes = require('./routes/sharing');
+const remindersRoutes = require('./routes/reminders');
+const activitiesRoutes = require('./routes/activities');
 const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
 const WorkflowEngine = require('./services/workflowEngine');
@@ -37,6 +39,8 @@ app.use('/api/users', usersRoutes);
 app.use('/api/teams', teamsRoutes);
 app.use('/api/audit-logs', auditLogsRoutes);
 app.use('/api/sharing', sharingRoutes);
+app.use('/api/reminders', remindersRoutes);
+app.use('/api/activities', activitiesRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 

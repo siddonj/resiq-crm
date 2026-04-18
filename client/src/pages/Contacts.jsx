@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import EmailTimeline from '../components/EmailTimeline'
 import ContactTags from '../components/ContactTags'
 import ShareModal from '../components/ShareModal'
+import ActivityLog from '../components/ActivityLog'
 
 const CONTACT_TYPES = ['prospect', 'partner', 'vendor']
 const SERVICE_LINES = [
@@ -29,17 +30,40 @@ export default function Contacts() {
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [sharingContact, setSharingContact] = useState(null)
+  const [search, setSearch] = useState('')
+  const [filterType, setFilterType] = useState('')
+  const [filterServiceLine, setFilterServiceLine] = useState('')
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
 
   const fetchContacts = () => {
-    axios.get('/api/contacts', authHeaders)
+    const params = {}
+    if (search) params.search = search
+    if (filterType) params.type = filterType
+    if (filterServiceLine) params.service_line = filterServiceLine
+    axios.get('/api/contacts', { ...authHeaders, params })
       .then(r => setContacts(r.data))
       .catch(console.error)
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { fetchContacts() }, [token])
+  useEffect(() => { fetchContacts() }, [token, search, filterType, filterServiceLine])
+
+  const handleExport = async () => {
+    const params = {}
+    if (search) params.search = search
+    if (filterType) params.type = filterType
+    if (filterServiceLine) params.service_line = filterServiceLine
+    const res = await axios.get('/api/contacts/export', { ...authHeaders, params, responseType: 'blob' })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'contacts.csv'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
 
   const openModal = () => { setForm(EMPTY_FORM); setFormError(''); setEditingId(null); setShowModal(true) }
   const openEdit = (c) => {
@@ -89,14 +113,48 @@ export default function Contacts() {
 
   return (
     <div className="p-8">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <h2 className="font-syne text-2xl font-bold text-navy">Contacts</h2>
-        <button
-          onClick={openModal}
-          className="bg-teal text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
+        <div className="flex gap-2">
+          <button
+            onClick={handleExport}
+            className="border border-gray-200 text-gray-600 text-sm font-medium px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Export CSV
+          </button>
+          <button
+            onClick={openModal}
+            className="bg-teal text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
+          >
+            + Add Contact
+          </button>
+        </div>
+      </div>
+
+      <div className="flex gap-3 mb-6">
+        <input
+          type="text"
+          placeholder="Search name, email, company..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+        />
+        <select
+          value={filterType}
+          onChange={e => setFilterType(e.target.value)}
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal"
         >
-          + Add Contact
-        </button>
+          <option value="">All Types</option>
+          {CONTACT_TYPES.map(t => <option key={t} value={t} className="capitalize">{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+        </select>
+        <select
+          value={filterServiceLine}
+          onChange={e => setFilterServiceLine(e.target.value)}
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal"
+        >
+          <option value="">All Service Lines</option>
+          {SERVICE_LINES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
       </div>
 
       {loading ? (
@@ -201,6 +259,10 @@ export default function Contacts() {
               <div className="border-t border-gray-100 pt-4">
                 <h4 className="font-semibold text-navy mb-3">Tags</h4>
                 <ContactTags contactId={selectedContact.id} onTagsUpdated={fetchContacts} />
+              </div>
+
+              <div className="border-t border-gray-100 pt-4">
+                <ActivityLog contactId={selectedContact.id} />
               </div>
 
               <div className="border-t border-gray-100 pt-4">

@@ -10,6 +10,7 @@ import Settings from './pages/Settings'
 import Users from './pages/Users'
 import Teams from './pages/Teams'
 import AuditLogs from './pages/AuditLogs'
+import Reminders from './pages/Reminders'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -30,6 +31,7 @@ function AppRoutes() {
         <Route path="teams" element={<Teams />} />
         <Route path="audit-logs" element={<AuditLogs />} />
         <Route path="users" element={<Users />} />
+        <Route path="reminders" element={<Reminders />} />
       </Route>
     </Routes>
   )
