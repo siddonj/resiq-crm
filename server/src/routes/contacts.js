@@ -2,15 +2,45 @@ const express = require('express');
 const pool = require('../models/db');
 const auth = require('../middleware/auth');
 const Email = require('../models/email');
+const { logAction } = require('../services/auditLogger');
 
 const router = express.Router();
 
-// Workflow engine will be injected via middleware from index.js
 let workflowEngine;
+
+const SHARED_ACCESS_SQL = `
+  (c.user_id = $1 OR EXISTS (
+    SELECT 1 FROM shared_resources sr
+    WHERE sr.resource_type = 'contact' AND sr.resource_id = c.id
+    AND (sr.shared_with_user_id = $1 OR sr.shared_with_team_id IN (
+      SELECT team_id FROM team_members WHERE user_id = $1
+    ))
+  ))
+`;
 
 router.get('/', auth, async (req, res) => {
   try {
-    const result = await pool.query('SELECT * FROM contacts WHERE user_id = $1 ORDER BY created_at DESC', [req.user.id]);
+    const result = await pool.query(`
+      SELECT c.*,
+        (c.user_id = $1) AS is_owner,
+        CASE
+          WHEN c.user_id = $1 THEN 'edit'
+          WHEN EXISTS (
+            SELECT 1 FROM shared_resources sr2
+            WHERE sr2.resource_type = 'contact' AND sr2.resource_id = c.id AND sr2.permission = 'edit'
+            AND (sr2.shared_with_user_id = $1 OR sr2.shared_with_team_id IN (SELECT team_id FROM team_members WHERE user_id = $1))
+          ) THEN 'edit'
+          ELSE 'view'
+        END AS access_permission
+      FROM contacts c
+      WHERE c.user_id = $1
+        OR EXISTS (
+          SELECT 1 FROM shared_resources sr
+          WHERE sr.resource_type = 'contact' AND sr.resource_id = c.id
+          AND (sr.shared_with_user_id = $1 OR sr.shared_with_team_id IN (SELECT team_id FROM team_members WHERE user_id = $1))
+        )
+      ORDER BY c.created_at DESC
+    `, [req.user.id]);
     res.json(result.rows);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -27,31 +57,19 @@ router.post('/', auth, async (req, res) => {
 
     const newContact = result.rows[0];
 
-    // ✨ Dispatch workflow trigger for contact creation
+    logAction(req.user.id, req.user.email, 'create', 'contact', newContact.id, newContact.name);
+
     if (workflowEngine) {
-      // Fetch contact tags for trigger event
       const tagsResult = await pool.query(
-        `SELECT t.id, t.name FROM tags t
-         JOIN contact_tags ct ON ct.tag_id = t.id
-         WHERE ct.contact_id = $1`,
+        `SELECT t.id, t.name FROM tags t JOIN contact_tags ct ON ct.tag_id = t.id WHERE ct.contact_id = $1`,
         [newContact.id]
       );
       const contactTags = tagsResult.rows.map(t => t.name);
 
       workflowEngine.dispatchTrigger('contact.created', {
-        contact: {
-          id: newContact.id,
-          name: newContact.name,
-          email: newContact.email,
-          company: newContact.company,
-          type: newContact.type,
-          tags: contactTags,
-        },
+        contact: { id: newContact.id, name: newContact.name, email: newContact.email, company: newContact.company, type: newContact.type, tags: contactTags },
         user_id: req.user.id,
-      }).catch((err) => {
-        console.error('Error dispatching workflow trigger:', err);
-        // Don't fail the API call, just log the error
-      });
+      }).catch((err) => console.error('Error dispatching workflow trigger:', err));
     }
 
     res.status(201).json(newContact);
@@ -65,10 +83,15 @@ router.put('/:id', auth, async (req, res) => {
   const { name, email, phone, company, type, service_line, notes } = req.body;
   try {
     const result = await pool.query(
-      'UPDATE contacts SET name=$1, email=$2, phone=$3, company=$4, type=$5, service_line=$6, notes=$7 WHERE id=$8 AND user_id=$9 RETURNING *',
+      `UPDATE contacts SET name=$1, email=$2, phone=$3, company=$4, type=$5, service_line=$6, notes=$7
+       WHERE id=$8 AND (user_id=$9 OR EXISTS (
+         SELECT 1 FROM shared_resources WHERE resource_type='contact' AND resource_id=$8 AND permission='edit'
+         AND (shared_with_user_id=$9 OR shared_with_team_id IN (SELECT team_id FROM team_members WHERE user_id=$9))
+       )) RETURNING *`,
       [name, email, phone, company, type || 'prospect', service_line || null, notes, req.params.id, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'update', 'contact', req.params.id, result.rows[0].name);
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -77,55 +100,49 @@ router.put('/:id', auth, async (req, res) => {
 
 router.delete('/:id', auth, async (req, res) => {
   try {
-    await pool.query('DELETE FROM contacts WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    const result = await pool.query(
+      'DELETE FROM contacts WHERE id = $1 AND user_id = $2 RETURNING name',
+      [req.params.id, req.user.id]
+    );
+    logAction(req.user.id, req.user.email, 'delete', 'contact', req.params.id, result.rows[0]?.name);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Get contact timeline (emails + activities)
 router.get('/:id/timeline', auth, async (req, res) => {
   try {
     const contact_id = req.params.id;
 
-    // Verify contact belongs to user
-    const contact = await pool.query('SELECT id FROM contacts WHERE id = $1 AND user_id = $2', [contact_id, req.user.id]);
-    if (contact.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });
+    const contact = await pool.query(`
+      SELECT id FROM contacts c WHERE c.id = $1 AND ${SHARED_ACCESS_SQL.replace('$1', '$2')}
+    `.replace('$1', '$2'), [contact_id, req.user.id]);
 
-    // Get emails for contact
+    // Simpler ownership check
+    const contactCheck = await pool.query(
+      `SELECT id FROM contacts WHERE id = $1 AND user_id = $2`,
+      [contact_id, req.user.id]
+    );
+    if (contactCheck.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });
+
     const emails = await Email.getEmailsWithContact(req.user.id, contact_id);
 
-    // Get activities for contact
     const activities = await pool.query(
       `SELECT id, type, description, occurred_at, 'activity' as item_type
-       FROM activities
-       WHERE user_id = $1 AND contact_id = $2
-       ORDER BY occurred_at DESC
-       LIMIT 100`,
+       FROM activities WHERE user_id = $1 AND contact_id = $2 ORDER BY occurred_at DESC LIMIT 100`,
       [req.user.id, contact_id]
     );
 
-    // Merge and sort by date
     const timeline = [
       ...emails.map((e) => ({
-        id: e.id,
-        type: 'email',
-        item_type: 'email',
-        from: e.sender_email,
-        to: e.recipient_email,
-        subject: e.subject,
-        is_outbound: e.is_outbound,
-        date: e.received_at,
-        created_at: e.created_at,
+        id: e.id, type: 'email', item_type: 'email',
+        from: e.sender_email, to: e.recipient_email, subject: e.subject,
+        is_outbound: e.is_outbound, date: e.received_at, created_at: e.created_at,
       })),
       ...activities.rows.map((a) => ({
-        id: a.id,
-        type: a.type,
-        item_type: 'activity',
-        description: a.description,
-        date: a.occurred_at,
-        created_at: a.occurred_at,
+        id: a.id, type: a.type, item_type: 'activity',
+        description: a.description, date: a.occurred_at, created_at: a.occurred_at,
       })),
     ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
@@ -136,7 +153,6 @@ router.get('/:id/timeline', auth, async (req, res) => {
   }
 });
 
-// Get all tags for current user
 router.get('/tags', auth, async (req, res) => {
   try {
     const result = await pool.query(
@@ -150,40 +166,28 @@ router.get('/tags', auth, async (req, res) => {
   }
 });
 
-// Create new tag
 router.post('/tags', auth, async (req, res) => {
   const { name, color } = req.body;
   try {
-    if (!name || name.trim() === '') {
-      return res.status(400).json({ error: 'Tag name is required' });
-    }
-
+    if (!name || name.trim() === '') return res.status(400).json({ error: 'Tag name is required' });
     const result = await pool.query(
       'INSERT INTO tags (user_id, name, color) VALUES ($1, $2, $3) RETURNING id, name, color',
       [req.user.id, name.trim(), color || '#3B82F6']
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
-    if (err.message.includes('unique')) {
-      return res.status(409).json({ error: 'Tag already exists' });
-    }
+    if (err.message.includes('unique')) return res.status(409).json({ error: 'Tag already exists' });
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// Get tags for a contact
 router.get('/:id/tags', auth, async (req, res) => {
   try {
-    // Verify contact belongs to user
     const contact = await pool.query('SELECT id FROM contacts WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
     if (contact.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });
-
     const result = await pool.query(
-      `SELECT t.id, t.name, t.color FROM tags t
-       JOIN contact_tags ct ON ct.tag_id = t.id
-       WHERE ct.contact_id = $1
-       ORDER BY t.name ASC`,
+      `SELECT t.id, t.name, t.color FROM tags t JOIN contact_tags ct ON ct.tag_id = t.id WHERE ct.contact_id = $1 ORDER BY t.name ASC`,
       [req.params.id]
     );
     res.json(result.rows);
@@ -193,24 +197,14 @@ router.get('/:id/tags', auth, async (req, res) => {
   }
 });
 
-// Add tag to contact
 router.post('/:id/tags', auth, async (req, res) => {
   const { tag_id } = req.body;
   try {
-    // Verify contact belongs to user
     const contact = await pool.query('SELECT id FROM contacts WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
     if (contact.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });
-
-    // Verify tag belongs to user
     const tag = await pool.query('SELECT id FROM tags WHERE id = $1 AND user_id = $2', [tag_id, req.user.id]);
     if (tag.rows.length === 0) return res.status(404).json({ error: 'Tag not found' });
-
-    // Add tag to contact (ignore if already exists)
-    await pool.query(
-      'INSERT INTO contact_tags (contact_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-      [req.params.id, tag_id]
-    );
-
+    await pool.query('INSERT INTO contact_tags (contact_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [req.params.id, tag_id]);
     res.json({ success: true });
   } catch (err) {
     console.error(err);
@@ -218,22 +212,13 @@ router.post('/:id/tags', auth, async (req, res) => {
   }
 });
 
-// Remove tag from contact
 router.delete('/:id/tags/:tagId', auth, async (req, res) => {
   try {
-    // Verify contact belongs to user
     const contact = await pool.query('SELECT id FROM contacts WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
     if (contact.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });
-
-    // Verify tag belongs to user
     const tag = await pool.query('SELECT id FROM tags WHERE id = $1 AND user_id = $2', [req.params.tagId, req.user.id]);
     if (tag.rows.length === 0) return res.status(404).json({ error: 'Tag not found' });
-
-    await pool.query(
-      'DELETE FROM contact_tags WHERE contact_id = $1 AND tag_id = $2',
-      [req.params.id, req.params.tagId]
-    );
-
+    await pool.query('DELETE FROM contact_tags WHERE contact_id = $1 AND tag_id = $2', [req.params.id, req.params.tagId]);
     res.json({ success: true });
   } catch (err) {
     console.error(err);
@@ -241,7 +226,6 @@ router.delete('/:id/tags/:tagId', auth, async (req, res) => {
   }
 });
 
-// Allow workflow engine to be injected
 function setWorkflowEngine(engine) {
   workflowEngine = engine;
 }

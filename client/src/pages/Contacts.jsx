@@ -3,6 +3,7 @@ import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import EmailTimeline from '../components/EmailTimeline'
 import ContactTags from '../components/ContactTags'
+import ShareModal from '../components/ShareModal'
 
 const CONTACT_TYPES = ['prospect', 'partner', 'vendor']
 const SERVICE_LINES = [
@@ -27,6 +28,7 @@ export default function Contacts() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  const [sharingContact, setSharingContact] = useState(null)
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
 
@@ -125,24 +127,39 @@ export default function Contacts() {
                   </td>
                   <td className="px-4 py-3 text-gray-600">{SERVICE_LINES.find(s => s.value === c.service_line)?.label || '—'}</td>
                   <td className="px-4 py-3 text-right space-x-3">
+                    {!c.is_owner && (
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 mr-1">Shared</span>
+                    )}
                     <button
                       onClick={() => openDetail(c)}
                       className="text-xs text-gray-400 hover:text-teal transition-colors"
                     >
                       View
                     </button>
-                    <button
-                      onClick={() => openEdit(c)}
-                      className="text-xs text-gray-400 hover:text-teal transition-colors"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(c.id)}
-                      className="text-xs text-gray-400 hover:text-red-500 transition-colors"
-                    >
-                      Delete
-                    </button>
+                    {c.access_permission === 'edit' && (
+                      <button
+                        onClick={() => openEdit(c)}
+                        className="text-xs text-gray-400 hover:text-teal transition-colors"
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {c.is_owner && (
+                      <>
+                        <button
+                          onClick={() => setSharingContact(c)}
+                          className="text-xs text-gray-400 hover:text-teal transition-colors"
+                        >
+                          Share
+                        </button>
+                        <button
+                          onClick={() => handleDelete(c.id)}
+                          className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -200,6 +217,16 @@ export default function Contacts() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Share Modal */}
+      {sharingContact && (
+        <ShareModal
+          resourceType="contact"
+          resourceId={sharingContact.id}
+          resourceName={sharingContact.name}
+          onClose={() => setSharingContact(null)}
+        />
       )}
 
       {/* Add Contact Modal */}

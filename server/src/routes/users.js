@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../models/db');
 const auth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
+const { logAction } = require('../services/auditLogger');
 
 const router = express.Router();
 
@@ -77,6 +78,7 @@ router.put('/:id/role', auth, requireRole('admin'), async (req, res) => {
       [role, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
+    logAction(req.user.id, req.user.email, 'role_change', 'user', req.params.id, result.rows[0].email, { new_role: role });
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error updating role:', err);
@@ -98,6 +100,7 @@ router.put('/:id/deactivate', auth, requireRole('admin'), async (req, res) => {
       [req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
+    logAction(req.user.id, req.user.email, 'deactivate', 'user', req.params.id, result.rows[0].email);
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error deactivating user:', err);
@@ -116,6 +119,7 @@ router.put('/:id/activate', auth, requireRole('admin'), async (req, res) => {
       [req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
+    logAction(req.user.id, req.user.email, 'activate', 'user', req.params.id, result.rows[0].email);
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error activating user:', err);

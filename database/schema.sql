@@ -122,3 +122,37 @@ CREATE TABLE team_members (
 
 CREATE INDEX idx_team_members_team_id ON team_members(team_id);
 CREATE INDEX idx_team_members_user_id ON team_members(user_id);
+
+-- Audit logs
+CREATE TABLE audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  user_email TEXT NOT NULL,
+  action TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id UUID,
+  resource_name TEXT,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX idx_audit_logs_resource_type ON audit_logs(resource_type);
+CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at DESC);
+
+-- Resource sharing
+CREATE TABLE shared_resources (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  resource_type TEXT NOT NULL CHECK (resource_type IN ('contact', 'deal')),
+  resource_id UUID NOT NULL,
+  shared_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shared_with_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  shared_with_team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
+  permission TEXT NOT NULL DEFAULT 'view' CHECK (permission IN ('view', 'edit')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT must_have_target CHECK (
+    shared_with_user_id IS NOT NULL OR shared_with_team_id IS NOT NULL
+  )
+);
+CREATE INDEX idx_shared_resources_resource ON shared_resources(resource_type, resource_id);
+CREATE INDEX idx_shared_resources_with_user ON shared_resources(shared_with_user_id);
+CREATE INDEX idx_shared_resources_with_team ON shared_resources(shared_with_team_id);

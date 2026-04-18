@@ -10,6 +10,8 @@ const integrationsRoutes = require('./routes/integrations');
 const analyticsRoutes = require('./routes/analytics');
 const usersRoutes = require('./routes/users');
 const teamsRoutes = require('./routes/teams');
+const auditLogsRoutes = require('./routes/auditLogs');
+const sharingRoutes = require('./routes/sharing');
 const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
 const WorkflowEngine = require('./services/workflowEngine');
@@ -33,6 +35,8 @@ app.use('/api/integrations', integrationsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/teams', teamsRoutes);
+app.use('/api/audit-logs', auditLogsRoutes);
+app.use('/api/sharing', sharingRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 

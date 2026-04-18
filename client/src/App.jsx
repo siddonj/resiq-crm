@@ -9,6 +9,7 @@ import Workflows from './pages/Workflows'
 import Settings from './pages/Settings'
 import Users from './pages/Users'
 import Teams from './pages/Teams'
+import AuditLogs from './pages/AuditLogs'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -27,6 +28,7 @@ function AppRoutes() {
         <Route path="workflows" element={<Workflows />} />
         <Route path="settings" element={<Settings />} />
         <Route path="teams" element={<Teams />} />
+        <Route path="audit-logs" element={<AuditLogs />} />
         <Route path="users" element={<Users />} />
       </Route>
     </Routes>

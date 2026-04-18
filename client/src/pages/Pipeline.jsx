@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
+import ShareModal from '../components/ShareModal'
 
 const STAGES = [
   { key: 'lead', label: 'Lead' },
@@ -33,6 +34,7 @@ export default function Pipeline() {
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [draggedDeal, setDraggedDeal] = useState(null)
+  const [sharingDeal, setSharingDeal] = useState(null)
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
 
@@ -203,12 +205,27 @@ export default function Pipeline() {
                         {deal.close_date && (
                           <p className="text-gray-400 text-xs mt-1">{new Date(deal.close_date).toLocaleDateString()}</p>
                         )}
-                        <button
-                          onClick={() => openEdit(deal)}
-                          className="mt-2 text-xs text-gray-400 hover:text-teal transition-colors"
-                        >
-                          Edit
-                        </button>
+                        <div className="mt-2 flex items-center gap-3">
+                          {deal.access_permission === 'edit' && (
+                            <button
+                              onClick={() => openEdit(deal)}
+                              className="text-xs text-gray-400 hover:text-teal transition-colors"
+                            >
+                              Edit
+                            </button>
+                          )}
+                          {deal.is_owner && (
+                            <button
+                              onClick={() => setSharingDeal(deal)}
+                              className="text-xs text-gray-400 hover:text-teal transition-colors"
+                            >
+                              Share
+                            </button>
+                          )}
+                          {!deal.is_owner && (
+                            <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">Shared</span>
+                          )}
+                        </div>
                       </div>
                     )
                   })
@@ -217,6 +234,16 @@ export default function Pipeline() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Share Modal */}
+      {sharingDeal && (
+        <ShareModal
+          resourceType="deal"
+          resourceId={sharingDeal.id}
+          resourceName={sharingDeal.title}
+          onClose={() => setSharingDeal(null)}
+        />
       )}
 
       {/* Add/Edit Deal Modal */}

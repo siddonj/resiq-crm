@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../models/db');
 const auth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
+const { logAction } = require('../services/auditLogger');
 
 const router = express.Router();
 
@@ -40,6 +41,7 @@ router.post('/', auth, requireRole('admin'), async (req, res) => {
       'INSERT INTO teams (name, description, created_by) VALUES ($1, $2, $3) RETURNING *',
       [name.trim(), description || null, req.user.id]
     );
+    logAction(req.user.id, req.user.email, 'create', 'team', result.rows[0].id, result.rows[0].name);
     res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'A team with that name already exists' });
@@ -91,6 +93,7 @@ router.put('/:id', auth, requireRole('admin'), async (req, res) => {
       [name.trim(), description ?? null, req.params.id]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Team not found' });
+    logAction(req.user.id, req.user.email, 'update', 'team', result.rows[0].id, result.rows[0].name);
     res.json(result.rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'A team with that name already exists' });
@@ -105,8 +108,9 @@ router.put('/:id', auth, requireRole('admin'), async (req, res) => {
  */
 router.delete('/:id', auth, requireRole('admin'), async (req, res) => {
   try {
-    const result = await pool.query('DELETE FROM teams WHERE id = $1 RETURNING id', [req.params.id]);
+    const result = await pool.query('DELETE FROM teams WHERE id = $1 RETURNING id, name', [req.params.id]);
     if (!result.rows[0]) return res.status(404).json({ error: 'Team not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'team', result.rows[0].id, result.rows[0].name);
     res.json({ message: 'Team deleted' });
   } catch (err) {
     console.error('Error deleting team:', err);
@@ -130,6 +134,7 @@ router.post('/:id/members', auth, requireRole('admin'), async (req, res) => {
        RETURNING *`,
       [req.params.id, user_id, role]
     );
+    logAction(req.user.id, req.user.email, 'add_member', 'team', req.params.id, null, { user_id, role });
     res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.code === '23503') return res.status(404).json({ error: 'Team or user not found' });
@@ -169,6 +174,7 @@ router.delete('/:id/members/:userId', auth, requireRole('admin'), async (req, re
       [req.params.id, req.params.userId]
     );
     if (!result.rows[0]) return res.status(404).json({ error: 'Member not found in team' });
+    logAction(req.user.id, req.user.email, 'remove_member', 'team', req.params.id, null, { user_id: req.params.userId });
     res.json({ message: 'Member removed' });
   } catch (err) {
     console.error('Error removing team member:', err);
