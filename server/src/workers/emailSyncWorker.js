@@ -10,10 +10,13 @@ const emailSyncQueue = new Queue('email-sync', process.env.REDIS_URL || 'redis:/
  * Max 2 concurrent jobs with exponential backoff retry
  */
 emailSyncQueue.process(2, async (job) => {
-  const { userId, pageToken = null } = job.data;
+  const { userId, pageToken = null, labelIds = null } = job.data;
 
   try {
-    console.log(`Starting email sync for user ${userId}, page: ${pageToken || 'first'}`);
+    const labelText = labelIds && labelIds.length > 0
+      ? `, labels: [${labelIds.join(', ')}]`
+      : '';
+    console.log(`Starting email sync for user ${userId}, page: ${pageToken || 'first'}${labelText}`);
 
     // Check if user still has Gmail connected
     const userResult = await pool.query(
@@ -34,6 +37,7 @@ emailSyncQueue.process(2, async (job) => {
     const result = await emailMatcher.syncUserEmails(userId, {
       maxResults: 20,
       pageToken,
+      labelIds,
     });
 
     if (!result.success) {

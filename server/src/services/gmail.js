@@ -107,17 +107,27 @@ class GmailService {
       maxResults = 10,
       pageToken = null,
       query = 'is:unread OR newer_than:7d', // Default: unread or last 7 days
+      labelIds = null, // Optional: filter by specific Gmail labels (array)
       includeSpamTrash = false,
     } = options;
 
     try {
-      const response = await this.gmail.users.messages.list({
+      const params = {
         userId: 'me',
         maxResults,
-        q: query,
         pageToken,
         includeSpamTrash,
-      });
+      };
+
+      // Build query: if labelIds provided, filter by labels
+      if (labelIds && labelIds.length > 0) {
+        params.q = query;
+        params.labelIds = labelIds;
+      } else {
+        params.q = query;
+      }
+
+      const response = await this.gmail.users.messages.list(params);
 
       const messages = response.data.messages || [];
       const nextPageToken = response.data.nextPageToken;
@@ -133,6 +143,22 @@ class GmailService {
       };
     } catch (err) {
       console.error('Error fetching emails:', err);
+      throw err;
+    }
+  }
+
+  // Get list of Gmail labels for user
+  async getLabels(user_id) {
+    await this.setupUserAuth(user_id);
+
+    try {
+      const response = await this.gmail.users.labels.list({
+        userId: 'me',
+      });
+
+      return response.data.labels || [];
+    } catch (err) {
+      console.error('Error fetching labels:', err);
       throw err;
     }
   }

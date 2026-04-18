@@ -21,23 +21,52 @@ class EmailMatcher {
     return result.rows[0] || null;
   }
 
-  // Match email to contact(s)
+  // Match email to contact, or create new contact if not found
   async matchEmailToContact(user_id, fromEmail, toEmails) {
     const sender = this.extractEmails(fromEmail)[0];
     const allRecipients = [sender, ...toEmails.flatMap((e) => this.extractEmails(e))];
 
-    // Find first matching contact
+    console.log(`[EmailMatcher] Matching: sender=${sender}, recipients=${allRecipients}`);
+
+    // Try to find matching contact
     for (const email of allRecipients) {
       const contact = await this.findContactByEmail(user_id, email);
-      if (contact) return contact;
+      if (contact) {
+        console.log(`[EmailMatcher] Found existing contact: ${contact.email}`);
+        return contact;
+      }
     }
 
-    return null; // No matching contact found
+    // No contact found - create new one from sender email
+    if (sender) {
+      try {
+        // Create contact or return existing one with same email
+        const contactName = sender.split('@')[0];
+        const result = await pool.query(
+          `INSERT INTO contacts (user_id, name, email, type)
+           VALUES ($1,$2,$3,$4)
+           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+           RETURNING id, name, email`,
+          [user_id, contactName, sender, 'prospect']
+        );
+        const newContact = result.rows[0];
+        console.log(`[EmailMatcher] Contact: ${sender} (${newContact.id})`);
+        return newContact;
+      } catch (err) {
+        console.error(`[EmailMatcher] Failed to create/find contact for ${sender}:`, err.message);
+      }
+    } else {
+      console.log(`[EmailMatcher] No sender email found in: ${fromEmail}`);
+    }
+
+    return null; // Still no contact
   }
 
   // Process a Gmail message and create email record
   async processGmailMessage(user_id, gmailMessage) {
     const { id, threadId, from, to, cc, subject, date, body } = gmailMessage;
+
+    console.log(`[EmailMatcher] Processing: from="${from}" | to="${to}" | subject="${subject}"`);
 
     // Determine if outbound (from user's email(s) - we'll check all connected user emails)
     const userTokens = await pool.query(
@@ -76,6 +105,7 @@ class EmailMatcher {
 
     try {
       const email = await Email.createIfNotExists(emailData);
+      console.log(`[EmailMatcher] Email saved: ${id} -> contact=${contact?.id || 'null'}`);
       return {
         success: true,
         email,
@@ -92,7 +122,7 @@ class EmailMatcher {
 
   // Sync emails for a user
   async syncUserEmails(user_id, options = {}) {
-    const { maxResults = 20, pageToken = null } = options;
+    const { maxResults = 20, pageToken = null, labelIds = null } = options;
 
     const GmailService = require('./gmail');
     try {
@@ -100,6 +130,7 @@ class EmailMatcher {
       const { messages, nextPageToken } = await GmailService.fetchEmails(user_id, {
         maxResults,
         pageToken,
+        labelIds, // Pass label filters to Gmail service
         query: 'newer_than:30d', // First sync: 30 days; ongoing: incremental
       });
 
