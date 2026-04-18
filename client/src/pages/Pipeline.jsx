@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import ShareModal from '../components/ShareModal'
@@ -26,6 +27,7 @@ const EMPTY_FORM = { title: '', contact_id: '', stage: 'lead', value: '', servic
 
 export default function Pipeline() {
   const { token } = useAuth()
+  const navigate = useNavigate()
   const [deals, setDeals] = useState([])
   const [contacts, setContacts] = useState([])
   const [loading, setLoading] = useState(true)
@@ -277,6 +279,12 @@ export default function Pipeline() {
                               Share
                             </button>
                           )}
+                          <button
+                            onClick={() => navigate(`/proposals?deal_id=${deal.id}`)}
+                            className="text-xs text-gray-400 hover:text-teal transition-colors"
+                          >
+                            Proposals
+                          </button>
                           {!deal.is_owner && (
                             <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">Shared</span>
                           )}
