@@ -147,6 +147,10 @@ class WorkflowEngine {
       case 'in':
         return Array.isArray(value) && value.includes(fieldValue);
       case 'contains':
+        // Support both string and array containment
+        if (Array.isArray(fieldValue)) {
+          return fieldValue.includes(value);
+        }
         return typeof fieldValue === 'string' && fieldValue.includes(value);
       default:
         console.warn(`[WorkflowEngine] Unknown condition operator: ${op}`);

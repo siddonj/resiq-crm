@@ -58,3 +58,44 @@ CREATE TABLE reminders (
   completed BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Email sync table for storing synced emails from Gmail
+CREATE TABLE emails (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL,
+  sender_email TEXT NOT NULL,
+  recipient_email TEXT NOT NULL,
+  subject TEXT,
+  body TEXT,
+  is_outbound BOOLEAN DEFAULT false,
+  gmail_id TEXT UNIQUE,
+  gmail_thread_id TEXT,
+  received_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_emails_user_id ON emails(user_id);
+CREATE INDEX idx_emails_contact_id ON emails(contact_id);
+CREATE INDEX idx_emails_gmail_id ON emails(gmail_id);
+
+-- Contact tagging system
+CREATE TABLE tags (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  color TEXT DEFAULT '#3B82F6',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, LOWER(name))
+);
+
+CREATE TABLE contact_tags (
+  contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (contact_id, tag_id)
+);
+
+CREATE INDEX idx_tags_user_id ON tags(user_id);
+CREATE INDEX idx_contact_tags_contact_id ON contact_tags(contact_id);
+CREATE INDEX idx_contact_tags_tag_id ON contact_tags(tag_id);

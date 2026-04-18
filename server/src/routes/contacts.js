@@ -29,13 +29,25 @@ router.post('/', auth, async (req, res) => {
 
     // ✨ Dispatch workflow trigger for contact creation
     if (workflowEngine) {
+      // Fetch contact tags for trigger event
+      const tagsResult = await pool.query(
+        `SELECT t.id, t.name FROM tags t
+         JOIN contact_tags ct ON ct.tag_id = t.id
+         WHERE ct.contact_id = $1`,
+        [newContact.id]
+      );
+      const contactTags = tagsResult.rows.map(t => t.name);
+
       workflowEngine.dispatchTrigger('contact.created', {
-        contact_id: newContact.id,
+        contact: {
+          id: newContact.id,
+          name: newContact.name,
+          email: newContact.email,
+          company: newContact.company,
+          type: newContact.type,
+          tags: contactTags,
+        },
         user_id: req.user.id,
-        contact_type: newContact.type,
-        contact_email: newContact.email,
-        contact_name: newContact.name,
-        contact_company: newContact.company,
       }).catch((err) => {
         console.error('Error dispatching workflow trigger:', err);
         // Don't fail the API call, just log the error
@@ -118,6 +130,111 @@ router.get('/:id/timeline', auth, async (req, res) => {
     ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
     res.json(timeline);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get all tags for current user
+router.get('/tags', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, name, color FROM tags WHERE user_id = $1 ORDER BY name ASC',
+      [req.user.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Create new tag
+router.post('/tags', auth, async (req, res) => {
+  const { name, color } = req.body;
+  try {
+    if (!name || name.trim() === '') {
+      return res.status(400).json({ error: 'Tag name is required' });
+    }
+
+    const result = await pool.query(
+      'INSERT INTO tags (user_id, name, color) VALUES ($1, $2, $3) RETURNING id, name, color',
+      [req.user.id, name.trim(), color || '#3B82F6']
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    if (err.message.includes('unique')) {
+      return res.status(409).json({ error: 'Tag already exists' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get tags for a contact
+router.get('/:id/tags', auth, async (req, res) => {
+  try {
+    // Verify contact belongs to user
+    const contact = await pool.query('SELECT id FROM contacts WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    if (contact.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });
+
+    const result = await pool.query(
+      `SELECT t.id, t.name, t.color FROM tags t
+       JOIN contact_tags ct ON ct.tag_id = t.id
+       WHERE ct.contact_id = $1
+       ORDER BY t.name ASC`,
+      [req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Add tag to contact
+router.post('/:id/tags', auth, async (req, res) => {
+  const { tag_id } = req.body;
+  try {
+    // Verify contact belongs to user
+    const contact = await pool.query('SELECT id FROM contacts WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    if (contact.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });
+
+    // Verify tag belongs to user
+    const tag = await pool.query('SELECT id FROM tags WHERE id = $1 AND user_id = $2', [tag_id, req.user.id]);
+    if (tag.rows.length === 0) return res.status(404).json({ error: 'Tag not found' });
+
+    // Add tag to contact (ignore if already exists)
+    await pool.query(
+      'INSERT INTO contact_tags (contact_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [req.params.id, tag_id]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Remove tag from contact
+router.delete('/:id/tags/:tagId', auth, async (req, res) => {
+  try {
+    // Verify contact belongs to user
+    const contact = await pool.query('SELECT id FROM contacts WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    if (contact.rows.length === 0) return res.status(404).json({ error: 'Contact not found' });
+
+    // Verify tag belongs to user
+    const tag = await pool.query('SELECT id FROM tags WHERE id = $1 AND user_id = $2', [req.params.tagId, req.user.id]);
+    if (tag.rows.length === 0) return res.status(404).json({ error: 'Tag not found' });
+
+    await pool.query(
+      'DELETE FROM contact_tags WHERE contact_id = $1 AND tag_id = $2',
+      [req.params.id, req.params.tagId]
+    );
+
+    res.json({ success: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });

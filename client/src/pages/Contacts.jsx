@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import EmailTimeline from '../components/EmailTimeline'
+import ContactTags from '../components/ContactTags'
 
 const CONTACT_TYPES = ['prospect', 'partner', 'vendor']
 const SERVICE_LINES = [
@@ -178,6 +179,11 @@ export default function Contacts() {
                   <label className="text-xs font-medium text-gray-600">Type</label>
                   <p className="text-sm text-navy mt-1 capitalize">{selectedContact.type}</p>
                 </div>
+              </div>
+
+              <div className="border-t border-gray-100 pt-4">
+                <h4 className="font-semibold text-navy mb-3">Tags</h4>
+                <ContactTags contactId={selectedContact.id} onTagsUpdated={fetchContacts} />
               </div>
 
               <div className="border-t border-gray-100 pt-4">

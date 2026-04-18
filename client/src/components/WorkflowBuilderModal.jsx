@@ -21,12 +21,27 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
     description: workflow?.description || '',
     triggerType: workflow?.trigger_type || 'deal.stage_changed',
     triggerConfig: workflow?.trigger_config || {},
+    conditions: workflow?.conditions || null,
     actions: workflow?.actions || [],
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [availableTags, setAvailableTags] = useState([])
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
+
+  // Fetch available tags when modal opens
+  useEffect(() => {
+    const fetchTags = async () => {
+      try {
+        const res = await axios.get('/api/contacts/tags', authHeaders)
+        setAvailableTags(res.data)
+      } catch (err) {
+        console.error('Error fetching tags:', err)
+      }
+    }
+    fetchTags()
+  }, [])
 
   // Step 1: Name & Description
   const renderNameStep = () => (
@@ -103,6 +118,57 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
               <option key={s} value={s}>{s.replace(/_/g, ' ').charAt(0).toUpperCase() + s.slice(1).replace(/_/g, ' ')}</option>
             ))}
           </select>
+        </div>
+      )}
+
+      {formData.triggerType === 'contact.created' && (
+        <div>
+          <label className="block text-xs font-medium text-gray-600 mb-3">
+            Additional Conditions (optional)
+          </label>
+          <div className="space-y-3">
+            <p className="text-xs text-gray-500">
+              Add conditions to only trigger this workflow for contacts with specific tags.
+            </p>
+            {formData.conditions && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-blue-900">
+                    Contact must have tag: <strong>{formData.conditions.value}</strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, conditions: null })}
+                    className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            )}
+            {!formData.conditions && availableTags.length > 0 && (
+              <select
+                onChange={e => {
+                  if (e.target.value) {
+                    setFormData({
+                      ...formData,
+                      conditions: { field: 'contact.tags', op: 'contains', value: e.target.value }
+                    })
+                  }
+                }}
+                value=""
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal bg-white"
+              >
+                <option value="">— Select a tag to require —</option>
+                {availableTags.map(tag => (
+                  <option key={tag.id} value={tag.name}>{tag.name}</option>
+                ))}
+              </select>
+            )}
+            {!formData.conditions && availableTags.length === 0 && (
+              <p className="text-xs text-gray-500 italic">Create tags in the Contacts section to add conditions here.</p>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -225,6 +291,9 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
             <strong>Trigger:</strong> {TRIGGER_TYPES.find(t => t.value === formData.triggerType)?.label}
             {formData.triggerConfig.stage && ` → ${formData.triggerConfig.stage}`}
           </p>
+          {formData.conditions && (
+            <p><strong>Condition:</strong> Contact must have tag "{formData.conditions.value}"</p>
+          )}
           <p><strong>Actions:</strong> {formData.actions.length}</p>
         </div>
       </div>
