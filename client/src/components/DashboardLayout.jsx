@@ -10,7 +10,8 @@ const navItems = [
 ]
 
 const adminNavItems = [
-  { to: '/users', label: 'Users', icon: '👨‍💼' },
+  { to: '/teams', label: 'Teams', icon: '🏢', roles: ['admin', 'manager'] },
+  { to: '/users', label: 'Users', icon: '👨‍💼', roles: ['admin'] },
 ]
 
 export default function DashboardLayout() {
@@ -47,10 +48,10 @@ export default function DashboardLayout() {
               {label}
             </NavLink>
           ))}
-          {user?.role === 'admin' && (
+          {adminNavItems.some(item => item.roles.includes(user?.role)) && (
             <>
               <div className="my-2 border-t border-white/10" />
-              {adminNavItems.map(({ to, label, icon }) => (
+              {adminNavItems.filter(item => item.roles.includes(user?.role)).map(({ to, label, icon }) => (
                 <NavLink
                   key={to}
                   to={to}

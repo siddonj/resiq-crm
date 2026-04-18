@@ -101,3 +101,24 @@ CREATE TABLE contact_tags (
 CREATE INDEX idx_tags_user_id ON tags(user_id);
 CREATE INDEX idx_contact_tags_contact_id ON contact_tags(contact_id);
 CREATE INDEX idx_contact_tags_tag_id ON contact_tags(tag_id);
+
+-- Team management
+CREATE TABLE teams (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  description TEXT,
+  created_by UUID NOT NULL REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(name)
+);
+
+CREATE TABLE team_members (
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('lead', 'member')),
+  joined_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (team_id, user_id)
+);
+
+CREATE INDEX idx_team_members_team_id ON team_members(team_id);
+CREATE INDEX idx_team_members_user_id ON team_members(user_id);
