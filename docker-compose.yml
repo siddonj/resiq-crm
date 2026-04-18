@@ -1,0 +1,67 @@
+version: '3.9'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: resiq-postgres
+    environment:
+      POSTGRES_USER: resiq
+      POSTGRES_PASSWORD: resiq_dev
+      POSTGRES_DB: resiq_crm
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U resiq"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - resiq-network
+
+  # Redis Cache & Message Queue
+  redis:
+    image: redis:7-alpine
+    container_name: resiq-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - resiq-network
+
+  # ResiQ Application (optional - for production-like testing)
+  # Uncomment to run app in Docker
+  # app:
+  #   build: .
+  #   container_name: resiq-app
+  #   ports:
+  #     - "5000:5000"
+  #   environment:
+  #     NODE_ENV: development
+  #     DATABASE_URL: postgresql://resiq:resiq_dev@postgres:5432/resiq_crm
+  #     REDIS_URL: redis://redis:6379
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     - resiq-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  resiq-network:
+    driver: bridge

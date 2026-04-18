@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
+import EmailTimeline from '../components/EmailTimeline'
 
 const CONTACT_TYPES = ['prospect', 'partner', 'vendor']
 const SERVICE_LINES = [
@@ -19,6 +20,8 @@ export default function Contacts() {
   const [contacts, setContacts] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
+  const [showDetailModal, setShowDetailModal] = useState(false)
+  const [selectedContact, setSelectedContact] = useState(null)
   const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
@@ -43,6 +46,11 @@ export default function Contacts() {
     setShowModal(true)
   }
   const closeModal = () => setShowModal(false)
+  const openDetail = (c) => {
+    setSelectedContact(c)
+    setShowDetailModal(true)
+  }
+  const closeDetail = () => setShowDetailModal(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -117,6 +125,12 @@ export default function Contacts() {
                   <td className="px-4 py-3 text-gray-600">{SERVICE_LINES.find(s => s.value === c.service_line)?.label || '—'}</td>
                   <td className="px-4 py-3 text-right space-x-3">
                     <button
+                      onClick={() => openDetail(c)}
+                      className="text-xs text-gray-400 hover:text-teal transition-colors"
+                    >
+                      View
+                    </button>
+                    <button
                       onClick={() => openEdit(c)}
                       className="text-xs text-gray-400 hover:text-teal transition-colors"
                     >
@@ -133,6 +147,52 @@ export default function Contacts() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Contact Detail Modal */}
+      {showDetailModal && selectedContact && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 px-6 py-5 border-b border-gray-100 flex items-center justify-between bg-white">
+              <h3 className="font-syne text-lg font-bold text-navy">{selectedContact.name}</h3>
+              <button onClick={closeDetail} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+            </div>
+
+            <div className="px-6 py-5 space-y-6">
+              {/* Contact Info */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Email</label>
+                  <p className="text-sm text-navy mt-1">{selectedContact.email || '—'}</p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Phone</label>
+                  <p className="text-sm text-navy mt-1">{selectedContact.phone || '—'}</p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Company</label>
+                  <p className="text-sm text-navy mt-1">{selectedContact.company || '—'}</p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Type</label>
+                  <p className="text-sm text-navy mt-1 capitalize">{selectedContact.type}</p>
+                </div>
+              </div>
+
+              <div className="border-t border-gray-100 pt-4">
+                <h4 className="font-semibold text-navy mb-3">Email Communication</h4>
+                <EmailTimeline contact={selectedContact} token={token} />
+              </div>
+
+              {selectedContact.notes && (
+                <div className="border-t border-gray-100 pt-4">
+                  <h4 className="font-semibold text-navy mb-2">Notes</h4>
+                  <p className="text-sm text-gray-600 whitespace-pre-wrap">{selectedContact.notes}</p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

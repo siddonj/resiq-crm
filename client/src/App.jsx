@@ -5,6 +5,8 @@ import DashboardLayout from './components/DashboardLayout'
 import Overview from './pages/Overview'
 import Contacts from './pages/Contacts'
 import Pipeline from './pages/Pipeline'
+import Workflows from './pages/Workflows'
+import Settings from './pages/Settings'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -20,6 +22,8 @@ function AppRoutes() {
         <Route index element={<Overview />} />
         <Route path="contacts" element={<Contacts />} />
         <Route path="pipeline" element={<Pipeline />} />
+        <Route path="workflows" element={<Workflows />} />
+        <Route path="settings" element={<Settings />} />
       </Route>
     </Routes>
   )

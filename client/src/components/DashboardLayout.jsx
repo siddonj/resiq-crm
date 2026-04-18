@@ -5,6 +5,8 @@ const navItems = [
   { to: '/', label: 'Overview', icon: '📊', end: true },
   { to: '/contacts', label: 'Contacts', icon: '👥' },
   { to: '/pipeline', label: 'Pipeline', icon: '🔁' },
+  { to: '/workflows', label: 'Workflows', icon: '⚡' },
+  { to: '/settings', label: 'Settings', icon: '⚙️' },
 ]
 
 export default function DashboardLayout() {
