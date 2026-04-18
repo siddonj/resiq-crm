@@ -797,3 +797,123 @@
 	           VALUES ($1,$2,$3,$4)
 	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
 	           RETURNING id, name, email
+2026-04-18 02:40:00.551 UTC [476217] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:40:00.551 UTC [476217] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:40:00.552 UTC [476210] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:40:00.552 UTC [476210] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:40:00.557 UTC [476213] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:40:00.557 UTC [476213] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:40:00.577 UTC [476212] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:40:00.577 UTC [476212] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:40:00.585 UTC [476219] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:40:00.585 UTC [476219] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:40:01.024 UTC [476218] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:40:01.024 UTC [476218] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:40:01.024 UTC [476224] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:40:01.024 UTC [476224] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:40:01.029 UTC [476222] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:40:01.029 UTC [476222] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:45:00.520 UTC [478732] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:45:00.520 UTC [478732] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:45:00.551 UTC [478740] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:45:00.551 UTC [478740] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:45:00.551 UTC [478736] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:45:00.551 UTC [478736] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:45:00.551 UTC [478734] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:45:00.551 UTC [478734] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:45:00.556 UTC [478737] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:45:00.556 UTC [478737] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:45:01.018 UTC [478745] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:45:01.018 UTC [478745] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:45:01.018 UTC [478733] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:45:01.018 UTC [478733] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:45:01.026 UTC [478744] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:45:01.026 UTC [478744] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:50:00.620 UTC [481354] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:50:00.620 UTC [481354] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:50:00.637 UTC [481357] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:50:00.637 UTC [481357] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:50:00.642 UTC [481355] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:50:00.642 UTC [481355] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:50:00.644 UTC [481358] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:50:00.644 UTC [481358] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:50:00.645 UTC [481356] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:50:00.645 UTC [481356] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:50:01.055 UTC [481365] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:50:01.055 UTC [481365] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:50:01.055 UTC [481362] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:50:01.055 UTC [481362] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 02:50:01.063 UTC [481363] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 02:50:01.063 UTC [481363] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
