@@ -7,6 +7,7 @@ import Contacts from './pages/Contacts'
 import Pipeline from './pages/Pipeline'
 import Workflows from './pages/Workflows'
 import Settings from './pages/Settings'
+import Users from './pages/Users'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -24,6 +25,7 @@ function AppRoutes() {
         <Route path="pipeline" element={<Pipeline />} />
         <Route path="workflows" element={<Workflows />} />
         <Route path="settings" element={<Settings />} />
+        <Route path="users" element={<Users />} />
       </Route>
     </Routes>
   )

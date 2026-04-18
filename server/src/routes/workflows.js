@@ -27,7 +27,7 @@ router.get('/', auth, async (req, res) => {
  * GET /api/workflows/:id
  * Get a single workflow
  */
-router.get('/:id', async (req, res) => {
+router.get('/:id', auth, async (req, res) => {
   try {
     const workflow = await Workflow.findById(req.params.id);
     if (!workflow) {
@@ -51,7 +51,7 @@ router.get('/:id', async (req, res) => {
  * Create a new workflow
  * Body: { name, description, triggerType, triggerConfig, actions, conditions }
  */
-router.post('/', async (req, res) => {
+router.post('/', auth, async (req, res) => {
   try {
     const { name, description, triggerType, triggerConfig, actions, conditions } = req.body;
 
@@ -95,7 +95,7 @@ router.post('/', async (req, res) => {
  * PATCH /api/workflows/:id
  * Update a workflow
  */
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', auth, async (req, res) => {
   try {
     const workflow = await Workflow.findById(req.params.id);
     if (!workflow) {
@@ -143,7 +143,7 @@ router.patch('/:id', async (req, res) => {
  * DELETE /api/workflows/:id
  * Delete a workflow (cascades to execution history)
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', auth, async (req, res) => {
   try {
     const workflow = await Workflow.findById(req.params.id);
     if (!workflow) {
@@ -172,7 +172,7 @@ router.delete('/:id', async (req, res) => {
  * GET /api/workflows/:id/executions
  * Get execution history for a workflow
  */
-router.get('/:id/executions', async (req, res) => {
+router.get('/:id/executions', auth, async (req, res) => {
   try {
     const workflow = await Workflow.findById(req.params.id);
     if (!workflow) {
@@ -208,7 +208,7 @@ router.get('/:id/executions', async (req, res) => {
  * GET /api/workflows/:id/executions/:executionId
  * Get a single execution record
  */
-router.get('/:id/executions/:executionId', async (req, res) => {
+router.get('/:id/executions/:executionId', auth, async (req, res) => {
   try {
     const workflow = await Workflow.findById(req.params.id);
     if (!workflow) {
@@ -237,7 +237,7 @@ router.get('/:id/executions/:executionId', async (req, res) => {
  * Test a workflow by manually triggering it
  * Body: { triggerType, eventData }
  */
-router.post('/:id/test', async (req, res) => {
+router.post('/:id/test', auth, async (req, res) => {
   try {
     const workflow = await Workflow.findById(req.params.id);
     if (!workflow) {

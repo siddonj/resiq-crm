@@ -9,6 +9,10 @@ const navItems = [
   { to: '/settings', label: 'Settings', icon: '⚙️' },
 ]
 
+const adminNavItems = [
+  { to: '/users', label: 'Users', icon: '👨‍💼' },
+]
+
 export default function DashboardLayout() {
   const { user, logout } = useAuth()
 
@@ -43,6 +47,27 @@ export default function DashboardLayout() {
               {label}
             </NavLink>
           ))}
+          {user?.role === 'admin' && (
+            <>
+              <div className="my-2 border-t border-white/10" />
+              {adminNavItems.map(({ to, label, icon }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                      isActive
+                        ? 'bg-teal text-white'
+                        : 'text-brand-gray hover:bg-white/10 hover:text-white'
+                    }`
+                  }
+                >
+                  <span>{icon}</span>
+                  {label}
+                </NavLink>
+              ))}
+            </>
+          )}
         </nav>
 
         {/* User */}
