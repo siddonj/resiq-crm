@@ -16,6 +16,7 @@ import Invoices from './pages/Invoices'
 import TimeTracking from './pages/TimeTracking'
 import Calendar from './pages/Calendar'
 import BookingPage from './pages/BookingPage'
+import ClientPortalApp from './ClientApp'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -26,6 +27,10 @@ function AppRoutes() {
   const { isAuthenticated } = useAuth()
   return (
     <Routes>
+      {/* Client Portal Routes */}
+      <Route path="/client/*" element={<ClientPortalApp />} />
+
+      {/* Employee Portal Routes */}
       <Route path="/login" element={isAuthenticated ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/book/:slug" element={<BookingPage />} />
       <Route path="/" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
