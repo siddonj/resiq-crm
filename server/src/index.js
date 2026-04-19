@@ -66,9 +66,28 @@ app.use('/api/webhooks', webhookRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
+async function initDatabase() {
+  const pool = require('./models/db');
+  const fs = require('fs');
+  const schemaPath = path.join(__dirname, '../../database/schema.sql');
+  if (fs.existsSync(schemaPath)) {
+    try {
+      const sql = fs.readFileSync(schemaPath, 'utf8');
+      await pool.query(sql);
+      console.log('Database schema applied successfully');
+    } catch (err) {
+      // IF NOT EXISTS guards in schema make this safe to run repeatedly
+      if (!err.message.includes('already exists')) {
+        console.error('Schema init error:', err.message);
+      }
+    }
+  }
+}
+
 const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, async () => {
   console.log(`ResiQ CRM server running on port ${PORT}`);
+  await initDatabase();
 
   // Initialize message queue (for SMS)
   try {

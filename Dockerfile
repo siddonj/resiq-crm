@@ -33,6 +33,9 @@ COPY --from=server-builder /app/server/node_modules ./server/node_modules
 COPY server/package.json ./server/
 COPY server/src ./server/src
 
+# Copy database schema for auto-migration
+COPY database/ ./database/
+
 # Copy built client from client-builder
 COPY --from=client-builder /app/client/dist ./client/dist
 
