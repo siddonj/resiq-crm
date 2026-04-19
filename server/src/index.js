@@ -22,8 +22,11 @@ const proposalsRoutes = require('./routes/proposals');
 const invoicesRoutes = require('./routes/invoices');
 const timeEntriesRoutes = require('./routes/timeEntries');
 const calendarRoutes = require('./routes/calendar');
+const smsRoutes = require('./routes/sms');
+const webhookRoutes = require('./routes/webhooks');
 const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
+const { MessageQueueService } = require('./services/messageQueue');
 const WorkflowEngine = require('./services/workflowEngine');
 
 const app = express();
@@ -57,12 +60,22 @@ app.use('/api/proposals', proposalsRoutes);
 app.use('/api/invoices', invoicesRoutes);
 app.use('/api/time-entries', timeEntriesRoutes);
 app.use('/api/calendar', calendarRoutes);
+app.use('/api/sms', smsRoutes);
+app.use('/api/webhooks', webhookRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, async () => {
   console.log(`ResiQ CRM server running on port ${PORT}`);
+
+  // Initialize message queue (for SMS)
+  try {
+    MessageQueueService.initialize();
+  } catch (err) {
+    console.warn('Message queue init failed (Redis may not be running):', err.message);
+    console.warn('SMS will not send until Redis is available');
+  }
 
   // Initialize workflow queue worker (requires Redis)
   try {

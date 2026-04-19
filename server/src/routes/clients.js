@@ -3,6 +3,10 @@ const auth = require('../middleware/auth');
 const pool = require('../models/db');
 const Client = require('../models/client');
 const { sendProposalSentEmail, sendInvoiceSentEmail } = require('../services/clientNotifications');
+const SMS = require('../models/SMS');
+const SMSTemplate = require('../models/SMSTemplate');
+const TwilioService = require('../services/twilioService');
+const { MessageQueueService } = require('../services/messageQueue');
 
 const router = express.Router();
 
@@ -256,7 +260,7 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
       const result = await pool.query(
         `UPDATE proposals SET sent_at = NOW(), status = CASE WHEN status = 'draft' THEN 'sent' ELSE status END
          WHERE id = $1 AND sent_at IS NULL
-         RETURNING title`,
+         RETURNING title, expires_at`,
         [itemId]
       );
       
@@ -267,12 +271,49 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
         } catch (emailErr) {
           console.warn('Failed to send proposal email:', emailErr.message);
         }
+
+        // Send SMS if phone number and opted in
+        try {
+          if (client.phone_number && client.sms_opted_in) {
+            const isOptedOut = await TwilioService.isOptedOut(clientId);
+            if (!isOptedOut) {
+              const template = await SMSTemplate.getBySlug('proposal_sent');
+              if (template) {
+                const renderResult = await SMSTemplate.render(template, {
+                  firstName: client.name.split(' ')[0],
+                  dealName: result.rows[0].title || 'Your proposal',
+                  proposalLink: `${process.env.CLIENT_PORTAL_URL || 'https://portal.resiq.com'}/proposals/${itemId}`,
+                  expiryDate: result.rows[0].expires_at 
+                    ? new Date(result.rows[0].expires_at).toLocaleDateString()
+                    : 'Upon request'
+                });
+
+                const smsMessage = await SMS.send({
+                  contactId: clientId,
+                  employeeId: req.user.id,
+                  content: renderResult.content,
+                  phoneFrom: process.env.TWILIO_PHONE_NUMBER || '+1-555-RESIQ-1',
+                  phoneTo: client.phone_number,
+                  templateId: template.id
+                });
+
+                await MessageQueueService.enqueueSMS({
+                  messageId: smsMessage.id,
+                  to: client.phone_number,
+                  content: renderResult.content
+                });
+              }
+            }
+          }
+        } catch (smsErr) {
+          console.warn('Failed to send proposal SMS:', smsErr.message);
+        }
       }
     } else if (itemType === 'invoice') {
       const result = await pool.query(
         `UPDATE invoices SET sent_at = NOW(), status = CASE WHEN status = 'draft' THEN 'sent' ELSE status END
          WHERE id = $1 AND sent_at IS NULL
-         RETURNING line_items, due_date`,
+         RETURNING line_items, due_date, invoice_number`,
         [itemId]
       );
       
@@ -283,6 +324,42 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
           await sendInvoiceSentEmail(client.email, client.name, itemId, amount, result.rows[0].due_date);
         } catch (emailErr) {
           console.warn('Failed to send invoice email:', emailErr.message);
+        }
+
+        // Send SMS if phone number and opted in
+        try {
+          if (client.phone_number && client.sms_opted_in) {
+            const isOptedOut = await TwilioService.isOptedOut(clientId);
+            if (!isOptedOut) {
+              const template = await SMSTemplate.getBySlug('invoice_due');
+              if (template) {
+                const amount = result.rows[0].line_items.reduce((sum, item) => sum + (item.amount || 0), 0);
+                const renderResult = await SMSTemplate.render(template, {
+                  invoiceNumber: result.rows[0].invoice_number || itemId.substring(0, 8),
+                  amount: `$${amount.toFixed(2)}`,
+                  dueDate: new Date(result.rows[0].due_date).toLocaleDateString(),
+                  paymentLink: `${process.env.CLIENT_PORTAL_URL || 'https://portal.resiq.com'}/invoices/${itemId}`
+                });
+
+                const smsMessage = await SMS.send({
+                  contactId: clientId,
+                  employeeId: req.user.id,
+                  content: renderResult.content,
+                  phoneFrom: process.env.TWILIO_PHONE_NUMBER || '+1-555-RESIQ-1',
+                  phoneTo: client.phone_number,
+                  templateId: template.id
+                });
+
+                await MessageQueueService.enqueueSMS({
+                  messageId: smsMessage.id,
+                  to: client.phone_number,
+                  content: renderResult.content
+                });
+              }
+            }
+          }
+        } catch (smsErr) {
+          console.warn('Failed to send invoice SMS:', smsErr.message);
         }
       }
     }
