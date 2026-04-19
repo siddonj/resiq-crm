@@ -69,6 +69,8 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 async function initDatabase() {
   const pool = require('./models/db');
   const fs = require('fs');
+
+  // Apply base schema
   const schemaPath = path.join(__dirname, '../../database/schema.sql');
   if (fs.existsSync(schemaPath)) {
     try {
@@ -76,9 +78,37 @@ async function initDatabase() {
       await pool.query(sql);
       console.log('Database schema applied successfully');
     } catch (err) {
-      // IF NOT EXISTS guards in schema make this safe to run repeatedly
       if (!err.message.includes('already exists')) {
         console.error('Schema init error:', err.message);
+      }
+    }
+  }
+
+  // Apply OAuth columns migration (idempotent)
+  try {
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_access_token TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_refresh_token TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_expires_at TIMESTAMPTZ;
+    `);
+  } catch (err) {
+    console.error('OAuth columns migration error:', err.message);
+  }
+
+  // Apply all migration files in order
+  const migrationsDir = path.join(__dirname, '../../database/migrations');
+  if (fs.existsSync(migrationsDir)) {
+    const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
+    for (const file of files) {
+      try {
+        const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+        await pool.query(sql);
+        console.log(`Migration applied: ${file}`);
+      } catch (err) {
+        if (!err.message.includes('already exists') && !err.message.includes('duplicate')) {
+          console.error(`Migration error (${file}):`, err.message);
+        }
       }
     }
   }
