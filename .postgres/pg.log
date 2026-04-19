@@ -1404,3 +1404,556 @@
 	           VALUES ($1,$2,$3,$4)
 	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
 	           RETURNING id, name, email
+2026-04-18 03:45:00.569 UTC [549586] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:45:00.569 UTC [549586] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:45:00.569 UTC [549585] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:45:00.569 UTC [549585] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:45:00.569 UTC [549587] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:45:00.569 UTC [549587] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:45:00.583 UTC [549591] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:45:00.583 UTC [549591] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:45:00.585 UTC [549589] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:45:00.585 UTC [549589] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:45:00.589 UTC [549588] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:45:00.589 UTC [549588] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:45:00.591 UTC [549584] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:45:00.591 UTC [549584] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:45:01.059 UTC [549593] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:45:01.059 UTC [549593] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:45:01.059 UTC [549594] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:45:01.059 UTC [549594] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:45:01.060 UTC [549592] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:45:01.060 UTC [549592] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:50:00.517 UTC [551633] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:50:00.517 UTC [551633] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:50:00.525 UTC [551637] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:50:00.525 UTC [551637] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:50:00.541 UTC [551635] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:50:00.541 UTC [551635] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:50:00.541 UTC [551636] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:50:00.541 UTC [551636] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:50:00.542 UTC [551638] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:50:00.542 UTC [551638] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:50:00.544 UTC [551640] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:50:00.544 UTC [551640] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:50:00.549 UTC [551644] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:50:00.549 UTC [551644] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:50:01.010 UTC [551643] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:50:01.010 UTC [551643] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:50:01.015 UTC [551645] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:50:01.015 UTC [551645] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:50:01.026 UTC [551648] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:50:01.026 UTC [551648] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:55:00.550 UTC [553706] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:55:00.550 UTC [553706] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:55:00.551 UTC [553705] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:55:00.551 UTC [553705] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:55:00.552 UTC [553710] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:55:00.552 UTC [553710] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:55:00.553 UTC [553707] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:55:00.553 UTC [553707] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:55:00.554 UTC [553703] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:55:00.554 UTC [553703] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:55:00.565 UTC [553704] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:55:00.565 UTC [553704] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:55:00.569 UTC [553711] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:55:00.569 UTC [553711] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:55:00.990 UTC [553716] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:55:00.990 UTC [553716] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:55:00.991 UTC [553700] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:55:00.991 UTC [553700] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 03:55:00.995 UTC [553712] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 03:55:00.995 UTC [553712] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:00:00.544 UTC [555737] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:00:00.544 UTC [555737] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:00:00.544 UTC [555733] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:00:00.544 UTC [555733] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:00:00.550 UTC [555735] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:00:00.550 UTC [555735] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:00:00.550 UTC [555736] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:00:00.550 UTC [555736] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:00:00.551 UTC [555738] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:00:00.551 UTC [555738] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:00:00.568 UTC [555734] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:00:00.568 UTC [555734] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:00:00.582 UTC [555739] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:00:00.582 UTC [555739] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:00:01.040 UTC [555740] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:00:01.040 UTC [555740] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:00:01.044 UTC [555747] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:00:01.044 UTC [555747] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:00:01.045 UTC [555741] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:00:01.045 UTC [555741] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:05:00.533 UTC [557788] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:05:00.533 UTC [557788] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:05:00.539 UTC [557787] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:05:00.539 UTC [557787] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:05:00.542 UTC [557792] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:05:00.542 UTC [557792] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:05:00.546 UTC [557784] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:05:00.546 UTC [557784] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:05:00.547 UTC [557793] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:05:00.547 UTC [557793] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:05:00.553 UTC [557789] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:05:00.553 UTC [557789] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:05:00.557 UTC [557794] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:05:00.557 UTC [557794] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:05:00.985 UTC [557795] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:05:00.985 UTC [557795] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:05:00.986 UTC [557786] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:05:00.986 UTC [557786] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:05:00.994 UTC [557800] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:05:00.994 UTC [557800] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:10:00.556 UTC [559849] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:10:00.556 UTC [559849] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:10:00.556 UTC [559844] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:10:00.556 UTC [559844] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:10:00.557 UTC [559852] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:10:00.557 UTC [559852] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:10:00.557 UTC [559847] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:10:00.557 UTC [559847] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:10:00.567 UTC [559848] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:10:00.567 UTC [559848] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:10:00.568 UTC [559851] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:10:00.568 UTC [559851] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:10:00.575 UTC [559853] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:10:00.575 UTC [559853] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:10:01.013 UTC [559854] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:10:01.013 UTC [559854] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:10:01.014 UTC [559859] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:10:01.014 UTC [559859] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 04:10:01.015 UTC [559856] ERROR:  there is no unique or exclusion constraint matching the ON CONFLICT specification
+2026-04-18 04:10:01.015 UTC [559856] STATEMENT:  INSERT INTO contacts (user_id, name, email, type)
+	           VALUES ($1,$2,$3,$4)
+	           ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
+	           RETURNING id, name, email
+2026-04-18 13:34:19.851 UTC [35888] LOG:  starting PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+2026-04-18 13:34:19.851 UTC [35888] LOG:  listening on IPv6 address "::1", port 5432
+2026-04-18 13:34:19.851 UTC [35888] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-04-18 13:34:19.853 UTC [35888] FATAL:  could not open lock file "/var/run/postgresql/.s.PGSQL.5432.lock": Permission denied
+2026-04-18 13:34:19.855 UTC [35888] LOG:  database system is shut down
+2026-04-18 13:34:56.845 UTC [41825] LOG:  starting PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+2026-04-18 13:34:56.845 UTC [41825] LOG:  listening on IPv6 address "::1", port 5433
+2026-04-18 13:34:56.845 UTC [41825] LOG:  listening on IPv4 address "127.0.0.1", port 5433
+2026-04-18 13:34:56.850 UTC [41825] LOG:  listening on Unix socket "/workspaces/resiq-crm/.postgres/run/.s.PGSQL.5433"
+2026-04-18 13:34:56.859 UTC [41828] LOG:  database system was interrupted; last known up at 2026-04-18 03:22:51 UTC
+2026-04-18 13:34:57.029 UTC [41828] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-04-18 13:34:57.034 UTC [41828] LOG:  redo starts at 0/1AACFC8
+2026-04-18 13:34:57.034 UTC [41828] LOG:  invalid record length at 0/1AAD0B0: expected at least 24, got 0
+2026-04-18 13:34:57.034 UTC [41828] LOG:  redo done at 0/1AAD078 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-04-18 13:34:57.040 UTC [41826] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-04-18 13:34:57.048 UTC [41826] LOG:  checkpoint complete: wrote 2 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.001 s, total=0.009 s; sync files=3, longest=0.001 s, average=0.001 s; distance=0 kB, estimate=0 kB; lsn=0/1AAD0B0, redo lsn=0/1AAD0B0
+2026-04-18 13:34:57.052 UTC [41825] LOG:  database system is ready to accept connections
+2026-04-18 13:35:06.141 UTC [41903] LOG:  invalid length of startup packet
+2026-04-18 13:35:07.297 UTC [41912] LOG:  invalid length of startup packet
+2026-04-18 13:39:57.096 UTC [41826] LOG:  checkpoint starting: time
+2026-04-18 13:40:02.829 UTC [41826] LOG:  checkpoint complete: wrote 58 buffers (0.4%); 0 WAL file(s) added, 0 removed, 0 recycled; write=5.719 s, sync=0.009 s, total=5.733 s; sync files=48, longest=0.005 s, average=0.001 s; distance=214 kB, estimate=214 kB; lsn=0/1AE29E0, redo lsn=0/1AE29A8
+2026-04-18 13:49:58.008 UTC [41826] LOG:  checkpoint starting: time
+2026-04-18 13:50:03.046 UTC [41826] LOG:  checkpoint complete: wrote 51 buffers (0.3%); 0 WAL file(s) added, 0 removed, 0 recycled; write=5.025 s, sync=0.007 s, total=5.039 s; sync files=51, longest=0.004 s, average=0.001 s; distance=258 kB, estimate=258 kB; lsn=0/1B235C8, redo lsn=0/1B23590
+2026-04-18 13:54:58.090 UTC [41826] LOG:  checkpoint starting: time
+2026-04-18 13:55:00.606 UTC [41826] LOG:  checkpoint complete: wrote 26 buffers (0.2%); 0 WAL file(s) added, 0 removed, 0 recycled; write=2.506 s, sync=0.006 s, total=2.517 s; sync files=18, longest=0.005 s, average=0.001 s; distance=10 kB, estimate=234 kB; lsn=0/1B26020, redo lsn=0/1B25FD0
+2026-04-18 14:04:58.770 UTC [41826] LOG:  checkpoint starting: time
+2026-04-18 14:05:00.188 UTC [41826] LOG:  checkpoint complete: wrote 15 buffers (0.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=1.405 s, sync=0.005 s, total=1.419 s; sync files=13, longest=0.003 s, average=0.001 s; distance=6 kB, estimate=211 kB; lsn=0/1B27B20, redo lsn=0/1B27AE8
+2026-04-18 14:13:17.071 UTC [137787] ERROR:  column "user_id" does not exist at character 291
+2026-04-18 14:13:17.071 UTC [137787] STATEMENT:  SELECT
+	        COUNT(*) as total_executions,
+	        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+	        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+	        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
+	      FROM workflow_executions
+	      WHERE user_id = $1
+	        AND executed_at >= DATE_TRUNC('month', NOW())
+2026-04-18 14:13:17.294 UTC [137785] ERROR:  column "user_id" does not exist at character 291
+2026-04-18 14:13:17.294 UTC [137785] STATEMENT:  SELECT
+	        COUNT(*) as total_executions,
+	        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+	        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+	        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
+	      FROM workflow_executions
+	      WHERE user_id = $1
+	        AND executed_at >= DATE_TRUNC('month', NOW())
+2026-04-18 14:13:53.133 UTC [137919] ERROR:  column "user_id" does not exist at character 291
+2026-04-18 14:13:53.133 UTC [137919] STATEMENT:  SELECT
+	        COUNT(*) as total_executions,
+	        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+	        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+	        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
+	      FROM workflow_executions
+	      WHERE user_id = $1
+	        AND executed_at >= DATE_TRUNC('month', NOW())
+2026-04-18 14:13:53.217 UTC [137981] ERROR:  column "user_id" does not exist at character 291
+2026-04-18 14:13:53.217 UTC [137981] STATEMENT:  SELECT
+	        COUNT(*) as total_executions,
+	        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+	        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+	        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
+	      FROM workflow_executions
+	      WHERE user_id = $1
+	        AND executed_at >= DATE_TRUNC('month', NOW())
+2026-04-18 14:14:58.386 UTC [41826] LOG:  checkpoint starting: time
+2026-04-18 14:14:58.996 UTC [41826] LOG:  checkpoint complete: wrote 7 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.603 s, sync=0.003 s, total=0.611 s; sync files=7, longest=0.003 s, average=0.001 s; distance=6 kB, estimate=190 kB; lsn=0/1B294C8, redo lsn=0/1B29490
+2026-04-18 14:28:29.068 UTC [147512] ERROR:  column "user_id" does not exist at character 291
+2026-04-18 14:28:29.068 UTC [147512] STATEMENT:  SELECT
+	        COUNT(*) as total_executions,
+	        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+	        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+	        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
+	      FROM workflow_executions
+	      WHERE user_id = $1
+	        AND executed_at >= DATE_TRUNC('month', NOW())
+2026-04-18 14:28:29.157 UTC [147513] ERROR:  column "user_id" does not exist at character 291
+2026-04-18 14:28:29.157 UTC [147513] STATEMENT:  SELECT
+	        COUNT(*) as total_executions,
+	        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+	        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+	        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
+	      FROM workflow_executions
+	      WHERE user_id = $1
+	        AND executed_at >= DATE_TRUNC('month', NOW())
+2026-04-18 14:29:59.251 UTC [41826] LOG:  checkpoint starting: time
+2026-04-18 14:30:00.163 UTC [41826] LOG:  checkpoint complete: wrote 10 buffers (0.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.903 s, sync=0.004 s, total=0.912 s; sync files=10, longest=0.003 s, average=0.001 s; distance=12 kB, estimate=173 kB; lsn=0/1B2C4D0, redo lsn=0/1B2C498
+2026-04-18 14:30:40.433 UTC [148454] ERROR:  column "user_id" does not exist at character 291
+2026-04-18 14:30:40.433 UTC [148454] STATEMENT:  SELECT
+	        COUNT(*) as total_executions,
+	        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+	        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+	        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
+	      FROM workflow_executions
+	      WHERE user_id = $1
+	        AND executed_at >= DATE_TRUNC('month', NOW())
+2026-04-18 14:30:40.459 UTC [148453] ERROR:  column "user_id" does not exist at character 291
+2026-04-18 14:30:40.459 UTC [148453] STATEMENT:  SELECT
+	        COUNT(*) as total_executions,
+	        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+	        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+	        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
+	      FROM workflow_executions
+	      WHERE user_id = $1
+	        AND executed_at >= DATE_TRUNC('month', NOW())
+2026-04-18 23:34:19.713 UTC [36005] LOG:  starting PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+2026-04-18 23:34:19.713 UTC [36005] LOG:  listening on IPv6 address "::1", port 5433
+2026-04-18 23:34:19.713 UTC [36005] LOG:  listening on IPv4 address "127.0.0.1", port 5433
+2026-04-18 23:34:19.716 UTC [36005] FATAL:  could not create lock file "/var/run/postgresql/.s.PGSQL.5433.lock": Permission denied
+2026-04-18 23:34:19.719 UTC [36005] LOG:  database system is shut down
+2026-04-18 23:35:55.528 UTC [38940] LOG:  starting PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+2026-04-18 23:35:55.528 UTC [38940] LOG:  listening on IPv6 address "::1", port 5433
+2026-04-18 23:35:55.528 UTC [38940] LOG:  listening on IPv4 address "127.0.0.1", port 5433
+2026-04-18 23:35:55.531 UTC [38940] LOG:  listening on Unix socket "/workspaces/resiq-crm/.postgres/run/.s.PGSQL.5433"
+2026-04-18 23:35:55.540 UTC [38943] LOG:  database system was interrupted; last known up at 2026-04-18 14:30:00 UTC
+2026-04-18 23:35:55.754 UTC [38943] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-04-18 23:35:55.759 UTC [38943] LOG:  redo starts at 0/1B2C498
+2026-04-18 23:35:55.759 UTC [38943] LOG:  invalid record length at 0/1B2C580: expected at least 24, got 0
+2026-04-18 23:35:55.759 UTC [38943] LOG:  redo done at 0/1B2C548 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-04-18 23:35:55.764 UTC [38941] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-04-18 23:35:55.772 UTC [38941] LOG:  checkpoint complete: wrote 2 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.001 s, total=0.010 s; sync files=3, longest=0.001 s, average=0.001 s; distance=0 kB, estimate=0 kB; lsn=0/1B2C580, redo lsn=0/1B2C580
+2026-04-18 23:35:55.777 UTC [38940] LOG:  database system is ready to accept connections
+2026-04-18 23:36:22.615 UTC [40281] ERROR:  column "user_id" does not exist at character 291
+2026-04-18 23:36:22.615 UTC [40281] STATEMENT:  SELECT
+	        COUNT(*) as total_executions,
+	        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+	        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+	        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
+	      FROM workflow_executions
+	      WHERE user_id = $1
+	        AND executed_at >= DATE_TRUNC('month', NOW())
+2026-04-18 23:36:23.025 UTC [40255] ERROR:  column "user_id" does not exist at character 291
+2026-04-18 23:36:23.025 UTC [40255] STATEMENT:  SELECT
+	        COUNT(*) as total_executions,
+	        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+	        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+	        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
+	      FROM workflow_executions
+	      WHERE user_id = $1
+	        AND executed_at >= DATE_TRUNC('month', NOW())
+2026-04-18 23:36:26.372 UTC [40283] ERROR:  relation "proposals" does not exist at character 93
+2026-04-18 23:36:26.372 UTC [40283] STATEMENT:  
+	      SELECT p.*,
+	        d.title AS deal_title,
+	        c.name AS contact_name
+	      FROM proposals p
+	      LEFT JOIN deals d ON d.id = p.deal_id
+	      LEFT JOIN contacts c ON c.id = d.contact_id
+	      WHERE p.user_id = $1
+	      
+	      ORDER BY p.created_at DESC
+	    
+2026-04-18 23:36:26.418 UTC [40284] ERROR:  relation "proposals" does not exist at character 93
+2026-04-18 23:36:26.418 UTC [40284] STATEMENT:  
+	      SELECT p.*,
+	        d.title AS deal_title,
+	        c.name AS contact_name
+	      FROM proposals p
+	      LEFT JOIN deals d ON d.id = p.deal_id
+	      LEFT JOIN contacts c ON c.id = d.contact_id
+	      WHERE p.user_id = $1
+	      
+	      ORDER BY p.created_at DESC
+	    
+2026-04-18 23:36:28.100 UTC [40282] ERROR:  relation "invoices" does not exist at character 128
+2026-04-18 23:36:28.100 UTC [40282] STATEMENT:  
+	      SELECT i.*,
+	        d.title AS deal_title,
+	        c.name AS contact_name,
+	        p.title AS proposal_title
+	      FROM invoices i
+	      LEFT JOIN deals d ON d.id = i.deal_id
+	      LEFT JOIN contacts c ON c.id = d.contact_id
+	      LEFT JOIN proposals p ON p.id = i.proposal_id
+	      WHERE i.user_id = $1 
+	      ORDER BY i.created_at DESC
+	    
+2026-04-18 23:36:28.110 UTC [40314] ERROR:  relation "proposals" does not exist at character 93
+2026-04-18 23:36:28.110 UTC [40314] STATEMENT:  
+	      SELECT p.*,
+	        d.title AS deal_title,
+	        c.name AS contact_name
+	      FROM proposals p
+	      LEFT JOIN deals d ON d.id = p.deal_id
+	      LEFT JOIN contacts c ON c.id = d.contact_id
+	      WHERE p.user_id = $1
+	      
+	      ORDER BY p.created_at DESC
+	    
+2026-04-18 23:36:28.500 UTC [40315] ERROR:  relation "invoices" does not exist at character 128
+2026-04-18 23:36:28.500 UTC [40315] STATEMENT:  
+	      SELECT i.*,
+	        d.title AS deal_title,
+	        c.name AS contact_name,
+	        p.title AS proposal_title
+	      FROM invoices i
+	      LEFT JOIN deals d ON d.id = i.deal_id
+	      LEFT JOIN contacts c ON c.id = d.contact_id
+	      LEFT JOIN proposals p ON p.id = i.proposal_id
+	      WHERE i.user_id = $1 
+	      ORDER BY i.created_at DESC
+	    
+2026-04-18 23:36:28.509 UTC [40316] ERROR:  relation "proposals" does not exist at character 93
+2026-04-18 23:36:28.509 UTC [40316] STATEMENT:  
+	      SELECT p.*,
+	        d.title AS deal_title,
+	        c.name AS contact_name
+	      FROM proposals p
+	      LEFT JOIN deals d ON d.id = p.deal_id
+	      LEFT JOIN contacts c ON c.id = d.contact_id
+	      WHERE p.user_id = $1
+	      
+	      ORDER BY p.created_at DESC
+	    
+2026-04-18 23:46:09.028 UTC [46592] ERROR:  relation "proposals" does not exist
+2026-04-18 23:46:09.028 UTC [46592] STATEMENT:  CREATE TABLE IF NOT EXISTS invoices (
+	  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+	  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	  deal_id UUID REFERENCES deals(id) ON DELETE SET NULL,
+	  proposal_id UUID REFERENCES proposals(id) ON DELETE SET NULL,
+	  invoice_number TEXT NOT NULL,
+	  title TEXT NOT NULL,
+	  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'sent', 'paid', 'overdue')),
+	  line_items JSONB NOT NULL DEFAULT '[]',
+	  notes TEXT,
+	  due_date DATE,
+	  sent_at TIMESTAMPTZ,
+	  paid_at TIMESTAMPTZ,
+	  stripe_payment_url TEXT,
+	  created_at TIMESTAMPTZ DEFAULT NOW(),
+	  updated_at TIMESTAMPTZ DEFAULT NOW()
+	);
+2026-04-18 23:46:09.031 UTC [46592] ERROR:  relation "invoices" does not exist
+2026-04-18 23:46:09.031 UTC [46592] STATEMENT:  CREATE INDEX IF NOT EXISTS idx_invoices_user_id ON invoices(user_id);
+2026-04-18 23:46:09.031 UTC [46592] ERROR:  relation "invoices" does not exist
+2026-04-18 23:46:09.031 UTC [46592] STATEMENT:  CREATE INDEX IF NOT EXISTS idx_invoices_deal_id ON invoices(deal_id);
+2026-04-18 23:46:09.031 UTC [46592] ERROR:  relation "invoices" does not exist
+2026-04-18 23:46:09.031 UTC [46592] STATEMENT:  CREATE INDEX IF NOT EXISTS idx_invoices_proposal_id ON invoices(proposal_id);
+2026-04-18 23:46:09.031 UTC [46592] ERROR:  relation "invoices" does not exist
+2026-04-18 23:46:09.031 UTC [46592] STATEMENT:  CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+2026-04-18 23:46:09.031 UTC [46592] ERROR:  relation "invoices" does not exist
+2026-04-18 23:46:09.031 UTC [46592] STATEMENT:  GRANT SELECT, INSERT, UPDATE, DELETE ON invoices TO resiq;
+2026-04-18 23:50:56.072 UTC [38941] LOG:  checkpoint starting: time
+2026-04-18 23:51:03.909 UTC [38941] LOG:  checkpoint complete: wrote 79 buffers (0.5%); 0 WAL file(s) added, 0 removed, 0 recycled; write=7.819 s, sync=0.013 s, total=7.837 s; sync files=75, longest=0.006 s, average=0.001 s; distance=385 kB, estimate=385 kB; lsn=0/1B8CC48, redo lsn=0/1B8CC10
+2026-04-18 23:54:49.824 UTC [58128] ERROR:  column "user_id" does not exist at character 291
+2026-04-18 23:54:49.824 UTC [58128] STATEMENT:  SELECT
+	        COUNT(*) as total_executions,
+	        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
+	        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+	        COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
+	      FROM workflow_executions
+	      WHERE user_id = $1
+	        AND executed_at >= DATE_TRUNC('month', NOW())
+2026-04-18 23:55:57.009 UTC [38941] LOG:  checkpoint starting: time
+2026-04-18 23:55:58.422 UTC [38941] LOG:  checkpoint complete: wrote 14 buffers (0.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=1.404 s, sync=0.004 s, total=1.413 s; sync files=6, longest=0.004 s, average=0.001 s; distance=21 kB, estimate=349 kB; lsn=0/1B920A0, redo lsn=0/1B92068
