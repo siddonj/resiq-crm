@@ -2,6 +2,7 @@ const express = require('express');
 const auth = require('../middleware/auth');
 const pool = require('../models/db');
 const Client = require('../models/client');
+const { sendProposalSentEmail, sendInvoiceSentEmail } = require('../services/clientNotifications');
 
 const router = express.Router();
 
@@ -250,19 +251,40 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
     // Share item
     await Client.shareItem(clientId, itemType, itemId, req.user.id);
 
-    // If proposal or invoice, update sent_at if not already sent
+    // If proposal or invoice, update sent_at and send email notification
     if (itemType === 'proposal') {
-      await pool.query(
+      const result = await pool.query(
         `UPDATE proposals SET sent_at = NOW(), status = CASE WHEN status = 'draft' THEN 'sent' ELSE status END
-         WHERE id = $1 AND sent_at IS NULL`,
+         WHERE id = $1 AND sent_at IS NULL
+         RETURNING title`,
         [itemId]
       );
+      
+      // Send email notification to client
+      if (result.rows[0]) {
+        try {
+          await sendProposalSentEmail(client.email, client.name, result.rows[0].title);
+        } catch (emailErr) {
+          console.warn('Failed to send proposal email:', emailErr.message);
+        }
+      }
     } else if (itemType === 'invoice') {
-      await pool.query(
+      const result = await pool.query(
         `UPDATE invoices SET sent_at = NOW(), status = CASE WHEN status = 'draft' THEN 'sent' ELSE status END
-         WHERE id = $1 AND sent_at IS NULL`,
+         WHERE id = $1 AND sent_at IS NULL
+         RETURNING line_items, due_date`,
         [itemId]
       );
+      
+      // Send email notification to client
+      if (result.rows[0]) {
+        try {
+          const amount = result.rows[0].line_items.reduce((sum, item) => sum + (item.amount || 0), 0);
+          await sendInvoiceSentEmail(client.email, client.name, itemId, amount, result.rows[0].due_date);
+        } catch (emailErr) {
+          console.warn('Failed to send invoice email:', emailErr.message);
+        }
+      }
     }
 
     res.json({ success: true, message: `${itemType} shared with client` });

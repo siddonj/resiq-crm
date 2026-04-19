@@ -1,9 +1,14 @@
 const express = require('express');
+const multer = require('multer');
 const clientAuth = require('../middleware/clientAuth');
+const auth = require('../middleware/auth');
 const Client = require('../models/client');
 const pool = require('../models/db');
+const { sendProposalSignedConfirmation, sendInvoicePaidConfirmation, sendProposalSentEmail, sendInvoiceSentEmail } = require('../services/clientNotifications');
+const { uploadFile, downloadFile, deleteFile, getSignedUrl } = require('../services/fileStorage');
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 /**
  * GET /api/client/proposals
@@ -127,6 +132,8 @@ router.patch('/proposals/:proposalId/sign', clientAuth, async (req, res) => {
       [signatureName.trim(), proposalId]
     );
 
+    const proposal = result.rows[0];
+
     // Log activity
     await Client.logActivity(
       req.client.id,
@@ -135,7 +142,33 @@ router.patch('/proposals/:proposalId/sign', clientAuth, async (req, res) => {
       req.ip
     );
 
-    res.json(result.rows[0]);
+    // Send confirmation email to employee (get employee from deal if available)
+    if (proposal.deal_id) {
+      try {
+        const dealResult = await pool.query(
+          'SELECT user_id FROM deals WHERE id = $1',
+          [proposal.deal_id]
+        );
+        if (dealResult.rows[0]) {
+          const userResult = await pool.query(
+            'SELECT email FROM users WHERE id = $1',
+            [dealResult.rows[0].user_id]
+          );
+          if (userResult.rows[0]) {
+            await sendProposalSignedConfirmation(
+              userResult.rows[0].email,
+              req.client.name,
+              proposal.title,
+              proposal.signed_at
+            );
+          }
+        }
+      } catch (emailErr) {
+        console.warn('Failed to send signed confirmation email:', emailErr.message);
+      }
+    }
+
+    res.json(proposal);
   } catch (err) {
     console.error('Error signing proposal:', err);
     res.status(500).json({ error: 'Server error' });
@@ -333,19 +366,21 @@ router.get('/files/:fileId/download', clientAuth, async (req, res) => {
       req.ip
     );
 
-    // In a real implementation, you would:
+     // In a real implementation, you would:
     // 1. Check if file exists at file.file_path
     // 2. Stream the file to the client
     // 3. Set appropriate headers (Content-Type, Content-Disposition, etc)
 
-    // For now, return metadata and the file path (client would fetch from S3, etc)
+    // Get signed URL for cloud storage or return local path
+    const downloadUrl = await getSignedUrl(file.file_path);
+
     res.json({
       file: {
         id: file.id,
         name: file.file_name,
         size: file.file_size,
         type: file.mime_type,
-        path: file.file_path, // Client would use this to download from S3, etc
+        downloadUrl, // Client can redirect to this URL
       },
     });
   } catch (err) {
@@ -403,6 +438,61 @@ router.get('/me', clientAuth, async (req, res) => {
   } catch (err) {
     console.error('Error fetching client profile:', err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/client/files/upload
+ * Employee uploads a file to share with client
+ * Requires: auth, formData with file
+ */
+router.post('/files/upload', auth, upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file provided' });
+  }
+
+  const { clientId, description } = req.body;
+
+  if (!clientId) {
+    return res.status(400).json({ error: 'clientId is required' });
+  }
+
+  try {
+    // Verify client exists
+    const client = await Client.findById(clientId);
+    if (!client) {
+      return res.status(404).json({ error: 'Client not found' });
+    }
+
+    // Upload file to storage backend
+    const fileInfo = await uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype);
+
+    // Store file metadata in database
+    const result = await pool.query(
+      `INSERT INTO client_files (file_name, file_path, file_size, mime_type, uploaded_by, description, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       RETURNING id`,
+      [req.file.originalname, fileInfo.storagePath, fileInfo.size, fileInfo.mimeType, req.user.id, description || null]
+    );
+
+    const fileId = result.rows[0].id;
+
+    // Share file with client
+    await Client.shareItem(clientId, 'file', fileId, req.user.id);
+
+    res.status(201).json({
+      success: true,
+      file: {
+        id: fileId,
+        name: req.file.originalname,
+        size: fileInfo.size,
+        type: fileInfo.mimeType,
+        url: fileInfo.url,
+      },
+    });
+  } catch (err) {
+    console.error('Error uploading file:', err);
+    res.status(500).json({ error: 'Failed to upload file' });
   }
 });
 

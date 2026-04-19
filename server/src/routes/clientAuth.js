@@ -1,26 +1,11 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const nodemailer = require('nodemailer');
 const Client = require('../models/client');
 const clientAuth = require('../middleware/clientAuth');
+const { sendClientInvitationEmail } = require('../services/clientNotifications');
 
 const router = express.Router();
-
-// Initialize email service (uses existing Gmail config or fallback SMTP)
-const getEmailTransporter = () => {
-  // For now, use simple SMTP or Gmail if configured
-  // In production, use existing email service from integrations
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: process.env.SMTP_PORT || 587,
-    secure: false,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
-};
 
 /**
  * POST /api/auth/client/invite
@@ -46,32 +31,7 @@ router.post('/client/invite', async (req, res) => {
     const invitation = await Client.createInvitation(email.toLowerCase(), req.user?.id || null);
 
     // Send invitation email
-    try {
-      const inviteLink = `${process.env.CLIENT_PORTAL_URL || 'http://localhost:3000'}/client/verify/${invitation.token}`;
-      const transporter = getEmailTransporter();
-
-      await transporter.sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: email,
-        subject: 'You\'re invited to access your project',
-        html: `
-          <p>Hi ${name},</p>
-          <p>You've been invited to access your project portal. Click the link below to get started:</p>
-          <p><a href="${inviteLink}" style="display:inline-block;padding:10px 20px;background:#3B82F6;color:white;text-decoration:none;border-radius:5px;">
-            Access Your Portal
-          </a></p>
-          <p>This link expires in 48 hours.</p>
-          <p>If you didn't expect this invitation, you can safely ignore this email.</p>
-        `,
-      });
-    } catch (emailErr) {
-      console.error('Failed to send invitation email:', emailErr);
-      // Don't fail the request, but warn
-      return res.status(201).json({
-        warning: 'Invitation created but email failed to send',
-        invitation: { id: invitation.id, email },
-      });
-    }
+    const emailSent = await sendClientInvitationEmail(email, name, invitation.token);
 
     res.status(201).json({
       success: true,
