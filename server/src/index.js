@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 const authRoutes = require('./routes/auth');
 const clientAuthRoutes = require('./routes/clientAuth');
@@ -93,6 +94,15 @@ const server = app.listen(PORT, async () => {
     console.warn('Email sync will not work until Redis is available');
   }
 });
+
+// Serve React client in production
+if (process.env.NODE_ENV === 'production') {
+  const clientDist = path.join(__dirname, '../../client/dist');
+  app.use(express.static(clientDist));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+}
 
 // Handle graceful shutdown
 process.on('SIGTERM', () => {

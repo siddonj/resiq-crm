@@ -1,22 +1,197 @@
-# ResiQ CRM - Deployment & Testing Guide
+# ResiQ CRM — Deployment Guide
 
-## Local Development Setup
+## Architecture
 
-### Prerequisites
+```
+Internet → Nginx (80/443) → Node App (5000) → PostgreSQL + Redis
+```
 
-- **Node.js** 20+ ([download](https://nodejs.org))
-- **Docker & Docker Compose** ([download](https://www.docker.com/products/docker-desktop))
-- **PostgreSQL client** (optional, for CLI access)
-- **git** for version control
+All four services run as Docker containers on a single VPS via Docker Compose.
 
-### Quick Start (With Docker Compose)
+---
+
+## VPS Requirements
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| CPU | 1 vCPU | 2 vCPU |
+| RAM | 2 GB | 4 GB |
+| Disk | 20 GB | 40 GB |
+| OS | Ubuntu 22.04 | Ubuntu 22.04 |
+
+**Recommended VPS providers:** DigitalOcean, Hetzner, Linode, Vultr
+**Estimated cost:** $12–24/month
+
+---
+
+## First-Time Server Setup
 
 ```bash
-# 1. Start PostgreSQL and Redis
-docker-compose up -d
+# 1. Update the server
+sudo apt update && sudo apt upgrade -y
 
-# 2. Install dependencies
+# 2. Install Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+
+# 3. Install Docker Compose plugin
+sudo apt install -y docker-compose-plugin
+
+# 4. Log out and back in (for docker group to take effect)
+exit
+```
+
+---
+
+## Deploy ResiQ CRM
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/YOUR_ORG/resiq-crm.git
+cd resiq-crm
+
+# 2. Copy and fill in environment variables
+cp .env.example .env
+nano .env   # Fill in all values
+
+# 3. Replace YOUR_DOMAIN.com with your actual domain
+export DOMAIN=yourdomain.com
+export EMAIL=admin@yourdomain.com
+
+# 4. Run the deploy script
+chmod +x deploy.sh
+./deploy.sh
+```
+
+---
+
+## Environment Variables
+
+See `.env.example` for all required variables. Key ones:
+
+| Variable | Description |
+|----------|-------------|
+| `JWT_SECRET` | Random 64-char string for auth tokens |
+| `POSTGRES_PASSWORD` | Strong database password |
+| `REDIS_PASSWORD` | Redis password |
+| `TWILIO_*` | Twilio SMS credentials |
+| `STRIPE_*` | Stripe payment credentials |
+| `GOOGLE_*` | Google OAuth for calendar sync |
+
+Generate a secure JWT secret:
+```bash
+openssl rand -hex 32
+```
+
+---
+
+## SSL Certificate (Let's Encrypt)
+
+The deploy script handles this automatically. To renew manually:
+```bash
+docker compose run --rm certbot renew
+docker compose restart nginx
+```
+
+Certificates auto-renew every 12 hours via the certbot container.
+
+---
+
+## Database Migrations
+
+Migrations run automatically on first start (`/docker-entrypoint-initdb.d`).
+
+To run manually:
+```bash
+docker compose exec postgres psql -U resiq -d resiq_crm \
+  -f /docker-entrypoint-initdb.d/001-initial.sql
+```
+
+---
+
+## Daily Operations
+
+```bash
+# Check status
+docker compose ps
+
+# View logs
+docker compose logs -f app
+docker compose logs -f nginx
+
+# Restart app only
+docker compose restart app
+
+# Full restart
+docker compose down && docker compose up -d
+
+# Update to latest code
+git pull
+docker compose build app --no-cache
+docker compose up -d app
+```
+
+---
+
+## Database Backup
+
+```bash
+# Backup
+docker compose exec postgres pg_dump -U resiq resiq_crm > backup_$(date +%Y%m%d).sql
+
+# Restore
+docker compose exec -T postgres psql -U resiq resiq_crm < backup_20260419.sql
+```
+
+Set up automated daily backups with cron:
+```bash
+crontab -e
+# Add:
+0 2 * * * cd /path/to/resiq-crm && docker compose exec postgres pg_dump -U resiq resiq_crm > /backups/backup_$(date +\%Y\%m\%d).sql
+```
+
+---
+
+## Monitoring
+
+```bash
+# Container resource usage
+docker stats
+
+# App health
+curl https://yourdomain.com/api/webhooks/health
+
+# Disk usage
+df -h
+docker system df
+```
+
+---
+
+## Local Development
+
+```bash
+# Start infrastructure only
+docker compose up -d postgres redis
+
+# Install dependencies
 npm run install:all
+
+# Start dev server (hot reload)
+npm run dev
+```
+
+---
+
+## Updating the App
+
+```bash
+git pull origin main
+docker compose build app --no-cache
+docker compose up -d app
+# Zero-downtime: Docker Compose restarts only the app container
+```
+
 
 # 3. Copy and configure environment
 cp server/.env.example server/.env
