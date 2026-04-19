@@ -6,14 +6,62 @@
 const express = require('express');
 const router = express.Router();
 
-const { authenticate } = require('../middleware/auth');
+const authenticate = require('../middleware/auth');
 const SMS = require('../models/SMS');
 const SMSTemplate = require('../models/SMSTemplate');
-const Contact = require('../models/Contact');
+const Client = require('../models/client');
+const pool = require('../models/db');
 const TwilioService = require('../services/twilioService');
 const WebhookReceiverService = require('../services/webhookReceiver');
 const { MessageQueueService } = require('../services/messageQueue');
-const Activity = require('../models/Activity');
+
+// Helper to get client by ID
+async function getContact(contactId) {
+  try {
+    return await Client.findById(contactId);
+  } catch (err) {
+    return null;
+  }
+}
+
+// Helper to update contact
+async function updateContact(contactId, updates) {
+  const fields = [];
+  const values = [];
+  let paramCount = 1;
+  
+  if (updates.sms_opted_in !== undefined) {
+    fields.push(`sms_opted_in = $${paramCount}`);
+    values.push(updates.sms_opted_in);
+    paramCount++;
+  }
+  if (updates.phone_number !== undefined) {
+    fields.push(`phone_number = $${paramCount}`);
+    values.push(updates.phone_number);
+    paramCount++;
+  }
+  
+  if (fields.length === 0) return;
+  
+  values.push(contactId);
+  await pool.query(
+    `UPDATE clients SET ${fields.join(', ')} WHERE id = $${paramCount}`,
+    values
+  );
+}
+
+// Helper to log activity
+async function logActivity(metadata) {
+  // Activity logging is optional - just warn if it fails
+  try {
+    const Activity = require('../models/Activity');
+    if (Activity && Activity.log) {
+      await logActivity(metadata);
+    }
+  } catch (err) {
+    console.warn('Could not log activity:', err.message);
+  }
+}
 
 /**
  * POST /api/sms/send
@@ -30,7 +78,7 @@ router.post('/send', authenticate, async (req, res) => {
     }
 
     // Get contact
-    const contact = await Contact.getById(contactId);
+    const contact = await getContact(contactId);
     if (!contact) {
       return res.status(404).json({ error: 'Contact not found' });
     }
@@ -101,7 +149,7 @@ router.post('/send', authenticate, async (req, res) => {
     }
 
     // Log as activity
-    await Activity.log({
+    await logActivity({
       userId,
       contactId,
       actionType: 'sms_sent',
@@ -155,7 +203,7 @@ router.post('/send-batch', authenticate, async (req, res) => {
 
     for (const contactId of contactIds) {
       try {
-        const contact = await Contact.getById(contactId);
+        const contact = await getContact(contactId);
 
         if (!contact) {
           results.skipped.push({ contactId, reason: 'Contact not found' });
@@ -205,7 +253,7 @@ router.post('/send-batch', authenticate, async (req, res) => {
           results.sent.push({ contactId, messageId: message.id });
 
           // Log activity
-          await Activity.log({
+          await logActivity({
             userId,
             contactId,
             actionType: 'sms_sent',
@@ -247,7 +295,7 @@ router.get('/:contactId/history', authenticate, async (req, res) => {
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
     // Verify contact exists
-    const contact = await Contact.getById(contactId);
+    const contact = await getContact(contactId);
     if (!contact) {
       return res.status(404).json({ error: 'Contact not found' });
     }
@@ -465,7 +513,7 @@ router.post('/:contactId/optout', authenticate, async (req, res) => {
     const { contactId } = req.params;
     const userId = req.user.id;
 
-    const contact = await Contact.getById(contactId);
+    const contact = await getContact(contactId);
     if (!contact) {
       return res.status(404).json({ error: 'Contact not found' });
     }
@@ -490,10 +538,10 @@ router.post('/:contactId/optout', authenticate, async (req, res) => {
     );
 
     // Update contact SMS preferences
-    await Contact.update(contactId, { sms_opted_in: false });
+    await updateContact(contactId, { sms_opted_in: false });
 
     // Log activity
-    await Activity.log({
+    await logActivity({
       userId,
       contactId,
       actionType: 'sms_optout',
@@ -519,7 +567,7 @@ router.post('/:contactId/optin', authenticate, async (req, res) => {
     const { contactId } = req.params;
     const userId = req.user.id;
 
-    const contact = await Contact.getById(contactId);
+    const contact = await getContact(contactId);
     if (!contact) {
       return res.status(404).json({ error: 'Contact not found' });
     }
@@ -536,13 +584,13 @@ router.post('/:contactId/optin', authenticate, async (req, res) => {
     );
 
     // Update contact SMS preferences
-    await Contact.update(contactId, { 
+    await updateContact(contactId, { 
       sms_opted_in: true,
       sms_opted_in_at: new Date()
     });
 
     // Log activity
-    await Activity.log({
+    await logActivity({
       userId,
       contactId,
       actionType: 'sms_optin',

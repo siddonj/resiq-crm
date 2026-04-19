@@ -3,7 +3,7 @@
  * Handles template management and variable substitution
  */
 
-const { db } = require('./index');
+const db = require('./db');
 
 class SMSTemplate {
   /**

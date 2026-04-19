@@ -3,7 +3,7 @@
  * Handles all SMS message operations and queries
  */
 
-const { db } = require('./index');
+const db = require('./db');
 
 class SMS {
   /**

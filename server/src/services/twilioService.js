@@ -6,7 +6,7 @@
 const twilio = require('twilio');
 const libphonenumber = require('libphonenumber-js');
 const SMS = require('../models/SMS');
-const Contact = require('../models/Contact');
+const pool = require('../models/db');
 
 // Twilio client initialization (optional - server continues without it)
 let twilioClient = null;
@@ -154,8 +154,11 @@ class TwilioService {
     }
 
     // Find contact by phone number
-    const Contact = require('../models/Contact');
-    const contact = await Contact.findByPhoneNumber(phoneFrom);
+    const contactResult = await pool.query(
+      'SELECT id FROM clients WHERE phone_number = $1 LIMIT 1',
+      [phoneFrom]
+    );
+    const contact = contactResult.rows[0];
 
     if (!contact) {
       console.warn(`⚠️  Inbound SMS from unknown number: ${phoneFrom}`);
@@ -288,10 +291,8 @@ class TwilioService {
     }
 
     try {
-      const { db } = require('../models/index');
-
       // Insert or update opt-out record
-      const result = await db.query(
+      const result = await pool.query(
         `INSERT INTO sms_optouts (contact_id, phone_number, reason)
          VALUES ($1, $2, 'stop_keyword')
          ON CONFLICT (contact_id) DO UPDATE SET reason = 'stop_keyword', opted_out_at = NOW()
@@ -300,19 +301,29 @@ class TwilioService {
       );
 
       // Update contact SMS preferences
-      await Contact.update(contactId, { sms_opted_in: false });
+      await pool.query(
+        'UPDATE clients SET sms_opted_in = false WHERE id = $1',
+        [contactId]
+      );
 
-      // Log as activity
-      const Activity = require('../models/Activity');
-      await Activity.log({
-        userId: null,
-        contactId,
-        actionType: 'sms_optout',
-        metadata: {
-          reason: 'stop_keyword',
-          phoneNumber
+      // Log as activity (optional - Activity model may not exist)
+      try {
+        const Activity = require('../models/Activity');
+        if (Activity && Activity.log) {
+          await Activity.log({
+            userId: null,
+            contactId,
+            actionType: 'sms_optout',
+            metadata: {
+              reason: 'stop_keyword',
+              phoneNumber
+            }
+          });
         }
-      });
+      } catch (activityErr) {
+        // Activity logging is optional
+        console.warn('Could not log activity:', activityErr.message);
+      }
 
       console.log(`✓ Contact ${contactId} opted out (STOP keyword)`);
 
