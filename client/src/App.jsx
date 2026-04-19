@@ -17,6 +17,7 @@ import TimeTracking from './pages/TimeTracking'
 import Calendar from './pages/Calendar'
 import BookingPage from './pages/BookingPage'
 import ClientPortalApp from './ClientApp'
+import Help from './pages/Help'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -47,6 +48,7 @@ function AppRoutes() {
         <Route path="invoices" element={<Invoices />} />
         <Route path="time-tracking" element={<TimeTracking />} />
         <Route path="calendar" element={<Calendar />} />
+        <Route path="help" element={<Help />} />
       </Route>
     </Routes>
   )

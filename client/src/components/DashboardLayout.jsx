@@ -11,6 +11,7 @@ const navItems = [
   { to: '/invoices', label: 'Invoices', icon: '🧾' },
   { to: '/time-tracking', label: 'Time Tracking', icon: '⏱' },
   { to: '/calendar', label: 'Calendar', icon: '📅' },
+  { to: '/help', label: 'Help', icon: '❓' },
   { to: '/settings', label: 'Settings', icon: '⚙️' },
 ]
 
