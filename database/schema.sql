@@ -88,7 +88,7 @@ CREATE TABLE tags (
   name TEXT NOT NULL,
   color TEXT DEFAULT '#3B82F6',
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(user_id, LOWER(name))
+  UNIQUE(user_id, name)
 );
 
 CREATE TABLE contact_tags (

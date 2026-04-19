@@ -3,6 +3,9 @@ const express = require('express');
 const cors = require('cors');
 
 const authRoutes = require('./routes/auth');
+const clientAuthRoutes = require('./routes/clientAuth');
+const clientPortalRoutes = require('./routes/clientPortal');
+const clientsRoutes = require('./routes/clients');
 const contactsRoutes = require('./routes/contacts');
 const dealsRoutes = require('./routes/deals');
 const workflowsRoutes = require('./routes/workflows');
@@ -34,6 +37,9 @@ dealsRoutes.setWorkflowEngine(workflowEngine);
 contactsRoutes.setWorkflowEngine(workflowEngine);
 
 app.use('/api/auth', authRoutes);
+app.use('/api/auth', clientAuthRoutes);
+app.use('/api/client', clientPortalRoutes);
+app.use('/api/clients', clientsRoutes);
 app.use('/api/contacts', contactsRoutes);
 app.use('/api/deals', dealsRoutes);
 app.use('/api/workflows', workflowsRoutes);
