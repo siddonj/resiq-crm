@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useClientAuth } from '../context/ClientAuthContext'
+import { useClientAuth } from '../../context/ClientAuthContext'
 
 export default function ClientLogin() {
   const [searchParams] = useSearchParams()

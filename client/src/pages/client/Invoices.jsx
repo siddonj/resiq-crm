@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useClientAuth } from '../context/ClientAuthContext'
+import { useClientAuth } from '../../context/ClientAuthContext'
 
 export default function ClientInvoices() {
   const { token } = useClientAuth()
