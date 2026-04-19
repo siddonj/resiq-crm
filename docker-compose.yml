@@ -46,8 +46,6 @@ services:
       dockerfile: Dockerfile
     container_name: resiq-app
     restart: unless-stopped
-    ports:
-      - "5000:5000"
     env_file:
       - .env
     environment:
@@ -65,46 +63,26 @@ services:
       timeout: 10s
       start_period: 40s
       retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.resiq.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.resiq.entrypoints=websecure"
+      - "traefik.http.routers.resiq.tls.certresolver=letsencrypt"
+      - "traefik.http.services.resiq.loadbalancer.server.port=5000"
+      - "traefik.docker.network=traefik"
     networks:
       - resiq-network
-
-  # Nginx Reverse Proxy
-  nginx:
-    image: nginx:alpine
-    container_name: resiq-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - certbot_data:/etc/letsencrypt:ro
-      - certbot_www:/var/www/certbot:ro
-    depends_on:
-      - app
-    networks:
-      - resiq-network
-
-  # Certbot for SSL (Let's Encrypt)
-  certbot:
-    image: certbot/certbot
-    container_name: resiq-certbot
-    volumes:
-      - certbot_data:/etc/letsencrypt
-      - certbot_www:/var/www/certbot
-    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+      - traefik
 
 volumes:
   postgres_data:
     driver: local
   redis_data:
     driver: local
-  certbot_data:
-    driver: local
-  certbot_www:
-    driver: local
 
 networks:
   resiq-network:
     driver: bridge
+  # Connect to Traefik's network (already running on Hostinger VPS)
+  traefik:
+    external: true
