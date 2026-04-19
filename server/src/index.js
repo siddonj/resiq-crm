@@ -15,6 +15,9 @@ const sharingRoutes = require('./routes/sharing');
 const remindersRoutes = require('./routes/reminders');
 const activitiesRoutes = require('./routes/activities');
 const proposalsRoutes = require('./routes/proposals');
+const invoicesRoutes = require('./routes/invoices');
+const timeEntriesRoutes = require('./routes/timeEntries');
+const calendarRoutes = require('./routes/calendar');
 const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
 const WorkflowEngine = require('./services/workflowEngine');
@@ -43,6 +46,9 @@ app.use('/api/sharing', sharingRoutes);
 app.use('/api/reminders', remindersRoutes);
 app.use('/api/activities', activitiesRoutes);
 app.use('/api/proposals', proposalsRoutes);
+app.use('/api/invoices', invoicesRoutes);
+app.use('/api/time-entries', timeEntriesRoutes);
+app.use('/api/calendar', calendarRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 

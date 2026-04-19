@@ -9,16 +9,14 @@
 - **Phase 7** — Audit logs
 - **Phase 8** — Resource sharing between users
 - **Phase 9** — Reminders, activity logging, search/filter, settings, CSV exports
+- **Phase 10** — Proposals: section-based builder, pricing table, e-signature, PDF download
+- **Phase 11** — Invoicing: line items (qty/rate/tax/discount), status lifecycle, Stripe payment link, PDF download, auto overdue reminders
+- **Phase 12** — Time Tracking: manual log + start/stop timer, billable flag, deal report, convert to invoice
+- **Phase 13** — Calendar: month/week view, manual events, Google Calendar OAuth sync, public scheduling page (`/book/:slug`)
 
 ---
 
 ## Upcoming
-
-### Phase 10 — Proposals
-Proposal builder tied to deals. Templates with sections (scope, deliverables, pricing table with line items). Status lifecycle: `draft → sent → viewed → signed → declined`. HTML preview + PDF download. Inline e-signature (typed name + timestamp, no third-party required for v1). Proposal page linked from the deal detail.
-
-### Phase 11 — Invoicing
-Invoice generation from a proposal or from scratch. Line items with quantity, rate, tax, and discount. Status: `draft → sent → paid → overdue`. Stripe integration for online payment links. PDF download. Automated overdue reminders via the existing reminders system.
 
 ### Phase 12 — Time Tracking
 Time entries logged against a contact or deal — manual entry or start/stop timer. Billable flag per entry. Time report per deal showing total hours × rate. "Convert to invoice" button that pre-fills invoice line items from logged time. Bridges doing the work and billing for it.

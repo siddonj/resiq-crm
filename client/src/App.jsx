@@ -12,6 +12,10 @@ import Teams from './pages/Teams'
 import AuditLogs from './pages/AuditLogs'
 import Reminders from './pages/Reminders'
 import Proposals from './pages/Proposals'
+import Invoices from './pages/Invoices'
+import TimeTracking from './pages/TimeTracking'
+import Calendar from './pages/Calendar'
+import BookingPage from './pages/BookingPage'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -23,6 +27,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={isAuthenticated ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/book/:slug" element={<BookingPage />} />
       <Route path="/" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
         <Route index element={<Overview />} />
         <Route path="contacts" element={<Contacts />} />
@@ -34,6 +39,9 @@ function AppRoutes() {
         <Route path="users" element={<Users />} />
         <Route path="reminders" element={<Reminders />} />
         <Route path="proposals" element={<Proposals />} />
+        <Route path="invoices" element={<Invoices />} />
+        <Route path="time-tracking" element={<TimeTracking />} />
+        <Route path="calendar" element={<Calendar />} />
       </Route>
     </Routes>
   )

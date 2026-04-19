@@ -8,6 +8,9 @@ const navItems = [
   { to: '/workflows', label: 'Workflows', icon: '⚡' },
   { to: '/reminders', label: 'Reminders', icon: '🔔' },
   { to: '/proposals', label: 'Proposals', icon: '📄' },
+  { to: '/invoices', label: 'Invoices', icon: '🧾' },
+  { to: '/time-tracking', label: 'Time Tracking', icon: '⏱' },
+  { to: '/calendar', label: 'Calendar', icon: '📅' },
   { to: '/settings', label: 'Settings', icon: '⚙️' },
 ]
 

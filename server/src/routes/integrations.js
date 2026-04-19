@@ -1,9 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const GmailService = require('../services/gmail');
+const GoogleCalendarService = require('../services/googleCalendar');
 const tokenManager = require('../services/oauth');
 const auth = require('../middleware/auth');
 const crypto = require('crypto');
+const pool = require('../models/db');
 const { emailSyncQueue } = require('../workers/emailSyncWorker');
 
 // Store state temporarily to prevent CSRF
@@ -254,6 +256,87 @@ router.post('/gmail/sync', auth, async (req, res) => {
   } catch (err) {
     console.error('Error queuing email sync:', err);
     res.status(500).json({ error: 'Failed to queue email sync' });
+  }
+});
+
+// ── Google Calendar OAuth ────────────────────────────────────────────────────
+router.post('/gcal/connect', auth, (req, res) => {
+  try {
+    const state = crypto.randomBytes(32).toString('hex');
+    csrfStates.set(state, req.user.id);
+    setTimeout(() => csrfStates.delete(state), 10 * 60 * 1000);
+    const authUrl = GoogleCalendarService.getAuthUrl(state);
+    res.json({ authUrl });
+  } catch (err) {
+    console.error('Error starting Google Calendar OAuth:', err);
+    res.status(500).json({ error: 'Failed to start Google Calendar connection' });
+  }
+});
+
+router.get('/gcal/callback', async (req, res) => {
+  const { code, state } = req.query;
+  const clientUrl = process.env.API_URL?.replace(':5000', ':5173') || 'http://localhost:5173';
+  if (req.query.error) return res.redirect(`${clientUrl}/settings?error=Google+Calendar+connection+failed`);
+  if (!code || !state) return res.status(400).json({ error: 'Missing code or state' });
+
+  try {
+    const userId = csrfStates.get(state);
+    if (!userId) return res.status(400).json({ error: 'Invalid or expired state' });
+    csrfStates.delete(state);
+
+    const { accessToken, refreshToken, expiresAt } = await GoogleCalendarService.exchangeCodeForTokens(code);
+    await tokenManager.saveTokens(userId, 'gcal', accessToken, refreshToken, expiresAt);
+    res.redirect(`${clientUrl}/settings?success=Google+Calendar+connected`);
+  } catch (err) {
+    console.error('Error handling Google Calendar callback:', err);
+    const clientUrl = process.env.API_URL?.replace(':5000', ':5173') || 'http://localhost:5173';
+    res.redirect(`${clientUrl}/settings?error=Failed+to+connect+Google+Calendar`);
+  }
+});
+
+router.post('/gcal/disconnect', auth, async (req, res) => {
+  try {
+    await tokenManager.deleteTokens(req.user.id, 'gcal');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/gcal/status', auth, async (req, res) => {
+  try {
+    const tokens = await tokenManager.getTokens(req.user.id, 'gcal');
+    res.json({ connected: !!tokens });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Sync Google Calendar events into calendar_events table
+router.post('/gcal/sync', auth, async (req, res) => {
+  try {
+    const now = new Date();
+    const end = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000); // 60 days
+    const items = await GoogleCalendarService.listEvents(req.user.id, now.toISOString(), end.toISOString());
+
+    let synced = 0;
+    for (const item of items) {
+      if (!item.start?.dateTime) continue;
+      await pool.query(
+        `INSERT INTO calendar_events (user_id, title, description, start_at, end_at, google_event_id, source)
+         VALUES ($1, $2, $3, $4, $5, $6, 'google')
+         ON CONFLICT (google_event_id) DO UPDATE SET
+           title = $2, description = $3, start_at = $4, end_at = $5`,
+        [req.user.id, item.summary || '(no title)', item.description || null,
+         item.start.dateTime, item.end.dateTime, item.id]
+      ).catch(() => {});
+      synced++;
+    }
+    res.json({ synced });
+  } catch (err) {
+    if (err.message === 'Google Calendar not connected') return res.status(400).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Sync failed' });
   }
 });
 
