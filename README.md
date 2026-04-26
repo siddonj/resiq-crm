@@ -24,6 +24,7 @@ A full-featured CRM platform for managing contacts, deals, proposals, invoices, 
 | **Settings & CSV Export** | User profile, notification prefs, export any list |
 | **Engagement Tracking** | ✨ *NEW* Pixel-based open tracking for proposals/invoices, real-time engagement timeline |
 | **Support Tickets** | ✨ *NEW* Help Desk with Kanban board, client portal, real-time WebSocket updates |
+| **Reddit Lead Finder** | ✨ *NEW* AI-powered lead discovery from Reddit discussions using Claude MCP, relevance scoring, auto-qualification |
 
 ---
 

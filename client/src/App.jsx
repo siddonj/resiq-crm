@@ -22,6 +22,7 @@ import Help from './pages/Help'
 import Agents from './pages/Agents'
 import Forms from './pages/Forms'
 import HelpDesk from './pages/HelpDesk'
+import RedditLeads from './pages/RedditLeads'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()

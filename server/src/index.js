@@ -34,6 +34,7 @@ const formsRoutes = require('./routes/forms');
 const leadsRoutes = require('./routes/leads');
 const engagementRoutes = require('./routes/engagement');
 const ticketsRoutes = require('./routes/tickets');
+const redditLeadsRoutes = require('./routes/redditLeads');
 const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
 const { agentQueue, initAgentWorker } = require('./workers/agentWorker');
@@ -121,6 +122,7 @@ app.use('/api/forms', formsRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/engagement', engagementRoutes);
 app.use('/api/tickets', ticketsRoutes);
+app.use('/api/reddit-leads', redditLeadsRoutes);
 app.use('/api/track', trackRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));

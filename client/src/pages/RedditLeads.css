@@ -1,0 +1,419 @@
+/* Reddit Leads Styling */
+
+.reddit-leads-container {
+  padding: 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.reddit-leads-container h1 {
+  margin-bottom: 2rem;
+  font-size: 2rem;
+  color: #1f2937;
+}
+
+/* Stats Grid */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.stat-card {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1.5rem;
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.stat-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+.stat-card.highlight {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+}
+
+.stat-value {
+  font-size: 2rem;
+  font-weight: bold;
+  margin-bottom: 0.5rem;
+}
+
+.stat-label {
+  font-size: 0.875rem;
+  opacity: 0.8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Subreddit Breakdown */
+.subreddit-breakdown {
+  background: white;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+  border: 1px solid #e5e7eb;
+}
+
+.subreddit-breakdown h3 {
+  margin-bottom: 1rem;
+  color: #1f2937;
+}
+
+.subreddit-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 1rem;
+}
+
+.subreddit-item {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.subreddit-name {
+  font-weight: 600;
+  color: #ff4500;
+  margin-bottom: 0.5rem;
+}
+
+.subreddit-stats {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.875rem;
+}
+
+.new-badge,
+.relevance-badge {
+  background: #dbeafe;
+  color: #0c4a6e;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-weight: 500;
+}
+
+.new-badge {
+  background: #dcfce7;
+  color: #166534;
+}
+
+/* Search Panel */
+.search-panel {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border-radius: 8px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+}
+
+.search-panel h3 {
+  margin-bottom: 1.5rem;
+  font-size: 1.25rem;
+}
+
+.search-config {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-group label {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+  opacity: 0.9;
+}
+
+.form-group input[type='text'],
+.form-group input[type='range'] {
+  padding: 0.75rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+
+.form-group input[type='text'] {
+  background: rgba(255, 255, 255, 0.95);
+  color: #1f2937;
+}
+
+.form-group input[type='range'] {
+  cursor: pointer;
+}
+
+.relevance-display {
+  margin-top: 0.5rem;
+  font-weight: 600;
+}
+
+/* Filter Bar */
+.filter-bar {
+  margin-bottom: 1.5rem;
+}
+
+.filter-bar select {
+  padding: 0.75rem 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: white;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+/* Leads Table/Grid */
+.leads-table-container {
+  margin-top: 2rem;
+}
+
+.leads-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 1.5rem;
+}
+
+.lead-card {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1.5rem;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.lead-card:hover {
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  transform: translateY(-4px);
+  border-color: #667eea;
+}
+
+.lead-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+  gap: 1rem;
+}
+
+.lead-info {
+  flex: 1;
+}
+
+.lead-title {
+  margin: 0 0 0.5rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1f2937;
+  line-height: 1.4;
+}
+
+.lead-link {
+  color: #ff4500;
+  font-size: 0.875rem;
+  text-decoration: none;
+  display: block;
+}
+
+.lead-link:hover {
+  text-decoration: underline;
+}
+
+.lead-score {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.lead-score .relevance-badge {
+  min-width: 60px;
+  text-align: center;
+  color: white;
+  font-weight: 600;
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+
+/* Lead Content */
+.lead-content {
+  color: #4b5563;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin-bottom: 1rem;
+  max-height: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+/* Keywords */
+.lead-keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  min-height: 2rem;
+}
+
+.keyword-tag {
+  background: #f3f4f6;
+  color: #6b7280;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* Lead Footer */
+.lead-footer {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.status-select {
+  flex: 1;
+  padding: 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  background: white;
+}
+
+.status-select.status-new {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+
+.status-select.status-contacted {
+  border-color: #f59e0b;
+  color: #f59e0b;
+}
+
+.status-select.status-converted {
+  border-color: #10b981;
+  color: #10b981;
+}
+
+.status-select.status-rejected {
+  border-color: #ef4444;
+  color: #ef4444;
+}
+
+/* Lead Contact */
+.lead-contact {
+  margin-top: 0.75rem;
+  padding: 0.5rem;
+  background: #f0f9ff;
+  border-left: 3px solid #0284c7;
+  color: #0284c7;
+  font-size: 0.875rem;
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+/* Buttons */
+.btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.875rem;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-small {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+.btn-danger {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #fecaca;
+}
+
+/* Empty State */
+.empty-state {
+  text-align: center;
+  padding: 3rem;
+  color: #6b7280;
+}
+
+.empty-state p {
+  font-size: 1.125rem;
+}
+
+/* Loading */
+.loading {
+  text-align: center;
+  padding: 3rem;
+  color: #6b7280;
+  font-size: 1.125rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .reddit-leads-container {
+    padding: 1rem;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .search-config {
+    grid-template-columns: 1fr;
+  }
+
+  .leads-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lead-card {
+    padding: 1rem;
+  }
+
+  .lead-header {
+    flex-direction: column;
+  }
+}
