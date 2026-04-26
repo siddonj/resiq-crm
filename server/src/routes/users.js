@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const pool = require('../models/db');
 const auth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
@@ -79,6 +80,53 @@ router.get('/', auth, requireRole('admin', 'manager'), async (req, res) => {
     res.json(result.rows);
   } catch (err) {
     console.error('Error listing users:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/users/invite
+ * Create a new employee account with a temp password — admin only
+ */
+router.post('/invite', auth, requireRole('admin'), async (req, res) => {
+  const { name, email, role } = req.body;
+  const validRoles = ['admin', 'manager', 'user', 'viewer'];
+  if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
+  if (!email?.trim()) return res.status(400).json({ error: 'email is required' });
+  if (!role || !validRoles.includes(role)) {
+    return res.status(400).json({ error: `role must be one of: ${validRoles.join(', ')}` });
+  }
+  const tempPassword = crypto.randomBytes(8).toString('hex');
+  try {
+    const hash = await bcrypt.hash(tempPassword, 12);
+    const result = await pool.query(
+      `INSERT INTO users (name, email, password_hash, role)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, name, email, role, is_active, created_at`,
+      [name.trim(), email.trim().toLowerCase(), hash, role]
+    );
+    logAction(req.user.id, req.user.email, 'invite', 'user', result.rows[0].id, result.rows[0].email, { role });
+    res.status(201).json({ user: result.rows[0], tempPassword });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Email already in use' });
+    console.error('Error inviting user:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/users/clients
+ * List all client portal accounts — admin only
+ */
+router.get('/clients', auth, requireRole('admin'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, email, slug, is_active, first_login_at, last_login_at, created_at
+       FROM clients ORDER BY created_at ASC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error listing clients:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
