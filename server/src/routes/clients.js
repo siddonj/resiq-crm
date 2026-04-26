@@ -267,7 +267,7 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
       // Send email notification to client
       if (result.rows[0]) {
         try {
-          await sendProposalSentEmail(client.email, client.name, result.rows[0].title);
+          await sendProposalSentEmail(client.email, client.name, result.rows[0].title, req.user.id, clientId);
         } catch (emailErr) {
           console.warn('Failed to send proposal email:', emailErr.message);
         }

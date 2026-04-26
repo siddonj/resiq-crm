@@ -3,11 +3,15 @@ const pool = require('./db');
 class Workflow {
   // Create a new workflow
   static async create(userId, { name, description, triggerType, triggerConfig, actions, conditions, createdBy }) {
+    const triggerConfigJson = JSON.stringify(triggerConfig || {});
+    const actionsJson = JSON.stringify(actions || []);
+    const conditionsJson = conditions == null ? null : JSON.stringify(conditions);
+
     const result = await pool.query(
       `INSERT INTO workflows (user_id, name, description, trigger_type, trigger_config, actions, conditions, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8)
        RETURNING *`,
-      [userId, name, description, triggerType, triggerConfig, actions, conditions, createdBy]
+      [userId, name, description, triggerType, triggerConfigJson, actionsJson, conditionsJson, createdBy]
     );
     return result.rows[0];
   }
@@ -51,16 +55,16 @@ class Workflow {
       values.push(description);
     }
     if (triggerConfig !== undefined) {
-      updates.push(`trigger_config = $${paramIndex++}`);
-      values.push(triggerConfig);
+      updates.push(`trigger_config = $${paramIndex++}::jsonb`);
+      values.push(JSON.stringify(triggerConfig || {}));
     }
     if (actions !== undefined) {
-      updates.push(`actions = $${paramIndex++}`);
-      values.push(actions);
+      updates.push(`actions = $${paramIndex++}::jsonb`);
+      values.push(JSON.stringify(actions || []));
     }
     if (conditions !== undefined) {
-      updates.push(`conditions = $${paramIndex++}`);
-      values.push(conditions);
+      updates.push(`conditions = $${paramIndex++}::jsonb`);
+      values.push(conditions == null ? null : JSON.stringify(conditions));
     }
     if (enabled !== undefined) {
       updates.push(`enabled = $${paramIndex++}`);
@@ -105,24 +109,29 @@ class WorkflowExecution {
     actionsExecuted = null,
     executedAt = null,
   }) {
+    const triggerEventDataJson = JSON.stringify(triggerEventData || {});
+    const actionsExecutedJson = actionsExecuted == null ? null : JSON.stringify(actionsExecuted);
+
     const result = await pool.query(
       `INSERT INTO workflow_executions
        (workflow_id, trigger_event_type, trigger_event_data, status, error_message, actions_executed, executed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       VALUES ($1, $2, $3::jsonb, $4, $5, $6::jsonb, $7)
        RETURNING *`,
-      [workflowId, triggerEventType, triggerEventData, status, errorMessage, actionsExecuted, executedAt]
+      [workflowId, triggerEventType, triggerEventDataJson, status, errorMessage, actionsExecutedJson, executedAt]
     );
     return result.rows[0];
   }
 
   // Update execution record
   static async update(id, { status, errorMessage, actionsExecuted, executedAt = new Date() }) {
+    const actionsExecutedJson = actionsExecuted == null ? null : JSON.stringify(actionsExecuted);
+
     const result = await pool.query(
       `UPDATE workflow_executions
-       SET status = $1, error_message = $2, actions_executed = $3, executed_at = $4
+       SET status = $1, error_message = $2, actions_executed = $3::jsonb, executed_at = $4
        WHERE id = $5
        RETURNING *`,
-      [status, errorMessage, actionsExecuted, executedAt, id]
+      [status, errorMessage, actionsExecutedJson, executedAt, id]
     );
     return result.rows[0];
   }

@@ -12,12 +12,15 @@ import Teams from './pages/Teams'
 import AuditLogs from './pages/AuditLogs'
 import Reminders from './pages/Reminders'
 import Proposals from './pages/Proposals'
+import Sequences from './pages/Sequences'
 import Invoices from './pages/Invoices'
 import TimeTracking from './pages/TimeTracking'
 import Calendar from './pages/Calendar'
 import BookingPage from './pages/BookingPage'
 import ClientPortalApp from './ClientApp'
 import Help from './pages/Help'
+import Agents from './pages/Agents'
+import Forms from './pages/Forms'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -39,11 +42,14 @@ function AppRoutes() {
         <Route path="contacts" element={<Contacts />} />
         <Route path="pipeline" element={<Pipeline />} />
         <Route path="workflows" element={<Workflows />} />
+        <Route path="sequences" element={<Sequences />} />
         <Route path="settings" element={<Settings />} />
         <Route path="teams" element={<Teams />} />
         <Route path="audit-logs" element={<AuditLogs />} />
         <Route path="users" element={<Users />} />
         <Route path="reminders" element={<Reminders />} />
+        <Route path="agents" element={<Agents />} />
+        <Route path="forms" element={<Forms />} />
         <Route path="proposals" element={<Proposals />} />
         <Route path="invoices" element={<Invoices />} />
         <Route path="time-tracking" element={<TimeTracking />} />

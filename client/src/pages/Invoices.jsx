@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
+import AskAIBtn from '../components/AskAIBtn'
 
 const STATUS_COLORS = {
   draft: 'bg-gray-100 text-gray-600',
@@ -180,6 +181,12 @@ function InvoiceModal({ invoice, proposals, onClose, onSave }) {
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
           {error && <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>}
+
+          <AskAIBtn 
+            toolName="Invoices" 
+            label="✨ Ask AI to draft an invoice reminder email or set pricing"
+            contextData={{ title, total, dueDate }}
+          />
 
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">

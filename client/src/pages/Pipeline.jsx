@@ -4,6 +4,7 @@ import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import ShareModal from '../components/ShareModal'
 import ActivityLog from '../components/ActivityLog'
+import AskAIBtn from '../components/AskAIBtn'
 
 const STAGES = [
   { key: 'lead', label: 'Lead' },
@@ -23,7 +24,7 @@ const SERVICE_LINES = [
   { value: 'team_process', label: 'Team Process' },
 ]
 
-const EMPTY_FORM = { title: '', contact_id: '', stage: 'lead', value: '', service_line: '', close_date: '', notes: '' }
+const EMPTY_FORM = { title: '', contact_id: '', stage: 'lead', value: '', service_line: '', close_date: '', notes: '', custom_fields: {} }
 
 export default function Pipeline() {
   const { token } = useAuth()
@@ -91,8 +92,9 @@ export default function Pipeline() {
       stage: d.stage,
       value: d.value || '',
       service_line: d.service_line || '',
-      close_date: d.close_date || '',
-      notes: d.notes || ''
+      close_date: d.close_date ? d.close_date.split('T')[0] : '', // format date properly
+      notes: d.notes || '',
+      custom_fields: d.custom_fields || {}
     })
     setFormError('')
     setEditingId(d.id)
@@ -256,6 +258,15 @@ export default function Pipeline() {
                         {deal.close_date && (
                           <p className="text-gray-400 text-xs mt-1">{new Date(deal.close_date).toLocaleDateString()}</p>
                         )}
+                        {deal.custom_fields && Object.keys(deal.custom_fields).length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-gray-100 flex flex-col gap-1">
+                            {Object.entries(deal.custom_fields).map(([key, value]) => (
+                               <p key={key} className="text-xs text-gray-500">
+                                 <strong className="text-gray-600 capitalize">{key.replace(/_/g, ' ')}:</strong> {value}
+                               </p>
+                            ))}
+                          </div>
+                        )}
                         <div className="mt-2 flex items-center gap-3">
                           <button
                             onClick={() => setActivityDeal(deal)}
@@ -326,17 +337,23 @@ export default function Pipeline() {
 
       {/* Add/Edit Deal Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
-            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4 py-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
               <h3 className="font-syne text-lg font-bold text-navy">{editingId ? 'Edit Deal' : 'New Deal'}</h3>
               <button onClick={closeModal} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
             </div>
 
-            <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+            <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4 flex-1 overflow-y-auto w-full custom-scrollbar">
               {formError && (
                 <div className="px-4 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">{formError}</div>
               )}
+
+              <AskAIBtn 
+                toolName="Pipeline Deals" 
+                label="✨ Ask AI for advice on winning this deal (Strategy)"
+                contextData={{ title: form.title, stage: form.stage, value: form.value, serviceLine: form.service_line, notes: form.notes }}
+              />
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
@@ -423,9 +440,31 @@ export default function Pipeline() {
                     placeholder="Deal notes..."
                   />
                 </div>
+
+                {form.custom_fields && Object.keys(form.custom_fields).length > 0 && (
+                  <div className="col-span-2 border-t border-gray-100 pt-4 mt-2">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-3">Custom Fields</h4>
+                    <div className="space-y-3">
+                      {Object.entries(form.custom_fields).map(([key, val]) => (
+                        <div key={key}>
+                          <label className="block text-xs font-medium text-gray-600 mb-1 capitalize">{key.replace(/_/g, ' ')}</label>
+                          <input
+                            type={typeof val === 'number' ? 'number' : 'text'}
+                            value={val}
+                            onChange={(e) => setForm(f => ({
+                              ...f,
+                              custom_fields: { ...f.custom_fields, [key]: e.target.value }
+                            }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <div className="flex gap-3 pt-1">
+              <div className="flex gap-3 pt-4 sticky bottom-0 bg-white pb-2 border-t border-white shadow-[0_-12px_12px_-4px_rgba(255,255,255,1)]">
                 <button
                   type="button"
                   onClick={closeModal}

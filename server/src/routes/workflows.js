@@ -4,6 +4,18 @@ const auth = require('../middleware/auth');
 
 const router = express.Router();
 
+function getDelayDurationMinutes(action = {}) {
+  const days = parseInt(action.wait_days ?? action.waitDays ?? 0, 10) || 0;
+  const hours = parseInt(action.wait_hours ?? action.waitHours ?? 0, 10) || 0;
+  const minutes = parseInt(action.wait_minutes ?? action.waitMinutes ?? 0, 10) || 0;
+
+  return (days * 24 * 60) + (hours * 60) + minutes;
+}
+
+function hasInvalidDelay(actions = []) {
+  return actions.some((action) => action?.type === 'delay' && getDelayDurationMinutes(action) <= 0);
+}
+
 /**
  * Middleware to authenticate token (assumes authenticateToken exists in main server)
  * This will be imported and used in index.js
@@ -66,6 +78,10 @@ router.post('/', auth, async (req, res) => {
       return res.status(400).json({ error: 'At least one action is required' });
     }
 
+    if (hasInvalidDelay(actions)) {
+      return res.status(400).json({ error: 'Delay action must be at least 1 minute' });
+    }
+
     // Check for duplicate workflow name
     const existing = await Workflow.findByUserId(req.user.id);
     if (existing.some((w) => w.name === name)) {
@@ -115,6 +131,10 @@ router.patch('/:id', auth, async (req, res) => {
       if (existing.some((w) => w.name === name && w.id !== req.params.id)) {
         return res.status(400).json({ error: 'Workflow name already exists' });
       }
+    }
+
+    if (actions !== undefined && hasInvalidDelay(actions)) {
+      return res.status(400).json({ error: 'Delay action must be at least 1 minute' });
     }
 
     // Update

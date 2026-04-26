@@ -50,20 +50,26 @@ class WorkflowEngine {
 
           console.log(`[WorkflowEngine] Created execution ${execution.id} for workflow ${workflow.id}`);
 
-          // Queue each action
+          // Queue each action (supports delay/wait nodes by shifting downstream actions)
           const actionsQueued = [];
-          for (const action of workflow.actions) {
+          let cumulativeDelayMs = 0;
+
+          for (let index = 0; index < workflow.actions.length; index += 1) {
+            const action = workflow.actions[index];
             try {
               const jobData = {
                 executionId: execution.id,
                 workflowId: workflow.id,
                 action,
                 eventData,
+                actionIndex: index,
+                totalActions: workflow.actions.length,
               };
 
               const job = await this.queue.add(jobData, {
                 attempts: 3,
                 backoff: { type: 'exponential', delay: 2000 },
+                delay: cumulativeDelayMs,
                 removeOnComplete: true,
               });
 
@@ -72,7 +78,12 @@ class WorkflowEngine {
                 type: action.type,
                 jobId: job.id,
                 status: 'queued',
+                delayMs: cumulativeDelayMs,
               });
+
+              if (action.type === 'delay') {
+                cumulativeDelayMs += this._getActionDelayMs(action);
+              }
             } catch (err) {
               console.error(`[WorkflowEngine] Failed to queue action`, err);
               actionsQueued.push({
@@ -164,6 +175,19 @@ class WorkflowEngine {
    */
   _getFieldValue(path, obj) {
     return path.split('.').reduce((current, part) => (current || {})[part], obj);
+  }
+
+  /**
+   * Compute delay duration for a delay action in milliseconds.
+   * Accepts both snake_case and camelCase forms for compatibility.
+   * @private
+   */
+  _getActionDelayMs(action) {
+    const days = parseInt(action.wait_days ?? action.waitDays ?? action.delay_days ?? action.delayDays ?? 0, 10) || 0;
+    const hours = parseInt(action.wait_hours ?? action.waitHours ?? 0, 10) || 0;
+    const minutes = parseInt(action.wait_minutes ?? action.waitMinutes ?? 0, 10) || 0;
+
+    return (((days * 24) + hours) * 60 + minutes) * 60 * 1000;
   }
 }
 

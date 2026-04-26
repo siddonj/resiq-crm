@@ -6,6 +6,8 @@
     "install:all": "npm install && npm install --prefix client && npm install --prefix server"
   },
   "dependencies": {
+    "@langchain/core": "^1.1.41",
+    "@langchain/openai": "^1.4.4",
     "concurrently": "^8.2.2"
   }
 }

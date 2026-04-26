@@ -153,6 +153,7 @@ class EmailMatcher {
         count: successCount,
         matched: matchedContacts,
         nextPageToken,
+        results,
       };
     } catch (err) {
       console.error(`Error syncing emails for user ${user_id}:`, err);

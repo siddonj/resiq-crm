@@ -226,8 +226,9 @@ router.get('/workflows/summary', auth, async (req, res) => {
         COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
         COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
         COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
-      FROM workflow_executions
-      WHERE user_id = $1
+      FROM workflow_executions we
+      JOIN workflows w ON w.id = we.workflow_id
+      WHERE w.user_id = $1
         AND executed_at >= DATE_TRUNC('month', NOW())`,
       [req.user.id]
     );

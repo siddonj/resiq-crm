@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
+import AskAIBtn from '../components/AskAIBtn'
 
 const STATUS_COLORS = {
   draft: 'bg-gray-100 text-gray-600',
@@ -143,6 +144,12 @@ function ProposalModal({ form, setForm, deals, editingId, saving, formError, onS
           {formError && (
             <div className="px-4 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">{formError}</div>
           )}
+          
+          <AskAIBtn 
+            toolName="Proposals" 
+            label="✨ Ask AI for a proposal copy template or pricing strategy"
+            contextData={{ deal_id: form.deal_id, title: form.title, lineItems: form.line_items }}
+          />
 
           {/* Basic info */}
           <div className="space-y-4">

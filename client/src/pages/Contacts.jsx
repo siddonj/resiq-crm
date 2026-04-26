@@ -5,6 +5,7 @@ import EmailTimeline from '../components/EmailTimeline'
 import ContactTags from '../components/ContactTags'
 import ShareModal from '../components/ShareModal'
 import ActivityLog from '../components/ActivityLog'
+import EnrollSequenceModal from '../components/EnrollSequenceModal'
 
 const CONTACT_TYPES = ['prospect', 'partner', 'vendor']
 const SERVICE_LINES = [
@@ -30,6 +31,7 @@ export default function Contacts() {
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [sharingContact, setSharingContact] = useState(null)
+  const [enrollingContact, setEnrollingContact] = useState(null)
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState('')
   const [filterServiceLine, setFilterServiceLine] = useState('')
@@ -229,13 +231,32 @@ export default function Contacts() {
       {/* Contact Detail Modal */}
       {showDetailModal && selectedContact && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 px-6 py-5 border-b border-gray-100 flex items-center justify-between bg-white">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between bg-white flex-shrink-0">
               <h3 className="font-syne text-lg font-bold text-navy">{selectedContact.name}</h3>
-              <button onClick={closeDetail} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+              <div className="flex gap-2 items-center">
+                <button                     onClick={() => setEnrollingContact(selectedContact)}
+                    className="bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 text-xs px-3 py-1.5 font-semibold rounded mr-2"
+                  >
+                    ✉️ Enroll in Sequence
+                  </button>
+                  <button                   onClick={async () => {
+                    try {
+                      await axios.post(`/api/contacts/${selectedContact.id}/enrich`, {}, { headers: { Authorization: `Bearer ${token}` } })
+                      alert('AI Enrichment Agent started in the background! Refresh the page in 10 seconds to see updated notes/company profile.')
+                    } catch (e) {
+                      alert('Failed to start enrichment.')
+                    }
+                  }}
+                  className="bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 text-xs px-3 py-1.5 font-semibold rounded mr-4"
+                >
+                  ✨ AI Auto-Enrich
+                </button>
+                <button onClick={closeDetail} className="text-gray-400 hover:text-gray-600 flex items-center justify-center text-xl leading-none w-8 h-8 rounded-full hover:bg-gray-100 transition">&times;</button>
+              </div>
             </div>
 
-            <div className="px-6 py-5 space-y-6">
+            <div className="px-6 py-5 space-y-6 overflow-y-auto flex-1 custom-scrollbar">
               {/* Contact Info */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -268,6 +289,22 @@ export default function Contacts() {
               <div className="border-t border-gray-100 pt-4">
                 <h4 className="font-semibold text-navy mb-3">Email Communication</h4>
                 <EmailTimeline contact={selectedContact} token={token} />
+              </div>
+
+              <div className="border-t border-gray-100 pt-4">
+                <h4 className="font-semibold text-navy mb-3">Custom Fields</h4>
+                {selectedContact.custom_fields && Object.keys(selectedContact.custom_fields).length > 0 ? (
+                  <div className="grid grid-cols-2 gap-4">
+                    {Object.entries(selectedContact.custom_fields).map(([key, value]) => (
+                      <div key={key}>
+                        <label className="text-xs font-medium text-gray-600 capitalize">{key.replace(/_/g, ' ')}</label>
+                        <p className="text-sm text-navy mt-1">{value || 'â€”'}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 italic">No custom fields mapping recorded.</p>
+                )}
               </div>
 
               {selectedContact.notes && (

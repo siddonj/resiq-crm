@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
+import AskAIBtn from './AskAIBtn'
 
 const TRIGGER_TYPES = [
   { value: 'deal.stage_changed', label: 'Deal Stage Changed' },
@@ -10,9 +11,30 @@ const TRIGGER_TYPES = [
 const ACTION_TYPES = [
   { value: 'create_task', label: 'Create Task' },
   { value: 'create_activity', label: 'Create Activity' },
+  { value: 'delay', label: 'Delay' },
 ]
 
 const DEAL_STAGES = ['lead', 'contact_made', 'proposal_sent', 'negotiation', 'won', 'lost']
+
+const getDefaultAction = (type) => {
+  if (type === 'create_activity') {
+    return { type: 'create_activity', description: '' }
+  }
+
+  if (type === 'delay') {
+    return { type: 'delay', wait_days: 1, wait_hours: 0, wait_minutes: 0 }
+  }
+
+  return { type: 'create_task', title: '', due_days: 3 }
+}
+
+const getDelayDurationMinutes = (action) => {
+  const days = parseInt(action.wait_days ?? 0, 10) || 0
+  const hours = parseInt(action.wait_hours ?? 0, 10) || 0
+  const minutes = parseInt(action.wait_minutes ?? 0, 10) || 0
+
+  return (days * 24 * 60) + (hours * 60) + minutes
+}
 
 export default function WorkflowBuilderModal({ workflow, onSave, onClose, token }) {
   const [step, setStep] = useState(1) // 1: name, 2: trigger, 3: actions, 4: review
@@ -183,7 +205,7 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
           type="button"
           onClick={() => setFormData({
             ...formData,
-            actions: [...formData.actions, { type: 'create_task', title: '', due_days: 3 }]
+            actions: [...formData.actions, getDefaultAction('create_task')]
           })}
           className="text-xs bg-teal/10 text-teal hover:bg-teal/20 px-3 py-1.5 rounded transition-colors"
         >
@@ -202,7 +224,7 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
                   value={action.type}
                   onChange={e => {
                     const newActions = [...formData.actions]
-                    newActions[idx] = { type: e.target.value }
+                    newActions[idx] = getDefaultAction(e.target.value)
                     setFormData({ ...formData, actions: newActions })
                   }}
                   className="text-sm border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-teal"
@@ -272,6 +294,56 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
                   />
                 </div>
               )}
+
+              {action.type === 'delay' && (
+                <div className="space-y-3">
+                  <p className="text-xs text-gray-500">Pause this workflow before the next action runs.</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">Days</label>
+                      <input
+                        type="number"
+                        value={action.wait_days ?? 1}
+                        onChange={e => {
+                          const newActions = [...formData.actions]
+                          newActions[idx].wait_days = parseInt(e.target.value, 10) || 0
+                          setFormData({ ...formData, actions: newActions })
+                        }}
+                        min="0"
+                        className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">Hours</label>
+                      <input
+                        type="number"
+                        value={action.wait_hours ?? 0}
+                        onChange={e => {
+                          const newActions = [...formData.actions]
+                          newActions[idx].wait_hours = parseInt(e.target.value, 10) || 0
+                          setFormData({ ...formData, actions: newActions })
+                        }}
+                        min="0"
+                        className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 mb-1 block">Minutes</label>
+                      <input
+                        type="number"
+                        value={action.wait_minutes ?? 0}
+                        onChange={e => {
+                          const newActions = [...formData.actions]
+                          newActions[idx].wait_minutes = parseInt(e.target.value, 10) || 0
+                          setFormData({ ...formData, actions: newActions })
+                        }}
+                        min="0"
+                        className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -306,6 +378,7 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
               <div key={idx} className="text-sm text-gray-600 pl-4 border-l-2 border-teal">
                 {action.type === 'create_task' && `Create task: "${action.title}" (due in ${action.due_days} days)`}
                 {action.type === 'create_activity' && `Create activity: "${action.description || 'Workflow auto-logged'}"`}
+                {action.type === 'delay' && `Wait: ${action.wait_days || 0} day(s), ${action.wait_hours || 0} hour(s), ${action.wait_minutes || 0} minute(s)`}
               </div>
             ))}
           </div>
@@ -329,6 +402,15 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
       return
     }
 
+    const hasZeroDelay = formData.actions.some(action => (
+      action.type === 'delay' && getDelayDurationMinutes(action) <= 0
+    ))
+
+    if (hasZeroDelay) {
+      setError('Delay action must be at least 1 minute')
+      return
+    }
+
     setSaving(true)
     try {
       if (workflow) {
@@ -338,7 +420,14 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
       }
       onSave()
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save workflow')
+      const apiError = typeof err.response?.data === 'string'
+        ? err.response.data
+        : err.response?.data?.error
+      const networkError = err.message === 'Network Error'
+        ? 'Network error reaching API. Confirm server is running on port 5000.'
+        : null
+
+      setError(apiError || networkError || 'Failed to save workflow')
     } finally {
       setSaving(false)
     }
@@ -347,7 +436,12 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
   const isStepValid = () => {
     if (step === 1) return formData.name.trim().length > 0
     if (step === 2) return formData.triggerType
-    if (step === 3) return formData.actions.length > 0
+    if (step === 3) {
+      if (formData.actions.length === 0) return false
+      return formData.actions.every(action => (
+        action.type !== 'delay' || getDelayDurationMinutes(action) > 0
+      ))
+    }
     return true
   }
 
@@ -355,7 +449,7 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col">
         {/* Header */}
-        <div className="sticky top-0 px-6 py-5 border-b border-gray-100 flex items-center justify-between bg-white">
+        <div className="sticky top-0 px-6 py-5 border-b border-gray-100 flex items-center justify-between bg-white z-10">
           <h3 className="font-syne text-lg font-bold text-navy">
             {workflow ? 'Edit Workflow' : 'New Workflow'}
           </h3>
@@ -364,8 +458,17 @@ export default function WorkflowBuilderModal({ workflow, onSave, onClose, token 
           </button>
         </div>
 
+        {/* AI Box */}
+        <div className="px-6 pt-4 pb-1">
+          <AskAIBtn 
+            toolName="Workflows" 
+            label="✨ Ask AI for automation ideas or workflow templates"
+            contextData={{ name: formData.name, currentStep: step }}
+          />
+        </div>
+
         {/* Progress */}
-        <div className="px-6 pt-5 pb-3">
+        <div className="px-6 pt-2 pb-3">
           <div className="flex gap-2">
             {[1, 2, 3, 4].map(s => (
               <div

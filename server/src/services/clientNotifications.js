@@ -1,5 +1,6 @@
 const nodemailer = require('nodemailer')
 const pool = require('../models/db')
+const trackingService = require('./trackingService')
 
 /**
  * Initialize email transporter
@@ -92,10 +93,11 @@ async function sendClientInvitationEmail(email, name, invitationToken) {
     `
 
     await transporter.sendMail({
+      html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `You're invited to access your project on ResiQ`),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: email,
       subject: `You're invited to access your project on ResiQ`,
-      html: htmlContent,
+      
       text: `Hi ${name}, you've been invited to access the ResiQ client portal. Click here: ${inviteLink}`,
     })
 
@@ -110,7 +112,7 @@ async function sendClientInvitationEmail(email, name, invitationToken) {
 /**
  * Send proposal sent notification to client
  */
-async function sendProposalSentEmail(clientEmail, clientName, proposalTitle) {
+async function sendProposalSentEmail(clientEmail, clientName, proposalTitle, userId, contactId) {
   try {
     const portalLink = `${process.env.CLIENT_PORTAL_URL || 'http://localhost:3000'}/client/proposals`
 
@@ -162,10 +164,11 @@ async function sendProposalSentEmail(clientEmail, clientName, proposalTitle) {
     `
 
     await transporter.sendMail({
+      html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `New proposal: ${proposalTitle}`),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: clientEmail,
       subject: `New proposal: ${proposalTitle}`,
-      html: htmlContent,
+      
       text: `A new proposal "${proposalTitle}" has been sent to you. Review it at: ${portalLink}`,
     })
 
@@ -180,7 +183,7 @@ async function sendProposalSentEmail(clientEmail, clientName, proposalTitle) {
 /**
  * Send invoice sent notification to client
  */
-async function sendInvoiceSentEmail(clientEmail, clientName, invoiceNumber, amount, dueDate) {
+async function sendInvoiceSentEmail(clientEmail, clientName, invoiceNumber, amount, dueDate, userId, contactId) {
   try {
     const portalLink = `${process.env.CLIENT_PORTAL_URL || 'http://localhost:3000'}/client/invoices`
     const dueDateStr = new Date(dueDate).toLocaleDateString('en-US', {
@@ -245,10 +248,11 @@ async function sendInvoiceSentEmail(clientEmail, clientName, invoiceNumber, amou
     `
 
     await transporter.sendMail({
+      html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `Invoice #${invoiceNumber} - ${amount.toFixed(2)} due by ${dueDateStr}`),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: clientEmail,
       subject: `Invoice #${invoiceNumber} - ${amount.toFixed(2)} due by ${dueDateStr}`,
-      html: htmlContent,
+      
       text: `Invoice #${invoiceNumber} for $${amount.toFixed(2)} is due by ${dueDateStr}. Pay at: ${portalLink}`,
     })
 
@@ -321,10 +325,11 @@ async function sendProposalSignedConfirmation(employeeEmail, clientName, proposa
     `
 
     await transporter.sendMail({
+      html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `✓ Proposal signed by ${clientName}: ${proposalTitle}`),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: employeeEmail,
       subject: `✓ Proposal signed by ${clientName}: ${proposalTitle}`,
-      html: htmlContent,
+      
       text: `Proposal signed! ${clientName} has signed "${proposalTitle}" at ${signedDate}`,
     })
 
@@ -396,10 +401,11 @@ async function sendInvoicePaidConfirmation(employeeEmail, clientName, invoiceNum
     `
 
     await transporter.sendMail({
+      html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `✓ Invoice #${invoiceNumber} paid by ${clientName} ($${amount.toFixed(2)})`),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: employeeEmail,
       subject: `✓ Invoice #${invoiceNumber} paid by ${clientName} ($${amount.toFixed(2)})`,
-      html: htmlContent,
+      
       text: `Invoice #${invoiceNumber} for $${amount.toFixed(2)} has been paid by ${clientName} at ${paidDate}`,
     })
 

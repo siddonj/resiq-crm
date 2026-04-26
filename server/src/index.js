@@ -11,6 +11,7 @@ const stripeRoutes = require('./routes/stripe');
 const contactsRoutes = require('./routes/contacts');
 const dealsRoutes = require('./routes/deals');
 const workflowsRoutes = require('./routes/workflows');
+const sequencesRoutes = require('./routes/sequences');
 const integrationsRoutes = require('./routes/integrations');
 const analyticsRoutes = require('./routes/analytics');
 const usersRoutes = require('./routes/users');
@@ -25,14 +26,21 @@ const timeEntriesRoutes = require('./routes/timeEntries');
 const calendarRoutes = require('./routes/calendar');
 const smsRoutes = require('./routes/sms');
 const webhookRoutes = require('./routes/webhooks');
+const agentsRoutes = require('./routes/agents');
+const formsRoutes = require('./routes/forms');
+const leadsRoutes = require('./routes/leads');
 const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
+const { agentQueue, initAgentWorker } = require('./workers/agentWorker');
+const { initSequenceWorker } = require('./workers/sequenceWorker');
 const { MessageQueueService } = require('./services/messageQueue');
 const WorkflowEngine = require('./services/workflowEngine');
+const trackRoutes = require('./routes/track');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); // Added for form submissions (Web-to-Lead)
 
 // Initialize workflow engine with queue
 const workflowEngine = new WorkflowEngine(workflowQueue);
@@ -49,6 +57,7 @@ app.use('/api/stripe', stripeRoutes);
 app.use('/api/contacts', contactsRoutes);
 app.use('/api/deals', dealsRoutes);
 app.use('/api/workflows', workflowsRoutes);
+app.use('/api/sequences', sequencesRoutes);
 app.use('/api/integrations', integrationsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/users', usersRoutes);
@@ -63,6 +72,10 @@ app.use('/api/time-entries', timeEntriesRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/sms', smsRoutes);
 app.use('/api/webhooks', webhookRoutes);
+app.use('/api/agents', agentsRoutes);
+app.use('/api/forms', formsRoutes);
+app.use('/api/leads', leadsRoutes);
+app.use('/api/track', trackRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
@@ -139,8 +152,29 @@ const server = app.listen(PORT, async () => {
   try {
     await initEmailSyncWorker();
   } catch (err) {
-    console.warn('Email sync worker init failed (Redis may not be running):', err.message);
-    console.warn('Email sync will not work until Redis is available');
+    console.warn('Email sync worker init failed:', err.message);
+  }
+
+  // Initialize agent queue worker (requires Redis)
+  try {
+    initAgentWorker();
+  } catch (err) {
+    console.warn('Agent worker init failed:', err.message);
+  }
+
+  // Initialize sequence worker
+  try {
+    initSequenceWorker();
+  } catch (err) {
+    console.warn('Sequence worker init failed:', err.message);
+  }
+
+  // Initialize enrichment worker (requires Redis)
+  try {
+    require('./workers/enrichmentWorker');
+    console.log('Enrichment worker initialized');
+  } catch (err) {
+    console.warn('Enrichment worker init failed:', err.message);
   }
 });
 

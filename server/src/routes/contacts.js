@@ -82,11 +82,13 @@ router.get('/export', auth, async (req, res) => {
 });
 
 router.post('/', auth, async (req, res) => {
-  const { name, email, phone, company, type, service_line, notes } = req.body;
+  const ObjectToCreate = req.body;
+  const customFields = ObjectToCreate.custom_fields || {};
+  const { name, email, phone, company, type, service_line, notes } = ObjectToCreate;
   try {
     const result = await pool.query(
-      'INSERT INTO contacts (user_id, name, email, phone, company, type, service_line, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
-      [req.user.id, name, email, phone, company, type || 'prospect', service_line, notes]
+      'INSERT INTO contacts (user_id, name, email, phone, company, type, service_line, notes, custom_fields) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',
+      [req.user.id, name, email, phone, company, type || 'prospect', service_line, notes, JSON.stringify(customFields)]
     );
     const newContact = result.rows[0];
     logAction(req.user.id, req.user.email, 'create', 'contact', newContact.id, newContact.name);
@@ -110,15 +112,17 @@ router.post('/', auth, async (req, res) => {
 });
 
 router.put('/:id', auth, async (req, res) => {
-  const { name, email, phone, company, type, service_line, notes } = req.body;
+  const ObjectToUpdate = req.body;
+  const customFields = ObjectToUpdate.custom_fields || {};
+  const { name, email, phone, company, type, service_line, notes } = ObjectToUpdate;
   try {
     const result = await pool.query(
-      `UPDATE contacts SET name=$1, email=$2, phone=$3, company=$4, type=$5, service_line=$6, notes=$7
+      `UPDATE contacts SET name=$1, email=$2, phone=$3, company=$4, type=$5, service_line=$6, notes=$7, custom_fields=$10
        WHERE id=$8 AND (user_id=$9 OR EXISTS (
          SELECT 1 FROM shared_resources WHERE resource_type='contact' AND resource_id=$8 AND permission='edit'
          AND (shared_with_user_id=$9 OR shared_with_team_id IN (SELECT team_id FROM team_members WHERE user_id=$9))
        )) RETURNING *`,
-      [name, email, phone, company, type || 'prospect', service_line || null, notes, req.params.id, req.user.id]
+      [name, email, phone, company, type || 'prospect', service_line || null, notes, req.params.id, req.user.id, JSON.stringify(customFields)]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     logAction(req.user.id, req.user.email, 'update', 'contact', req.params.id, result.rows[0].name);
@@ -226,6 +230,29 @@ router.delete('/:id/tags/:tagId', auth, async (req, res) => {
     await pool.query('DELETE FROM contact_tags WHERE contact_id = $1 AND tag_id = $2', [req.params.id, req.params.tagId]);
     res.json({ success: true });
   } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Manual AI Auto-Enrichment (Phase 17)
+router.post('/:id/enrich', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { enrichmentQueue } = require('../workers/enrichmentWorker');
+    
+    // Find the latest deal for this contact if any
+    const dealRes = await pool.query('SELECT id FROM deals WHERE contact_id = $1 AND user_id = $2 ORDER BY created_at DESC LIMIT 1', [id, req.user.id]);
+    const dealId = dealRes.rows.length ? dealRes.rows[0].id : null;
+
+    await enrichmentQueue.add({
+      contactId: id,
+      dealId: dealId,
+      userId: req.user.id
+    });
+
+    res.json({ message: 'Auto-Enrichment executed in background.' });
+  } catch (error) {
+    console.error('Error queuing manual enrichment:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });

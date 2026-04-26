@@ -5,6 +5,79 @@ const emailMatcher = require('../services/emailMatcher');
 // Create Bull queue for email syncing
 const emailSyncQueue = new Queue('email-sync', process.env.REDIS_URL || 'redis://localhost:6379');
 
+function extractPrimaryEmail(value) {
+  if (!value) return null;
+
+  const match = String(value).match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+  return match ? match[1].toLowerCase() : String(value).trim().toLowerCase();
+}
+
+function isInboundReplyFromMatchedContact(syncResult) {
+  if (!syncResult?.success || !syncResult.email || !syncResult.contact) {
+    return false;
+  }
+
+  if (syncResult.email.is_outbound !== false) {
+    return false;
+  }
+
+  const senderEmail = extractPrimaryEmail(syncResult.email.sender_email);
+  const contactEmail = extractPrimaryEmail(syncResult.contact.email);
+
+  // If both emails are known, only pause when the sender is the matched contact.
+  if (senderEmail && contactEmail) {
+    return senderEmail === contactEmail;
+  }
+
+  // Fallback: inbound + matched contact (legacy behavior when one side has no email).
+  return true;
+}
+
+async function pauseActiveSequencesForInboundReplies(userId, syncResults = []) {
+  let pausedEnrollments = 0;
+  const pausedContacts = new Set();
+
+  for (const result of syncResults) {
+    if (!isInboundReplyFromMatchedContact(result)) {
+      continue;
+    }
+
+    const updateRes = await pool.query(
+      `UPDATE sequence_enrollments
+       SET status = 'paused', updated_at = NOW()
+       WHERE contact_id = $1 AND user_id = $2 AND status = 'active'
+       RETURNING id`,
+      [result.contact.id, userId]
+    );
+
+    if (updateRes.rowCount === 0) {
+      continue;
+    }
+
+    pausedEnrollments += updateRes.rowCount;
+    pausedContacts.add(result.contact.id);
+
+    await pool.query(
+      `INSERT INTO activities (user_id, contact_id, type, description, occurred_at)
+       VALUES ($1, $2, 'sequence_paused', $3, NOW())`,
+      [
+        userId,
+        result.contact.id,
+        `Auto-paused ${updateRes.rowCount} active sequence enrollment(s) after inbound email reply.`,
+      ]
+    );
+
+    console.log(
+      `[Auto-Pause] Paused ${updateRes.rowCount} active sequences for contact ${result.contact.id} due to inbound reply`
+    );
+  }
+
+  return {
+    pausedEnrollments,
+    pausedContacts: pausedContacts.size,
+  };
+}
+
 /**
  * Process email sync job for a user
  * Max 2 concurrent jobs with exponential backoff retry
@@ -45,6 +118,16 @@ emailSyncQueue.process(2, async (job) => {
     }
 
     console.log(`Synced ${result.count} emails for user ${userId}`);
+
+    // Auto-pause active sequences when a contact replies inbound.
+    if (Array.isArray(result.results) && result.results.length > 0) {
+      const pauseSummary = await pauseActiveSequencesForInboundReplies(userId, result.results);
+      if (pauseSummary.pausedEnrollments > 0) {
+        console.log(
+          `[Auto-Pause] Total paused enrollments: ${pauseSummary.pausedEnrollments} across ${pauseSummary.pausedContacts} contact(s)`
+        );
+      }
+    }
 
     // If there's a next page, queue another job to continue pagination
     if (result.nextPageToken) {
@@ -150,4 +233,6 @@ process.on('SIGTERM', async () => {
 module.exports = {
   emailSyncQueue,
   initEmailSyncWorker,
+  pauseActiveSequencesForInboundReplies,
+  isInboundReplyFromMatchedContact,
 };

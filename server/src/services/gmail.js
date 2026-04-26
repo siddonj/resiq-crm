@@ -17,6 +17,7 @@ class GmailService {
       access_type: 'offline',
       scope: [
         'https://www.googleapis.com/auth/gmail.readonly',
+        'https://www.googleapis.com/auth/gmail.send',
         'https://www.googleapis.com/auth/userinfo.email',
       ],
       state,
@@ -232,6 +233,35 @@ class GmailService {
     } catch (err) {
       console.error('Error revoking credentials:', err);
       // Don't throw, just log - user might have already revoked on Google side
+    }
+  }
+
+  // Send an email
+  async sendEmail(user_id, to, subject, htmlBody) {
+    await this.setupUserAuth(user_id);
+    
+    try {
+      const emailLines = [
+        `To: ${to}`,
+        'Content-type: text/html;charset=iso-8859-1',
+        'MIME-Version: 1.0',
+        `Subject: ${subject}`,
+        '',
+        htmlBody,
+      ];
+      const email = emailLines.join('\r\n').trim();
+      const base64EncodedEmail = Buffer.from(email).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
+
+      const res = await this.gmail.users.messages.send({
+        userId: 'me',
+        requestBody: {
+          raw: base64EncodedEmail,
+        },
+      });
+      return res.data;
+    } catch (err) {
+      console.error('Error sending email via Gmail:', err);
+      throw err;
     }
   }
 }
