@@ -5,6 +5,7 @@ import DashboardLayout from './components/DashboardLayout'
 import Overview from './pages/Overview'
 import Contacts from './pages/Contacts'
 import Pipeline from './pages/Pipeline'
+import Forecasting from './pages/Forecasting'
 import Workflows from './pages/Workflows'
 import Settings from './pages/Settings'
 import Users from './pages/Users'
@@ -44,6 +45,7 @@ function AppRoutes() {
         <Route index element={<Overview />} />
         <Route path="contacts" element={<Contacts />} />
         <Route path="pipeline" element={<Pipeline />} />
+        <Route path="forecasting" element={<Forecasting />} />
         <Route path="workflows" element={<Workflows />} />
         <Route path="sequences" element={<Sequences />} />
         <Route path="settings" element={<Settings />} />

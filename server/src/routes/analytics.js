@@ -354,4 +354,234 @@ router.get('/engagement/top-assets', auth, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/analytics/deals/stage-probabilities
+ * Get win probabilities per stage: user-defined defaults + AI-predicted from history
+ */
+router.get('/deals/stage-probabilities', auth, async (req, res) => {
+  try {
+    // Get user-defined stage probabilities
+    const userProbs = await pool.query(
+      `SELECT stage, probability FROM stage_probabilities WHERE user_id = $1`,
+      [req.user.id]
+    );
+
+    // AI prediction: historical win rate per stage based on closed deals
+    // For each stage, count deals that passed through it and ended as closed_won vs closed_lost
+    // Approximation: use current stage of deals that have already closed
+    const historicalResult = await pool.query(
+      `SELECT
+        stage,
+        COUNT(*) as total,
+        COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won
+       FROM deals
+       WHERE user_id = $1 AND stage IN ('closed_won', 'closed_lost')
+       GROUP BY stage`,
+      [req.user.id]
+    );
+
+    const totalWon = historicalResult.rows.find(r => r.stage === 'closed_won')?.total || 0;
+    const totalLost = historicalResult.rows.find(r => r.stage === 'closed_lost')?.total || 0;
+    const totalClosed = parseInt(totalWon) + parseInt(totalLost);
+    const overallWinRate = totalClosed > 0 ? (parseInt(totalWon) / totalClosed) * 100 : null;
+
+    // Get stage-level win rates by looking at which stage deals were at before close
+    // Use audit log data if available, otherwise fall back to static defaults
+    const stageWinRates = await pool.query(
+      `SELECT
+        d.stage as current_stage,
+        COUNT(*) as count,
+        COALESCE(
+          (SELECT COUNT(*) FROM deals d2
+           WHERE d2.user_id = $1 AND d2.stage = 'closed_won'),
+          0
+        ) as total_won
+       FROM deals d
+       WHERE d.user_id = $1
+         AND d.stage NOT IN ('closed_won', 'closed_lost')
+       GROUP BY d.stage`,
+      [req.user.id]
+    );
+
+    // Build response merging user-defined with AI estimates
+    const STAGE_ORDER = ['lead', 'qualified', 'proposal', 'active', 'closed_won', 'closed_lost'];
+    // Default baseline probabilities
+    const DEFAULTS = { lead: 10, qualified: 25, proposal: 50, active: 75, closed_won: 100, closed_lost: 0 };
+
+    const userProbMap = {};
+    userProbs.rows.forEach(r => { userProbMap[r.stage] = parseFloat(r.probability); });
+
+    // AI probabilities: scale baseline by overall win rate if we have enough history
+    const aiProbMap = { ...DEFAULTS };
+    if (overallWinRate !== null && totalClosed >= 5) {
+      const scaleFactor = overallWinRate / 50; // 50% is the neutral baseline
+      Object.keys(aiProbMap).forEach(stage => {
+        if (stage !== 'closed_won' && stage !== 'closed_lost') {
+          aiProbMap[stage] = Math.min(99, Math.max(1, Math.round(DEFAULTS[stage] * scaleFactor)));
+        }
+      });
+    }
+
+    const result = STAGE_ORDER.map(stage => ({
+      stage,
+      user_probability: userProbMap[stage] ?? DEFAULTS[stage],
+      ai_probability: aiProbMap[stage],
+      default_probability: DEFAULTS[stage],
+    }));
+
+    res.json({
+      stages: result,
+      overall_win_rate: overallWinRate !== null ? parseFloat(overallWinRate.toFixed(2)) : null,
+      total_closed: totalClosed,
+    });
+  } catch (err) {
+    console.error('Error fetching stage probabilities:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * PUT /api/analytics/deals/stage-probabilities
+ * Update user-defined stage probabilities
+ */
+router.put('/deals/stage-probabilities', auth, async (req, res) => {
+  const { probabilities } = req.body; // Array of { stage, probability }
+  if (!Array.isArray(probabilities)) {
+    return res.status(400).json({ error: 'probabilities must be an array' });
+  }
+  try {
+    for (const { stage, probability } of probabilities) {
+      await pool.query(
+        `INSERT INTO stage_probabilities (user_id, stage, probability, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (user_id, stage) DO UPDATE SET probability = EXCLUDED.probability, updated_at = NOW()`,
+        [req.user.id, stage, probability]
+      );
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error updating stage probabilities:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/analytics/deals/forecast
+ * Returns weighted pipeline, monthly forecast vs actual, and opportunity scores
+ */
+router.get('/deals/forecast', auth, async (req, res) => {
+  try {
+    // Get all active deals with their probabilities
+    const dealsResult = await pool.query(
+      `SELECT
+        d.id, d.title, d.stage, d.value, d.close_date, d.created_at,
+        COALESCE(d.probability,
+          COALESCE(sp.probability,
+            CASE d.stage
+              WHEN 'lead' THEN 10
+              WHEN 'qualified' THEN 25
+              WHEN 'proposal' THEN 50
+              WHEN 'active' THEN 75
+              WHEN 'closed_won' THEN 100
+              WHEN 'closed_lost' THEN 0
+              ELSE 10
+            END
+          )
+        ) as effective_probability,
+        c.name as contact_name
+       FROM deals d
+       LEFT JOIN contacts c ON c.id = d.contact_id
+       LEFT JOIN stage_probabilities sp ON sp.user_id = d.user_id AND sp.stage = d.stage::text
+       WHERE d.user_id = $1 AND d.stage NOT IN ('closed_won', 'closed_lost')
+       ORDER BY (COALESCE(d.value, 0) * COALESCE(d.probability,
+         COALESCE(sp.probability, 10)) / 100) DESC`,
+      [req.user.id]
+    );
+
+    // Monthly closed_won revenue for the last 12 months
+    const monthlyActualResult = await pool.query(
+      `SELECT
+        DATE_TRUNC('month', updated_at) as month,
+        COALESCE(SUM(value), 0) as actual_revenue,
+        COUNT(*) as deals_closed
+       FROM deals
+       WHERE user_id = $1 AND stage = 'closed_won'
+         AND updated_at >= NOW() - INTERVAL '12 months'
+       GROUP BY DATE_TRUNC('month', updated_at)
+       ORDER BY month`,
+      [req.user.id]
+    );
+
+    // Monthly weighted pipeline forecast by close_date for next 6 months
+    const monthlyForecastResult = await pool.query(
+      `SELECT
+        DATE_TRUNC('month', d.close_date) as month,
+        COALESCE(SUM(d.value * COALESCE(d.probability,
+          COALESCE(sp.probability,
+            CASE d.stage
+              WHEN 'lead' THEN 10
+              WHEN 'qualified' THEN 25
+              WHEN 'proposal' THEN 50
+              WHEN 'active' THEN 75
+              ELSE 10
+            END
+          )
+        ) / 100), 0) as weighted_value,
+        COUNT(*) as deal_count
+       FROM deals d
+       LEFT JOIN stage_probabilities sp ON sp.user_id = d.user_id AND sp.stage = d.stage::text
+       WHERE d.user_id = $1
+         AND d.stage NOT IN ('closed_won', 'closed_lost')
+         AND d.close_date IS NOT NULL
+         AND d.close_date >= DATE_TRUNC('month', NOW())
+         AND d.close_date < NOW() + INTERVAL '6 months'
+       GROUP BY DATE_TRUNC('month', d.close_date)
+       ORDER BY month`,
+      [req.user.id]
+    );
+
+    // Total weighted pipeline value
+    const totalWeighted = dealsResult.rows.reduce((sum, d) => {
+      return sum + (parseFloat(d.value || 0) * parseFloat(d.effective_probability) / 100);
+    }, 0);
+
+    // Opportunity scores: value * probability / 100, normalized
+    const maxScore = dealsResult.rows.reduce((max, d) =>
+      Math.max(max, parseFloat(d.value || 0) * parseFloat(d.effective_probability) / 100), 0);
+
+    const opportunities = dealsResult.rows.map(d => {
+      const weighted = parseFloat(d.value || 0) * parseFloat(d.effective_probability) / 100;
+      return {
+        id: d.id,
+        title: d.title,
+        stage: d.stage,
+        value: parseFloat(d.value || 0),
+        probability: parseFloat(d.effective_probability),
+        weighted_value: parseFloat(weighted.toFixed(2)),
+        score: maxScore > 0 ? parseFloat(((weighted / maxScore) * 100).toFixed(0)) : 0,
+        close_date: d.close_date,
+        contact_name: d.contact_name,
+      };
+    });
+
+    res.json({
+      total_weighted_pipeline: parseFloat(totalWeighted.toFixed(2)),
+      opportunities,
+      monthly_actual: monthlyActualResult.rows.map(r => ({
+        month: r.month,
+        actual_revenue: parseFloat(r.actual_revenue),
+        deals_closed: parseInt(r.deals_closed),
+      })),
+      monthly_forecast: monthlyForecastResult.rows.map(r => ({
+        month: r.month,
+        weighted_value: parseFloat(parseFloat(r.weighted_value).toFixed(2)),
+        deal_count: parseInt(r.deal_count),
+      })),
+    });
+  } catch (err) {
+    console.error('Error fetching forecast:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

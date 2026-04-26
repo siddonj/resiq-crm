@@ -24,7 +24,7 @@ const PREDEFINED_SERVICE_LINES = [
   { value: 'team_process', label: 'Team Process' },
 ]
 
-const EMPTY_FORM = { title: '', contact_id: '', stage: 'lead', value: '', service_line: '', close_date: '', notes: '', custom_fields: {} }
+const EMPTY_FORM = { title: '', contact_id: '', stage: 'lead', value: '', service_line: '', close_date: '', notes: '', custom_fields: {}, probability: '' }
 
 const formatServiceLine = (value) => {
   if (!value) return ''
@@ -114,7 +114,8 @@ export default function Pipeline() {
       service_line: sl,
       close_date: d.close_date ? d.close_date.split('T')[0] : '',
       notes: d.notes || '',
-      custom_fields: d.custom_fields || {}
+      custom_fields: d.custom_fields || {},
+      probability: d.probability != null ? d.probability : '',
     })
     setFormError('')
     setEditingId(d.id)
@@ -134,7 +135,8 @@ export default function Pipeline() {
         value: form.value ? Number(form.value) : null,
         service_line: form.service_line || null,
         close_date: form.close_date || null,
-        contact_id: form.contact_id || null
+        contact_id: form.contact_id || null,
+        probability: form.probability !== '' ? Number(form.probability) : null,
       }
       if (editingId) {
         const { data } = await axios.put(`/api/deals/${editingId}`, payload, authHeaders)
@@ -272,6 +274,11 @@ export default function Pipeline() {
                         </div>
                         {deal.value && (
                           <p className="text-teal text-xs font-semibold mt-2">${Number(deal.value).toLocaleString()}</p>
+                        )}
+                        {deal.probability != null && (
+                          <span className="inline-block mt-1 text-xs font-medium px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600">
+                            {deal.probability}% win
+                          </span>
                         )}
                         {deal.service_line && (
                           <p className="text-brand-gray text-xs mt-1">{formatServiceLine(deal.service_line)}</p>
@@ -424,6 +431,20 @@ export default function Pipeline() {
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
                     placeholder="0"
                     step="0.01"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Win Probability %</label>
+                  <input
+                    type="number"
+                    value={form.probability}
+                    onChange={e => setForm({ ...form, probability: e.target.value })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                    placeholder="Stage default"
+                    min="0"
+                    max="100"
+                    step="1"
                   />
                 </div>
 
