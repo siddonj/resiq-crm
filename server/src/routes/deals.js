@@ -22,7 +22,7 @@ router.get('/', auth, async (req, res) => {
   }
   if (service_line) {
     params.push(service_line);
-    filters.push(`d.service_line::text = $${params.length}`);
+    filters.push(`d.service_line = $${params.length}`);
   }
 
   const filterSQL = filters.length ? 'AND ' + filters.join(' AND ') : '';

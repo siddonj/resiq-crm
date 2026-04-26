@@ -105,12 +105,11 @@ Source: ${finalUrlFetched ? finalUrlFetched : 'LLM Training Data'}
     newCustomFields.estimated_size = parsed.estimated_size;
     newCustomFields.competitors = parsed.competitors ? parsed.competitors.join(', ') : '';
 
-    const validServiceLines = ['managed_wifi', 'proptech_selection', 'fractional_it', 'vendor_rfp', 'ai_automation', 'team_process'];
-    let aiServiceLine = validServiceLines.includes(parsed.recommended_service_line) ? parsed.recommended_service_line : null;
+    let aiServiceLine = parsed.recommended_service_line || null;
 
     // Update Contact
     await pool.query(
-      `UPDATE contacts SET notes = $1, service_line = COALESCE(service_line, $2::service_line), custom_fields = $3 WHERE id = $4`,
+      `UPDATE contacts SET notes = $1, service_line = COALESCE(service_line, $2), custom_fields = $3 WHERE id = $4`,
       [newNotes, aiServiceLine, JSON.stringify(newCustomFields), contact.id]
     );
 

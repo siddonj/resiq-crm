@@ -2,7 +2,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 CREATE TYPE contact_type AS ENUM ('prospect', 'partner', 'vendor');
 CREATE TYPE deal_stage AS ENUM ('lead', 'qualified', 'proposal', 'active', 'closed_won', 'closed_lost');
-CREATE TYPE service_line AS ENUM ('managed_wifi', 'proptech_selection', 'fractional_it', 'vendor_rfp', 'ai_automation', 'team_process');
+-- service_line is now TEXT to support custom values (see migration 016-custom-service-lines.sql)
 
 CREATE TABLE users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -22,7 +22,7 @@ CREATE TABLE contacts (
   phone TEXT,
   company TEXT,
   type contact_type DEFAULT 'prospect',
-  service_line service_line,
+  service_line TEXT,
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -34,7 +34,7 @@ CREATE TABLE deals (
   title TEXT NOT NULL,
   stage deal_stage DEFAULT 'lead',
   value NUMERIC(12,2),
-  service_line service_line,
+  service_line TEXT,
   close_date DATE,
   notes TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
