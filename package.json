@@ -3,11 +3,15 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "concurrently --prefix \"[{name}]\" --names \"server,client\" \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
-    "install:all": "npm install && npm install --prefix client && npm install --prefix server"
+    "install:all": "npm install && npm install --prefix client && npm install --prefix server",
+    "migrate": "node run-all-migrations.js"
   },
   "dependencies": {
     "@langchain/core": "^1.1.41",
     "@langchain/openai": "^1.4.4",
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "dotenv": "^16.6.1",
+    "pg": "^8.20.0"
   }
 }
+

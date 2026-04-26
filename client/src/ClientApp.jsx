@@ -8,6 +8,7 @@ import ClientInvoices from './pages/client/Invoices'
 import ClientFiles from './pages/client/Files'
 import ClientActivity from './pages/client/Activity'
 import ClientHelp from './pages/client/Help'
+import ClientTickets from './pages/client/Tickets'
 
 function ClientProtectedRoute({ children }) {
   const { isAuthenticated } = useClientAuth()
@@ -25,6 +26,7 @@ function ClientRoutes() {
         <Route path="invoices" element={<ClientInvoices />} />
         <Route path="files" element={<ClientFiles />} />
         <Route path="activity" element={<ClientActivity />} />
+        <Route path="tickets" element={<ClientTickets />} />
         <Route path="help" element={<ClientHelp />} />
       </Route>
     </Routes>

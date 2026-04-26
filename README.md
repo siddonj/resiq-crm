@@ -22,6 +22,8 @@ A full-featured CRM platform for managing contacts, deals, proposals, invoices, 
 | **Resource Sharing** | Share contacts/deals between users |
 | **Gmail Integration** | OAuth-connected email timeline per contact |
 | **Settings & CSV Export** | User profile, notification prefs, export any list |
+| **Engagement Tracking** | ✨ *NEW* Pixel-based open tracking for proposals/invoices, real-time engagement timeline |
+| **Support Tickets** | ✨ *NEW* Help Desk with Kanban board, client portal, real-time WebSocket updates |
 
 ---
 
@@ -50,13 +52,35 @@ A full-featured CRM platform for managing contacts, deals, proposals, invoices, 
 - PostgreSQL 15+
 - Redis (optional — needed for workflows and Gmail sync)
 
-### 1. Install dependencies
+### Quick Start (5 minutes)
+
+```bash
+# 1. Install all dependencies and run migrations
+node setup.js
+
+# 2. Edit .env with your configuration
+# Required: DATABASE_URL, SMTP settings for email notifications
+
+# 3. Start development servers
+npm run dev
+```
+
+- Frontend: http://localhost:5173
+- API: http://localhost:5000
+- Help Desk: http://localhost:5173/help-desk (real-time WebSocket updates)
+- Client Portal: http://localhost:5173/client/tickets (ticket submission)
+
+---
+
+### Manual Setup Steps
+
+#### 1. Install dependencies
 
 ```bash
 npm run install:all
 ```
 
-### 2. Set up the database
+#### 2. Set up the database
 
 Create a PostgreSQL database and user:
 
@@ -66,26 +90,37 @@ CREATE DATABASE resiq_crm OWNER resiq;
 GRANT ALL PRIVILEGES ON DATABASE resiq_crm TO resiq;
 ```
 
-Run migrations in order:
+Run all migrations automatically:
+
+```bash
+npm run migrate
+```
+
+Or manually apply migrations one at a time:
 
 ```bash
 psql -U resiq -d resiq_crm -f database/migrations/001-initial.sql
 psql -U resiq -d resiq_crm -f database/migrations/002-add-rbac-teams.sql
-psql -U resiq -d resiq_crm -f database/migrations/003-add-proposals.sql
-psql -U resiq -d resiq_crm -f database/migrations/004-add-invoices.sql
-psql -U resiq -d resiq_crm -f database/migrations/005-add-time-entries.sql
-psql -U resiq -d resiq_crm -f database/migrations/006-add-calendar.sql
+# ... (all other migrations)
+psql -U resiq -d resiq_crm -f database/migrations/013-add-support-tickets.sql
 ```
 
-### 3. Configure environment
+#### 3. Configure environment
 
-Copy and edit `server/.env`:
+Copy and edit `.env`:
 
 ```env
 PORT=5000
 DATABASE_URL=postgresql://resiq:resiq_dev@localhost:5432/resiq_crm
 JWT_SECRET=change_me_in_production
 ENCRYPTION_KEY=exactly-32-chars-pad-pad-pad-pad-
+
+# Email notifications (Phase 20 — Support Tickets)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+SMTP_FROM=noreply@example.com
 
 # Optional — Redis (workflows + email sync)
 REDIS_URL=redis://localhost:6379
@@ -95,19 +130,16 @@ GMAIL_CLIENT_ID=your_client_id
 GMAIL_CLIENT_SECRET=your_client_secret
 API_URL=http://localhost:5000
 
-# Optional — Google Calendar OAuth (defaults to Gmail credentials if not set)
+# Optional — Google Calendar OAuth
 GCAL_CLIENT_ID=your_client_id
 GCAL_CLIENT_SECRET=your_client_secret
 ```
 
-### 4. Start development servers
+#### 4. Start development servers
 
 ```bash
 npm run dev
 ```
-
-- Frontend: http://localhost:5173
-- API: http://localhost:5000
 
 ---
 

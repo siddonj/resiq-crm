@@ -19,6 +19,7 @@ export default function ClientLayout() {
     { label: 'Invoices', href: '/client/invoices', icon: '💳' },
     { label: 'Files', href: '/client/files', icon: '📁' },
     { label: 'Activity', href: '/client/activity', icon: '⏱️' },
+    { label: 'Support Tickets', href: '/client/tickets', icon: '🎟️' },
     { label: 'Help', href: '/client/help', icon: '❓' },
   ]
 

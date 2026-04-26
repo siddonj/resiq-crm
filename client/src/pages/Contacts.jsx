@@ -5,6 +5,7 @@ import EmailTimeline from '../components/EmailTimeline'
 import ContactTags from '../components/ContactTags'
 import ShareModal from '../components/ShareModal'
 import ActivityLog from '../components/ActivityLog'
+import EngagementTimeline from '../components/EngagementTimeline'
 import EnrollSequenceModal from '../components/EnrollSequenceModal'
 
 const CONTACT_TYPES = ['prospect', 'partner', 'vendor']
@@ -280,6 +281,11 @@ export default function Contacts() {
               <div className="border-t border-gray-100 pt-4">
                 <h4 className="font-semibold text-navy mb-3">Tags</h4>
                 <ContactTags contactId={selectedContact.id} onTagsUpdated={fetchContacts} />
+              </div>
+
+              <div className="border-t border-gray-100 pt-4">
+                <h4 className="font-semibold text-navy mb-3">Engagement Tracking</h4>
+                <EngagementTimeline contactId={selectedContact.id} />
               </div>
 
               <div className="border-t border-gray-100 pt-4">

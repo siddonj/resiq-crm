@@ -442,57 +442,222 @@ router.get('/me', clientAuth, async (req, res) => {
 });
 
 /**
- * POST /api/client/files/upload
- * Employee uploads a file to share with client
- * Requires: auth, formData with file
+ * GET /api/client/tickets
+ * List all tickets submitted by authenticated client
  */
-router.post('/files/upload', auth, upload.single('file'), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file provided' });
-  }
-
-  const { clientId, description } = req.body;
-
-  if (!clientId) {
-    return res.status(400).json({ error: 'clientId is required' });
+router.get('/tickets', clientAuth, async (req, res) => {
+  if (!req.client) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   try {
-    // Verify client exists
-    const client = await Client.findById(clientId);
-    if (!client) {
-      return res.status(404).json({ error: 'Client not found' });
-    }
-
-    // Upload file to storage backend
-    const fileInfo = await uploadFile(req.file.buffer, req.file.originalname, req.file.mimetype);
-
-    // Store file metadata in database
     const result = await pool.query(
-      `INSERT INTO client_files (file_name, file_path, file_size, mime_type, uploaded_by, description, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
-       RETURNING id`,
-      [req.file.originalname, fileInfo.storagePath, fileInfo.size, fileInfo.mimeType, req.user.id, description || null]
+      `SELECT 
+        t.*,
+        u.name AS assigned_to_name,
+        COUNT(tr.id) FILTER (WHERE tr.id IS NOT NULL) as reply_count
+       FROM tickets t
+       LEFT JOIN users u ON u.id = t.assigned_to
+       LEFT JOIN ticket_replies tr ON tr.ticket_id = t.id
+       WHERE t.client_id = $1
+       GROUP BY t.id, u.id, u.name
+       ORDER BY t.created_at DESC`,
+      [req.client.id]
     );
 
-    const fileId = result.rows[0].id;
+    // Log activity
+    await Client.logActivity(
+      req.client.id,
+      'viewed_tickets_list',
+      { count: result.rows.length },
+      req.ip
+    );
 
-    // Share file with client
-    await Client.shareItem(clientId, 'file', fileId, req.user.id);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Error fetching client tickets:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
-    res.status(201).json({
-      success: true,
-      file: {
-        id: fileId,
-        name: req.file.originalname,
-        size: fileInfo.size,
-        type: fileInfo.mimeType,
-        url: fileInfo.url,
-      },
+/**
+ * GET /api/client/tickets/:ticketId
+ * View single ticket details with replies
+ */
+router.get('/tickets/:ticketId', clientAuth, async (req, res) => {
+  if (!req.client) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const { ticketId } = req.params;
+
+  try {
+    // Check if client has access to this ticket
+    const ticketResult = await pool.query(
+      `SELECT 
+        t.*,
+        u.name AS assigned_to_name
+       FROM tickets t
+       LEFT JOIN users u ON u.id = t.assigned_to
+       WHERE t.id = $1 AND t.client_id = $2`,
+      [ticketId, req.client.id]
+    );
+
+    if (ticketResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    const ticket = ticketResult.rows[0];
+
+    // Get replies
+    const repliesResult = await pool.query(
+      `SELECT 
+        tr.*,
+        u.name AS user_name,
+        cl.name AS client_name
+       FROM ticket_replies tr
+       LEFT JOIN users u ON u.id = tr.user_id
+       LEFT JOIN clients cl ON cl.id = tr.client_id
+       WHERE tr.ticket_id = $1
+       ORDER BY tr.created_at ASC`,
+      [ticketId]
+    );
+
+    // Log activity
+    await Client.logActivity(
+      req.client.id,
+      'viewed_ticket',
+      { ticket_id: ticketId, status: ticket.status },
+      req.ip
+    );
+
+    res.json({
+      ticket,
+      replies: repliesResult.rows,
     });
   } catch (err) {
-    console.error('Error uploading file:', err);
-    res.status(500).json({ error: 'Failed to upload file' });
+    console.error('Error fetching ticket:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/client/tickets
+ * Client submits a new support ticket
+ */
+router.post('/tickets', clientAuth, async (req, res) => {
+  if (!req.client) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const { subject, description, priority } = req.body;
+
+  if (!subject?.trim()) {
+    return res.status(400).json({ error: 'Subject is required' });
+  }
+
+  try {
+    // Get the client's associated user/contact
+    const contactResult = await pool.query(
+      `SELECT c.id FROM contacts c 
+       WHERE c.email = $1 LIMIT 1`,
+      [req.client.email]
+    );
+
+    const contactId = contactResult.rows[0]?.id || null;
+
+    // Create ticket (associate with client's manager)
+    const ticketResult = await pool.query(
+      `INSERT INTO tickets (client_id, contact_id, subject, description, priority, user_id)
+       VALUES ($1, $2, $3, $4, $5, (SELECT user_id FROM clients WHERE id = $1))
+       RETURNING *`,
+      [req.client.id, contactId, subject, description || null, priority || 'medium']
+    );
+
+    const ticket = ticketResult.rows[0];
+
+    // Log creation activity
+    await pool.query(
+      `INSERT INTO ticket_activities (ticket_id, action, details)
+       VALUES ($1, $2, $3)`,
+      [ticket.id, 'created_by_client', JSON.stringify({ client_id: req.client.id })]
+    );
+
+    // Log client activity
+    await Client.logActivity(
+      req.client.id,
+      'submitted_ticket',
+      { ticket_id: ticket.id, subject },
+      req.ip
+    );
+
+    res.status(201).json(ticket);
+  } catch (err) {
+    console.error('Error creating ticket:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * POST /api/client/tickets/:ticketId/replies
+ * Client adds a reply to their support ticket
+ */
+router.post('/tickets/:ticketId/replies', clientAuth, async (req, res) => {
+  if (!req.client) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const { ticketId } = req.params;
+  const { message } = req.body;
+
+  if (!message?.trim()) {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+
+  try {
+    // Verify client owns this ticket
+    const ticketCheck = await pool.query(
+      'SELECT id FROM tickets WHERE id = $1 AND client_id = $2',
+      [ticketId, req.client.id]
+    );
+
+    if (ticketCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    // Add reply
+    const replyResult = await pool.query(
+      `INSERT INTO ticket_replies (ticket_id, client_id, message)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [ticketId, req.client.id, message]
+    );
+
+    // Update ticket updated_at
+    await pool.query(
+      'UPDATE tickets SET updated_at = NOW() WHERE id = $1',
+      [ticketId]
+    );
+
+    // Log activity
+    await pool.query(
+      `INSERT INTO ticket_activities (ticket_id, action, details)
+       VALUES ($1, $2, $3)`,
+      [ticketId, 'client_replied', JSON.stringify({ client_id: req.client.id })]
+    );
+
+    // Log client activity
+    await Client.logActivity(
+      req.client.id,
+      'replied_to_ticket',
+      { ticket_id: ticketId },
+      req.ip
+    );
+
+    res.status(201).json(replyResult.rows[0]);
+  } catch (err) {
+    console.error('Error adding reply:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

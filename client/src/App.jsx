@@ -21,6 +21,7 @@ import ClientPortalApp from './ClientApp'
 import Help from './pages/Help'
 import Agents from './pages/Agents'
 import Forms from './pages/Forms'
+import HelpDesk from './pages/HelpDesk'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -50,6 +51,7 @@ function AppRoutes() {
         <Route path="reminders" element={<Reminders />} />
         <Route path="agents" element={<Agents />} />
         <Route path="forms" element={<Forms />} />
+        <Route path="help-desk" element={<HelpDesk />} />
         <Route path="proposals" element={<Proposals />} />
         <Route path="invoices" element={<Invoices />} />
         <Route path="time-tracking" element={<TimeTracking />} />

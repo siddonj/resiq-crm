@@ -259,40 +259,97 @@ router.get('/workflows/summary', auth, async (req, res) => {
 });
 
 /**
- * GET /api/analytics/workflows/top
- * Get top performing workflows by execution count
+ * GET /api/analytics/engagement/summary
+ * Get engagement tracking metrics: open rates by asset type
  */
-router.get('/workflows/top', auth, async (req, res) => {
+router.get('/engagement/summary', auth, async (req, res) => {
   try {
+    // Get engagement metrics by asset type
     const result = await pool.query(
       `SELECT
-        w.id,
-        w.name,
-        COUNT(we.id) as execution_count,
-        COUNT(CASE WHEN we.status = 'completed' THEN 1 END) as completed,
-        COUNT(CASE WHEN we.status = 'failed' THEN 1 END) as failed
-      FROM workflows w
-      LEFT JOIN workflow_executions we ON w.id = we.workflow_id
-      WHERE w.user_id = $1
-      GROUP BY w.id, w.name
-      HAVING COUNT(we.id) > 0
-      ORDER BY execution_count DESC
-      LIMIT 5`,
+        asset_type,
+        COUNT(*) as total_tracked,
+        COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) as total_opened,
+        ROUND(100.0 * COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) / COUNT(*), 2) as open_rate
+      FROM engagement_tracking
+      WHERE user_id = $1
+      GROUP BY asset_type
+      ORDER BY total_tracked DESC`,
       [req.user.id]
     );
 
-    res.json(result.rows.map(row => {
-      const completed = parseInt(row.completed) + parseInt(row.failed);
-      const successRate = completed > 0 ? ((parseInt(row.completed) / completed) * 100) : 0;
-      return {
-        workflow_id: row.id,
-        workflow_name: row.name,
-        execution_count: parseInt(row.execution_count),
-        success_rate: parseFloat(successRate.toFixed(2)),
-      };
-    }));
+    // Get overall metrics
+    const overallResult = await pool.query(
+      `SELECT
+        COUNT(*) as total_tracked,
+        COUNT(DISTINCT contact_id) as contacts_tracked,
+        COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) as total_opened,
+        COUNT(DISTINCT CASE WHEN opened_at IS NOT NULL THEN contact_id END) as contacts_opened
+      FROM engagement_tracking
+      WHERE user_id = $1`,
+      [req.user.id]
+    );
+
+    const overall = overallResult.rows[0];
+    const totalTracked = parseInt(overall.total_tracked);
+    const overallOpenRate = totalTracked > 0 
+      ? parseFloat(((parseInt(overall.total_opened) / totalTracked) * 100).toFixed(2))
+      : 0;
+
+    res.json({
+      overall: {
+        total_tracked: totalTracked,
+        total_opened: parseInt(overall.total_opened),
+        open_rate: overallOpenRate,
+        contacts_tracked: parseInt(overall.contacts_tracked),
+        contacts_opened: parseInt(overall.contacts_opened),
+      },
+      by_asset_type: result.rows.map(row => ({
+        asset_type: row.asset_type,
+        total_tracked: parseInt(row.total_tracked),
+        total_opened: parseInt(row.total_opened),
+        open_rate: parseFloat(row.open_rate),
+      })),
+    });
   } catch (err) {
-    console.error('Error fetching top workflows:', err);
+    console.error('Error fetching engagement summary:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/analytics/engagement/top-assets
+ * Get top assets by engagement (open count)
+ */
+router.get('/engagement/top-assets', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+        asset_type,
+        asset_id,
+        COUNT(*) as total_tracked,
+        COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) as opened,
+        ROUND(100.0 * COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) / COUNT(*), 2) as open_rate,
+        MAX(opened_at) as last_opened
+      FROM engagement_tracking
+      WHERE user_id = $1
+      GROUP BY asset_type, asset_id
+      HAVING COUNT(*) > 0
+      ORDER BY opened DESC
+      LIMIT 10`,
+      [req.user.id]
+    );
+
+    res.json(result.rows.map(row => ({
+      asset_type: row.asset_type,
+      asset_id: row.asset_id,
+      total_tracked: parseInt(row.total_tracked),
+      opened: parseInt(row.opened),
+      open_rate: parseFloat(row.open_rate),
+      last_opened: row.last_opened,
+    })));
+  } catch (err) {
+    console.error('Error fetching top assets:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

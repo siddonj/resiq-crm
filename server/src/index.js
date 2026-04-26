@@ -2,6 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const WebSocket = require('ws');
+const http = require('http');
+const jwt = require('jsonwebtoken');
 
 const authRoutes = require('./routes/auth');
 const clientAuthRoutes = require('./routes/clientAuth');
@@ -29,6 +32,8 @@ const webhookRoutes = require('./routes/webhooks');
 const agentsRoutes = require('./routes/agents');
 const formsRoutes = require('./routes/forms');
 const leadsRoutes = require('./routes/leads');
+const engagementRoutes = require('./routes/engagement');
+const ticketsRoutes = require('./routes/tickets');
 const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
 const { agentQueue, initAgentWorker } = require('./workers/agentWorker');
@@ -36,11 +41,50 @@ const { initSequenceWorker } = require('./workers/sequenceWorker');
 const { MessageQueueService } = require('./services/messageQueue');
 const WorkflowEngine = require('./services/workflowEngine');
 const trackRoutes = require('./routes/track');
+const TicketWebSocketServer = require('./services/ticketWebSocket');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use(express.urlencoded({ extended: true })); // Added for form submissions (Web-to-Lead)
+app.use(express.urlencoded({ extended: true }));
+
+// Create HTTP server to support WebSocket upgrade
+const server = http.createServer(app);
+
+// Initialize WebSocket server
+const wss = new WebSocket.Server({ noServer: true });
+const ticketWS = new TicketWebSocketServer();
+
+// Handle WebSocket upgrade
+server.on('upgrade', (req, socket, head) => {
+  if (req.url === '/ws/tickets') {
+    const { getTokenFromRequest, verifyWebSocketToken } = require('./middleware/wsAuth');
+    
+    // Extract token from Sec-WebSocket-Protocol header
+    const protocol = req.headers['sec-websocket-protocol'];
+    const token = protocol ? protocol.split(' ').pop() : null;
+    
+    if (!token) {
+      console.log('WebSocket upgrade rejected: no token');
+      socket.destroy();
+      return;
+    }
+
+    const decoded = verifyWebSocketToken(token);
+    if (!decoded) {
+      console.log('WebSocket upgrade rejected: invalid token');
+      socket.destroy();
+      return;
+    }
+
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      ticketWS.handleUpgrade(ws, req, decoded.id);
+    });
+  }
+});
+
+// Make ticketWS available to routes
+app.locals.ticketWS = ticketWS;
 
 // Initialize workflow engine with queue
 const workflowEngine = new WorkflowEngine(workflowQueue);
@@ -75,6 +119,8 @@ app.use('/api/webhooks', webhookRoutes);
 app.use('/api/agents', agentsRoutes);
 app.use('/api/forms', formsRoutes);
 app.use('/api/leads', leadsRoutes);
+app.use('/api/engagement', engagementRoutes);
+app.use('/api/tickets', ticketsRoutes);
 app.use('/api/track', trackRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
@@ -128,8 +174,9 @@ async function initDatabase() {
 }
 
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, async () => {
+server.listen(PORT, async () => {
   console.log(`ResiQ CRM server running on port ${PORT}`);
+  console.log(`✓ WebSocket support enabled at ws://localhost:${PORT}/ws/tickets`);
   await initDatabase();
 
   // Initialize message queue (for SMS)

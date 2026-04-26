@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../models/db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
+const trackingService = require('../services/trackingService');
 
 const router = express.Router();
 
@@ -95,6 +96,45 @@ router.get('/:id', auth, async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     res.json(result.rows[0]);
   } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get proposal with tracking pixel (for sharing/rendering)
+// Pass ?tracked=true to inject pixel and create tracking record
+router.get('/:id/render', auth, async (req, res) => {
+  const { tracked } = req.query;
+  try {
+    const result = await pool.query(`
+      SELECT p.*, d.title AS deal_title, c.id AS contact_id, c.name AS contact_name
+      FROM proposals p
+      LEFT JOIN deals d ON d.id = p.deal_id
+      LEFT JOIN contacts c ON c.id = d.contact_id
+      WHERE p.id = $1 AND p.user_id = $2
+    `, [req.params.id, req.user.id]);
+    
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    
+    let proposal = result.rows[0];
+    let html = proposal.html_content || '<p>No content</p>';
+    
+    // Inject tracking pixel if requested and contact exists
+    if (tracked === 'true' && proposal.contact_id) {
+      html = await trackingService.injectAssetPixel(
+        html,
+        req.user.id,
+        proposal.contact_id,
+        'proposal',
+        req.params.id
+      );
+    }
+    
+    res.json({
+      ...proposal,
+      html_content: html
+    });
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
