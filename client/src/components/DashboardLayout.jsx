@@ -21,7 +21,7 @@ const navItems = [
 const adminNavItems = [
   { to: '/teams', label: 'Teams', icon: '🏢', roles: ['admin', 'manager'] },
   { to: '/audit-logs', label: 'Audit Logs', icon: '📋', roles: ['admin', 'manager'] },
-  { to: '/users', label: 'Users', icon: '👨‍💼', roles: ['admin'] },
+  { to: '/users', label: 'Users', icon: '👨‍💼', roles: ['admin', 'manager'] },
 ]
 
 export default function DashboardLayout() {

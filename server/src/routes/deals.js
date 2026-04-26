@@ -9,6 +9,7 @@ let workflowEngine;
 
 router.get('/', auth, async (req, res) => {
   const { search, stage, service_line } = req.query;
+  const role = req.user.role;
   const params = [req.user.id];
   const filters = [];
 
@@ -27,6 +28,32 @@ router.get('/', auth, async (req, res) => {
 
   const filterSQL = filters.length ? 'AND ' + filters.join(' AND ') : '';
 
+  // Build ownership clause based on role:
+  // admin → all deals
+  // manager → own + team members' + shared
+  // others → own + shared
+  let ownershipClause;
+  if (role === 'admin') {
+    ownershipClause = '1=1';
+  } else if (role === 'manager') {
+    ownershipClause = `(d.user_id = $1
+      OR EXISTS (
+        SELECT 1 FROM shared_resources sr
+        WHERE sr.resource_type = 'deal' AND sr.resource_id = d.id
+        AND (sr.shared_with_user_id = $1 OR sr.shared_with_team_id IN (SELECT team_id FROM team_members WHERE user_id = $1))
+      )
+      OR d.user_id IN (
+        SELECT tm2.user_id FROM team_members tm2
+        WHERE tm2.team_id IN (SELECT tm1.team_id FROM team_members tm1 WHERE tm1.user_id = $1)
+      ))`;
+  } else {
+    ownershipClause = `(d.user_id = $1 OR EXISTS (
+      SELECT 1 FROM shared_resources sr
+      WHERE sr.resource_type = 'deal' AND sr.resource_id = d.id
+      AND (sr.shared_with_user_id = $1 OR sr.shared_with_team_id IN (SELECT team_id FROM team_members WHERE user_id = $1))
+    ))`;
+  }
+
   try {
     const result = await pool.query(`
       SELECT d.*,
@@ -41,11 +68,7 @@ router.get('/', auth, async (req, res) => {
           ELSE 'view'
         END AS access_permission
       FROM deals d
-      WHERE (d.user_id = $1 OR EXISTS (
-        SELECT 1 FROM shared_resources sr
-        WHERE sr.resource_type = 'deal' AND sr.resource_id = d.id
-        AND (sr.shared_with_user_id = $1 OR sr.shared_with_team_id IN (SELECT team_id FROM team_members WHERE user_id = $1))
-      ))
+      WHERE ${ownershipClause}
       ${filterSQL}
       ORDER BY d.created_at DESC
     `, params);

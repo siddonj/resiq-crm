@@ -70,13 +70,26 @@ router.put('/me/password', auth, async (req, res) => {
 
 /**
  * GET /api/users
- * List all users — admin and manager only
+ * List users — admin sees all, manager sees their team members
  */
 router.get('/', auth, requireRole('admin', 'manager'), async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT id, name, email, role, is_active, created_at FROM users ORDER BY created_at ASC'
-    );
+    let result;
+    if (req.user.role === 'admin') {
+      result = await pool.query(
+        'SELECT id, name, email, role, is_active, created_at FROM users ORDER BY created_at ASC'
+      );
+    } else {
+      // Managers only see users who share at least one team with them
+      result = await pool.query(
+        `SELECT DISTINCT u.id, u.name, u.email, u.role, u.is_active, u.created_at
+         FROM users u
+         JOIN team_members tm ON tm.user_id = u.id
+         WHERE tm.team_id IN (SELECT team_id FROM team_members WHERE user_id = $1)
+         ORDER BY u.created_at ASC`,
+        [req.user.id]
+      );
+    }
     res.json(result.rows);
   } catch (err) {
     console.error('Error listing users:', err);
@@ -90,7 +103,7 @@ router.get('/', auth, requireRole('admin', 'manager'), async (req, res) => {
  */
 router.post('/invite', auth, requireRole('admin'), async (req, res) => {
   const { name, email, role } = req.body;
-  const validRoles = ['admin', 'manager', 'user', 'viewer'];
+  const validRoles = ['admin', 'manager', 'rep', 'user', 'viewer'];
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   if (!email?.trim()) return res.status(400).json({ error: 'email is required' });
   if (!role || !validRoles.includes(role)) {
@@ -155,7 +168,7 @@ router.get('/:id', auth, requireRole('admin'), async (req, res) => {
  */
 router.put('/:id/role', auth, requireRole('admin'), async (req, res) => {
   const { role } = req.body;
-  const validRoles = ['admin', 'manager', 'user', 'viewer'];
+  const validRoles = ['admin', 'manager', 'rep', 'user', 'viewer'];
   if (!role || !validRoles.includes(role)) {
     return res.status(400).json({ error: `role must be one of: ${validRoles.join(', ')}` });
   }
