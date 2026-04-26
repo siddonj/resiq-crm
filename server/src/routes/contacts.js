@@ -24,7 +24,7 @@ router.get('/', auth, async (req, res) => {
   }
   if (service_line) {
     params.push(service_line);
-    filters.push(`c.service_line::text = $${params.length}`);
+    filters.push(`c.service_line = $${params.length}`);
   }
   if (tag) {
     params.push(tag.toLowerCase());

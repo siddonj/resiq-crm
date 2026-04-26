@@ -9,7 +9,7 @@ import EngagementTimeline from '../components/EngagementTimeline'
 import EnrollSequenceModal from '../components/EnrollSequenceModal'
 
 const CONTACT_TYPES = ['prospect', 'partner', 'vendor']
-const SERVICE_LINES = [
+const PREDEFINED_SERVICE_LINES = [
   { value: 'managed_wifi', label: 'Managed WiFi' },
   { value: 'proptech_selection', label: 'PropTech Selection' },
   { value: 'fractional_it', label: 'Fractional IT' },
@@ -20,6 +20,13 @@ const SERVICE_LINES = [
 
 const EMPTY_FORM = { name: '', email: '', phone: '', company: '', type: 'prospect', service_line: '', notes: '' }
 
+const formatServiceLine = (value) => {
+  if (!value) return '—'
+  const predefined = PREDEFINED_SERVICE_LINES.find(s => s.value === value)
+  if (predefined) return predefined.label
+  return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
 export default function Contacts() {
   const { token } = useAuth()
   const [contacts, setContacts] = useState([])
@@ -29,6 +36,7 @@ export default function Contacts() {
   const [selectedContact, setSelectedContact] = useState(null)
   const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
+  const [serviceLineMode, setServiceLineMode] = useState('select') // 'select' | 'custom'
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [sharingContact, setSharingContact] = useState(null)
@@ -38,6 +46,16 @@ export default function Contacts() {
   const [filterServiceLine, setFilterServiceLine] = useState('')
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
+
+  // Collect unique service lines from loaded contacts (for filter dropdown)
+  const uniqueServiceLines = [
+    ...PREDEFINED_SERVICE_LINES,
+    ...contacts
+      .map(c => c.service_line)
+      .filter(sl => sl && !PREDEFINED_SERVICE_LINES.some(p => p.value === sl))
+      .filter((sl, i, arr) => arr.indexOf(sl) === i)
+      .map(sl => ({ value: sl, label: sl })),
+  ]
 
   const fetchContacts = () => {
     const params = {}
@@ -68,11 +86,14 @@ export default function Contacts() {
     URL.revokeObjectURL(url)
   }
 
-  const openModal = () => { setForm(EMPTY_FORM); setFormError(''); setEditingId(null); setShowModal(true) }
+  const openModal = () => { setForm(EMPTY_FORM); setFormError(''); setEditingId(null); setServiceLineMode('select'); setShowModal(true) }
   const openEdit = (c) => {
-    setForm({ name: c.name, email: c.email || '', phone: c.phone || '', company: c.company || '', type: c.type, service_line: c.service_line || '', notes: c.notes || '' })
+    const sl = c.service_line || ''
+    const isPredefined = PREDEFINED_SERVICE_LINES.some(s => s.value === sl)
+    setForm({ name: c.name, email: c.email || '', phone: c.phone || '', company: c.company || '', type: c.type, service_line: sl, notes: c.notes || '' })
     setFormError('')
     setEditingId(c.id)
+    setServiceLineMode(sl && !isPredefined ? 'custom' : 'select')
     setShowModal(true)
   }
   const closeModal = () => setShowModal(false)
@@ -156,7 +177,7 @@ export default function Contacts() {
           className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal"
         >
           <option value="">All Service Lines</option>
-          {SERVICE_LINES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+          {uniqueServiceLines.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
       </div>
 
@@ -186,7 +207,7 @@ export default function Contacts() {
                   <td className="px-4 py-3">
                     <span className="px-2 py-0.5 bg-teal/10 text-teal rounded-full text-xs font-medium capitalize">{c.type}</span>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{SERVICE_LINES.find(s => s.value === c.service_line)?.label || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">{formatServiceLine(c.service_line)}</td>
                   <td className="px-4 py-3 text-right space-x-3">
                     {!c.is_owner && (
                       <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 mr-1">Shared</span>
@@ -408,16 +429,45 @@ export default function Contacts() {
 
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-gray-600 mb-1">Service Line</label>
-                  <select
-                    value={form.service_line}
-                    onChange={e => setForm({ ...form, service_line: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal bg-white"
-                  >
-                    <option value="">— None —</option>
-                    {SERVICE_LINES.map(s => (
-                      <option key={s.value} value={s.value}>{s.label}</option>
-                    ))}
-                  </select>
+                  {serviceLineMode === 'custom' ? (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={form.service_line}
+                        onChange={e => setForm({ ...form, service_line: e.target.value })}
+                        className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                        placeholder="Enter custom service line"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => { setServiceLineMode('select'); setForm({ ...form, service_line: '' }) }}
+                        className="text-xs text-gray-400 hover:text-gray-600 px-2"
+                        title="Switch to predefined list"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={form.service_line}
+                      onChange={e => {
+                        if (e.target.value === '__custom__') {
+                          setServiceLineMode('custom')
+                          setForm({ ...form, service_line: '' })
+                        } else {
+                          setForm({ ...form, service_line: e.target.value })
+                        }
+                      }}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal bg-white"
+                    >
+                      <option value="">— None —</option>
+                      {PREDEFINED_SERVICE_LINES.map(s => (
+                        <option key={s.value} value={s.value}>{s.label}</option>
+                      ))}
+                      <option value="__custom__">+ Add custom...</option>
+                    </select>
+                  )}
                 </div>
 
                 <div className="col-span-2">

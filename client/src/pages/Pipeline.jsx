@@ -15,7 +15,7 @@ const STAGES = [
   { key: 'closed_lost', label: 'Closed Lost' },
 ]
 
-const SERVICE_LINES = [
+const PREDEFINED_SERVICE_LINES = [
   { value: 'managed_wifi', label: 'Managed WiFi' },
   { value: 'proptech_selection', label: 'PropTech Selection' },
   { value: 'fractional_it', label: 'Fractional IT' },
@@ -25,6 +25,13 @@ const SERVICE_LINES = [
 ]
 
 const EMPTY_FORM = { title: '', contact_id: '', stage: 'lead', value: '', service_line: '', close_date: '', notes: '', custom_fields: {} }
+
+const formatServiceLine = (value) => {
+  if (!value) return ''
+  const predefined = PREDEFINED_SERVICE_LINES.find(s => s.value === value)
+  if (predefined) return predefined.label
+  return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
 
 export default function Pipeline() {
   const { token } = useAuth()
@@ -37,6 +44,7 @@ export default function Pipeline() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  const [serviceLineMode, setServiceLineMode] = useState('select') // 'select' | 'custom'
   const [draggedDeal, setDraggedDeal] = useState(null)
   const [sharingDeal, setSharingDeal] = useState(null)
   const [activityDeal, setActivityDeal] = useState(null)
@@ -44,6 +52,16 @@ export default function Pipeline() {
   const [filterServiceLine, setFilterServiceLine] = useState('')
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
+
+  // Collect unique service lines from loaded deals (for filter dropdown)
+  const uniqueServiceLines = [
+    ...PREDEFINED_SERVICE_LINES,
+    ...deals
+      .map(d => d.service_line)
+      .filter(sl => sl && !PREDEFINED_SERVICE_LINES.some(p => p.value === sl))
+      .filter((sl, i, arr) => arr.indexOf(sl) === i)
+      .map(sl => ({ value: sl, label: sl })),
+  ]
 
   const fetchDeals = () => {
     const params = {}
@@ -84,20 +102,23 @@ export default function Pipeline() {
   const dealsByStage = (stage) => deals.filter(d => d.stage === stage)
 
 
-  const openModal = () => { setForm(EMPTY_FORM); setFormError(''); setEditingId(null); setShowModal(true) }
+  const openModal = () => { setForm(EMPTY_FORM); setFormError(''); setEditingId(null); setServiceLineMode('select'); setShowModal(true) }
   const openEdit = (d) => {
+    const sl = d.service_line || ''
+    const isPredefined = PREDEFINED_SERVICE_LINES.some(s => s.value === sl)
     setForm({
       title: d.title,
       contact_id: d.contact_id || '',
       stage: d.stage,
       value: d.value || '',
-      service_line: d.service_line || '',
-      close_date: d.close_date ? d.close_date.split('T')[0] : '', // format date properly
+      service_line: sl,
+      close_date: d.close_date ? d.close_date.split('T')[0] : '',
       notes: d.notes || '',
       custom_fields: d.custom_fields || {}
     })
     setFormError('')
     setEditingId(d.id)
+    setServiceLineMode(sl && !isPredefined ? 'custom' : 'select')
     setShowModal(true)
   }
   const closeModal = () => setShowModal(false)
@@ -201,7 +222,7 @@ export default function Pipeline() {
           className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal"
         >
           <option value="">All Service Lines</option>
-          {SERVICE_LINES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+          {uniqueServiceLines.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
       </div>
 
@@ -253,7 +274,7 @@ export default function Pipeline() {
                           <p className="text-teal text-xs font-semibold mt-2">${Number(deal.value).toLocaleString()}</p>
                         )}
                         {deal.service_line && (
-                          <p className="text-brand-gray text-xs mt-1 capitalize">{SERVICE_LINES.find(s => s.value === deal.service_line)?.label || deal.service_line}</p>
+                          <p className="text-brand-gray text-xs mt-1">{formatServiceLine(deal.service_line)}</p>
                         )}
                         {deal.close_date && (
                           <p className="text-gray-400 text-xs mt-1">{new Date(deal.close_date).toLocaleDateString()}</p>
@@ -408,16 +429,45 @@ export default function Pipeline() {
 
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-gray-600 mb-1">Service Line</label>
-                  <select
-                    value={form.service_line}
-                    onChange={e => setForm({ ...form, service_line: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal bg-white"
-                  >
-                    <option value="">— None —</option>
-                    {SERVICE_LINES.map(s => (
-                      <option key={s.value} value={s.value}>{s.label}</option>
-                    ))}
-                  </select>
+                  {serviceLineMode === 'custom' ? (
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={form.service_line}
+                        onChange={e => setForm({ ...form, service_line: e.target.value })}
+                        className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                        placeholder="Enter custom service line"
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => { setServiceLineMode('select'); setForm({ ...form, service_line: '' }) }}
+                        className="text-xs text-gray-400 hover:text-gray-600 px-2"
+                        title="Switch to predefined list"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={form.service_line}
+                      onChange={e => {
+                        if (e.target.value === '__custom__') {
+                          setServiceLineMode('custom')
+                          setForm({ ...form, service_line: '' })
+                        } else {
+                          setForm({ ...form, service_line: e.target.value })
+                        }
+                      }}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal bg-white"
+                    >
+                      <option value="">— None —</option>
+                      {PREDEFINED_SERVICE_LINES.map(s => (
+                        <option key={s.value} value={s.value}>{s.label}</option>
+                      ))}
+                      <option value="__custom__">+ Add custom...</option>
+                    </select>
+                  )}
                 </div>
 
                 <div className="col-span-2">

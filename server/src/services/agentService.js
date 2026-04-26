@@ -30,7 +30,7 @@ Each object in the array must have:
 - "email" (string)
 - "phone" (string)
 - "company" (string, the name of the company)
-- "service_line" (string, MUST be one of: 'managed_wifi', 'proptech_selection', 'fractional_it', 'vendor_rfp', 'ai_automation', 'team_process')
+- "service_line" (string, one of the predefined values: 'managed_wifi', 'proptech_selection', 'fractional_it', 'vendor_rfp', 'ai_automation', 'team_process', or a custom value if appropriate)
 - "notes" (string, a short brief on why this company is a good fit and what they do)
 
 Ensure the output is strictly valid JSON.`
