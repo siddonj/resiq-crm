@@ -26,6 +26,13 @@ const PREDEFINED_SERVICE_LINES = [
 
 const EMPTY_FORM = { title: '', contact_id: '', stage: 'lead', value: '', service_line: '', close_date: '', notes: '', custom_fields: {} }
 
+const formatServiceLine = (value) => {
+  if (!value) return ''
+  const predefined = PREDEFINED_SERVICE_LINES.find(s => s.value === value)
+  if (predefined) return predefined.label
+  return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
 export default function Pipeline() {
   const { token } = useAuth()
   const navigate = useNavigate()
@@ -54,7 +61,9 @@ export default function Pipeline() {
       .filter(sl => sl && !PREDEFINED_SERVICE_LINES.some(p => p.value === sl))
       .filter((sl, i, arr) => arr.indexOf(sl) === i)
       .map(sl => ({ value: sl, label: sl })),
-  ] = () => {
+  ]
+
+  const fetchDeals = () => {
     const params = {}
     if (search) params.search = search
     if (filterServiceLine) params.service_line = filterServiceLine
@@ -265,7 +274,7 @@ export default function Pipeline() {
                           <p className="text-teal text-xs font-semibold mt-2">${Number(deal.value).toLocaleString()}</p>
                         )}
                         {deal.service_line && (
-                          <p className="text-brand-gray text-xs mt-1 capitalize">{PREDEFINED_SERVICE_LINES.find(s => s.value === deal.service_line)?.label || deal.service_line}</p>
+                          <p className="text-brand-gray text-xs mt-1">{formatServiceLine(deal.service_line)}</p>
                         )}
                         {deal.close_date && (
                           <p className="text-gray-400 text-xs mt-1">{new Date(deal.close_date).toLocaleDateString()}</p>

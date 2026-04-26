@@ -20,6 +20,13 @@ const PREDEFINED_SERVICE_LINES = [
 
 const EMPTY_FORM = { name: '', email: '', phone: '', company: '', type: 'prospect', service_line: '', notes: '' }
 
+const formatServiceLine = (value) => {
+  if (!value) return '—'
+  const predefined = PREDEFINED_SERVICE_LINES.find(s => s.value === value)
+  if (predefined) return predefined.label
+  return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
 export default function Contacts() {
   const { token } = useAuth()
   const [contacts, setContacts] = useState([])
@@ -200,7 +207,7 @@ export default function Contacts() {
                   <td className="px-4 py-3">
                     <span className="px-2 py-0.5 bg-teal/10 text-teal rounded-full text-xs font-medium capitalize">{c.type}</span>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{PREDEFINED_SERVICE_LINES.find(s => s.value === c.service_line)?.label || c.service_line || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">{formatServiceLine(c.service_line)}</td>
                   <td className="px-4 py-3 text-right space-x-3">
                     {!c.is_owner && (
                       <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 mr-1">Shared</span>
