@@ -359,6 +359,9 @@ router.get('/engagement/top-assets', auth, async (req, res) => {
  * Get win probabilities per stage: user-defined defaults + AI-predicted from history
  */
 router.get('/deals/stage-probabilities', auth, async (req, res) => {
+  // Neutral baseline win rate used to scale AI probabilities
+  const NEUTRAL_WIN_RATE_BASELINE = 50;
+
   try {
     // Get user-defined stage probabilities
     const userProbs = await pool.query(
@@ -366,42 +369,20 @@ router.get('/deals/stage-probabilities', auth, async (req, res) => {
       [req.user.id]
     );
 
-    // AI prediction: historical win rate per stage based on closed deals
-    // For each stage, count deals that passed through it and ended as closed_won vs closed_lost
-    // Approximation: use current stage of deals that have already closed
+    // Count total closed-won vs closed-lost deals to compute overall win rate
     const historicalResult = await pool.query(
       `SELECT
-        stage,
-        COUNT(*) as total,
-        COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won
+        COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
+        COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost
        FROM deals
-       WHERE user_id = $1 AND stage IN ('closed_won', 'closed_lost')
-       GROUP BY stage`,
+       WHERE user_id = $1 AND stage IN ('closed_won', 'closed_lost')`,
       [req.user.id]
     );
 
-    const totalWon = historicalResult.rows.find(r => r.stage === 'closed_won')?.total || 0;
-    const totalLost = historicalResult.rows.find(r => r.stage === 'closed_lost')?.total || 0;
-    const totalClosed = parseInt(totalWon) + parseInt(totalLost);
-    const overallWinRate = totalClosed > 0 ? (parseInt(totalWon) / totalClosed) * 100 : null;
-
-    // Get stage-level win rates by looking at which stage deals were at before close
-    // Use audit log data if available, otherwise fall back to static defaults
-    const stageWinRates = await pool.query(
-      `SELECT
-        d.stage as current_stage,
-        COUNT(*) as count,
-        COALESCE(
-          (SELECT COUNT(*) FROM deals d2
-           WHERE d2.user_id = $1 AND d2.stage = 'closed_won'),
-          0
-        ) as total_won
-       FROM deals d
-       WHERE d.user_id = $1
-         AND d.stage NOT IN ('closed_won', 'closed_lost')
-       GROUP BY d.stage`,
-      [req.user.id]
-    );
+    const totalWon = parseInt(historicalResult.rows[0]?.won || 0);
+    const totalLost = parseInt(historicalResult.rows[0]?.lost || 0);
+    const totalClosed = totalWon + totalLost;
+    const overallWinRate = totalClosed > 0 ? (totalWon / totalClosed) * 100 : null;
 
     // Build response merging user-defined with AI estimates
     const STAGE_ORDER = ['lead', 'qualified', 'proposal', 'active', 'closed_won', 'closed_lost'];
@@ -414,7 +395,7 @@ router.get('/deals/stage-probabilities', auth, async (req, res) => {
     // AI probabilities: scale baseline by overall win rate if we have enough history
     const aiProbMap = { ...DEFAULTS };
     if (overallWinRate !== null && totalClosed >= 5) {
-      const scaleFactor = overallWinRate / 50; // 50% is the neutral baseline
+      const scaleFactor = overallWinRate / NEUTRAL_WIN_RATE_BASELINE;
       Object.keys(aiProbMap).forEach(stage => {
         if (stage !== 'closed_won' && stage !== 'closed_lost') {
           aiProbMap[stage] = Math.min(99, Math.max(1, Math.round(DEFAULTS[stage] * scaleFactor)));

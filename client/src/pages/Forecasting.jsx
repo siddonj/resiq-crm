@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import DashboardCard from '../components/dashboard/DashboardCard'
@@ -44,11 +44,7 @@ export default function Forecasting() {
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
 
-  useEffect(() => {
-    fetchData()
-  }, [token])
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [forecastRes, probsRes] = await Promise.all([
         axios.get('/api/analytics/deals/forecast', authHeaders),
@@ -61,7 +57,12 @@ export default function Forecasting() {
     } finally {
       setLoading(false)
     }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
 
   const handleEditProbs = () => {
     const edits = {}
