@@ -4,11 +4,25 @@ const { agentQueue } = require('../workers/agentWorker');
 
 const router = express.Router();
 
+function isOpenAIConfigured() {
+  return Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim());
+}
+
+function aiConfigMissingResponse(res) {
+  return res.status(503).json({
+    error: 'AI is not configured. Set OPENAI_API_KEY on the server to enable this endpoint.'
+  });
+}
+
 // Trigger a new AI prospecting job
 router.post('/prospect', auth, async (req, res) => {
   const { prompt } = req.body;
   if (!prompt) {
     return res.status(400).json({ error: 'Prompt is required' });
+  }
+
+  if (!isOpenAIConfigured()) {
+    return aiConfigMissingResponse(res);
   }
 
   try {
@@ -29,6 +43,10 @@ router.post('/prospect', auth, async (req, res) => {
 router.post('/form-suggestions', auth, async (req, res) => {
   const { title } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
+
+  if (!isOpenAIConfigured()) {
+    return aiConfigMissingResponse(res);
+  }
 
   try {
     const OpenAI = require('openai');
@@ -66,6 +84,10 @@ Respond strictly in JSON format:
 router.post('/advice', auth, async (req, res) => {
   const { tool, contextData, goal } = req.body;
   if (!tool) return res.status(400).json({ error: 'Tool name is required' });
+
+  if (!isOpenAIConfigured()) {
+    return aiConfigMissingResponse(res);
+  }
 
   try {
     const OpenAI = require('openai');

@@ -1,12 +1,20 @@
 const OpenAI = require('openai');
 require('dotenv').config();
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+function getOpenAIClient() {
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('OPENAI_API_KEY is not set. AI prospecting is unavailable.');
+  }
+
+  return new OpenAI({ apiKey });
+}
 
 async function generateProspects(prompt) {
   try {
+    const openai = getOpenAIClient();
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
