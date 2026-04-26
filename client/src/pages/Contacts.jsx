@@ -18,7 +18,7 @@ const PREDEFINED_SERVICE_LINES = [
   { value: 'team_process', label: 'Team Process' },
 ]
 
-const EMPTY_FORM = { name: '', email: '', phone: '', company: '', type: 'prospect', service_line: '', notes: '' }
+const EMPTY_FORM = { name: '', email: '', phone: '', company: '', type: 'prospect', service_line: '', notes: '', job_title: '', linkedin_url: '', company_website: '', industry: '', company_size: '' }
 
 const formatServiceLine = (value) => {
   if (!value) return '—'
@@ -44,6 +44,9 @@ export default function Contacts() {
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState('')
   const [filterServiceLine, setFilterServiceLine] = useState('')
+  const [enrichingId, setEnrichingId] = useState(null)
+  const [importStatus, setImportStatus] = useState(null) // { imported, errors, enrichmentQueued }
+  const [bulkEnriching, setBulkEnriching] = useState(false)
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
 
@@ -90,7 +93,13 @@ export default function Contacts() {
   const openEdit = (c) => {
     const sl = c.service_line || ''
     const isPredefined = PREDEFINED_SERVICE_LINES.some(s => s.value === sl)
-    setForm({ name: c.name, email: c.email || '', phone: c.phone || '', company: c.company || '', type: c.type, service_line: sl, notes: c.notes || '' })
+    setForm({
+      name: c.name, email: c.email || '', phone: c.phone || '', company: c.company || '',
+      type: c.type, service_line: sl, notes: c.notes || '',
+      job_title: c.job_title || '', linkedin_url: c.linkedin_url || '',
+      company_website: c.company_website || '', industry: c.industry || '',
+      company_size: c.company_size || '',
+    })
     setFormError('')
     setEditingId(c.id)
     setServiceLineMode(sl && !isPredefined ? 'custom' : 'select')
@@ -135,6 +144,51 @@ export default function Contacts() {
     }
   }
 
+  const handleImport = async (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    e.target.value = ''
+    const enrich = window.confirm('Auto-enrich imported contacts in the background? (requires OpenAI API key)')
+    const formData = new FormData()
+    formData.append('file', file)
+    try {
+      const { data } = await axios.post(
+        `/api/contacts/import?enrich=${enrich}`,
+        formData,
+        { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' } }
+      )
+      setImportStatus(data)
+      fetchContacts()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Import failed')
+    }
+  }
+
+  const handleBulkEnrich = async () => {
+    if (!window.confirm('Queue all contacts for AI enrichment? This runs in the background.')) return
+    setBulkEnriching(true)
+    try {
+      const { data } = await axios.post('/api/contacts/enrich-all', {}, authHeaders)
+      alert(data.message)
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to queue bulk enrichment')
+    } finally {
+      setBulkEnriching(false)
+    }
+  }
+
+  const handleEnrich = async (contactId) => {
+    setEnrichingId(contactId)
+    try {
+      await axios.post(`/api/contacts/${contactId}/enrich`, {}, authHeaders)
+      alert('Enrichment started in the background. Refresh in a few seconds to see updated data.')
+    } catch (e) {
+      alert('Failed to start enrichment.')
+    } finally {
+      setEnrichingId(null)
+    }
+  }
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-4">
@@ -146,6 +200,17 @@ export default function Contacts() {
           >
             Export CSV
           </button>
+          <label className="border border-gray-200 text-gray-600 text-sm font-medium px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer">
+            📥 Import CSV
+            <input type="file" accept=".csv" className="hidden" onChange={handleImport} />
+          </label>
+          <button
+            onClick={handleBulkEnrich}
+            disabled={bulkEnriching}
+            className="border border-teal/40 text-teal text-sm font-medium px-4 py-2 rounded-lg hover:bg-teal/5 transition-colors disabled:opacity-60"
+          >
+            {bulkEnriching ? 'Queuing...' : '✨ Enrich All'}
+          </button>
           <button
             onClick={openModal}
             className="bg-teal text-white text-sm font-semibold px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
@@ -154,6 +219,17 @@ export default function Contacts() {
           </button>
         </div>
       </div>
+
+      {importStatus && (
+        <div className={`mb-4 px-4 py-3 rounded-lg text-sm flex items-center justify-between ${importStatus.errors > 0 ? 'bg-yellow-50 border border-yellow-200 text-yellow-800' : 'bg-green-50 border border-green-200 text-green-800'}`}>
+          <span>
+            ✅ Imported <strong>{importStatus.imported}</strong> contacts
+            {importStatus.errors > 0 && <> · ⚠️ <strong>{importStatus.errors}</strong> rows skipped</>}
+            {importStatus.enrichmentQueued && <> · 🤖 Enrichment queued</>}
+          </span>
+          <button onClick={() => setImportStatus(null)} className="text-gray-400 hover:text-gray-600 ml-4">&times;</button>
+        </div>
+      )}
 
       <div className="flex gap-3 mb-6">
         <input
@@ -255,24 +331,28 @@ export default function Contacts() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
             <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between bg-white flex-shrink-0">
-              <h3 className="font-syne text-lg font-bold text-navy">{selectedContact.name}</h3>
+              <div>
+                <h3 className="font-syne text-lg font-bold text-navy">{selectedContact.name}</h3>
+                {selectedContact.enriched_at && (
+                  <span className="text-xs text-teal font-medium">
+                    ✨ Enriched {new Date(selectedContact.enriched_at).toLocaleDateString()}
+                    {selectedContact.enrichment_source && ` · ${selectedContact.enrichment_source}`}
+                  </span>
+                )}
+              </div>
               <div className="flex gap-2 items-center">
-                <button                     onClick={() => setEnrollingContact(selectedContact)}
-                    className="bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 text-xs px-3 py-1.5 font-semibold rounded mr-2"
-                  >
-                    ✉️ Enroll in Sequence
-                  </button>
-                  <button                   onClick={async () => {
-                    try {
-                      await axios.post(`/api/contacts/${selectedContact.id}/enrich`, {}, { headers: { Authorization: `Bearer ${token}` } })
-                      alert('AI Enrichment Agent started in the background! Refresh the page in 10 seconds to see updated notes/company profile.')
-                    } catch (e) {
-                      alert('Failed to start enrichment.')
-                    }
-                  }}
-                  className="bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 text-xs px-3 py-1.5 font-semibold rounded mr-4"
+                <button
+                  onClick={() => setEnrollingContact(selectedContact)}
+                  className="bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 text-xs px-3 py-1.5 font-semibold rounded"
                 >
-                  ✨ AI Auto-Enrich
+                  ✉️ Enroll in Sequence
+                </button>
+                <button
+                  onClick={() => handleEnrich(selectedContact.id)}
+                  disabled={enrichingId === selectedContact.id}
+                  className="bg-teal-50 text-teal-700 border border-teal-200 hover:bg-teal-100 text-xs px-3 py-1.5 font-semibold rounded disabled:opacity-60"
+                >
+                  {enrichingId === selectedContact.id ? '⏳ Enriching...' : '✨ AI Auto-Enrich'}
                 </button>
                 <button onClick={closeDetail} className="text-gray-400 hover:text-gray-600 flex items-center justify-center text-xl leading-none w-8 h-8 rounded-full hover:bg-gray-100 transition">&times;</button>
               </div>
@@ -283,7 +363,14 @@ export default function Contacts() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-medium text-gray-600">Email</label>
-                  <p className="text-sm text-navy mt-1">{selectedContact.email || '—'}</p>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <p className="text-sm text-navy">{selectedContact.email || '—'}</p>
+                    {selectedContact.email && (
+                      selectedContact.email_verified
+                        ? <span className="text-xs px-1.5 py-0.5 bg-green-50 text-green-700 rounded-full font-medium">✓ Verified</span>
+                        : <span className="text-xs px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded-full">Unverified</span>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <label className="text-xs font-medium text-gray-600">Phone</label>
@@ -297,6 +384,50 @@ export default function Contacts() {
                   <label className="text-xs font-medium text-gray-600">Type</label>
                   <p className="text-sm text-navy mt-1 capitalize">{selectedContact.type}</p>
                 </div>
+                {selectedContact.job_title && (
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Job Title</label>
+                    <p className="text-sm text-navy mt-1">{selectedContact.job_title}</p>
+                  </div>
+                )}
+                {selectedContact.industry && (
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Industry</label>
+                    <p className="text-sm text-navy mt-1">{selectedContact.industry}</p>
+                  </div>
+                )}
+                {selectedContact.company_size && (
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Company Size</label>
+                    <p className="text-sm text-navy mt-1">{selectedContact.company_size}</p>
+                  </div>
+                )}
+                {selectedContact.company_website && (
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Website</label>
+                    <a
+                      href={selectedContact.company_website}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-teal hover:underline mt-1 block truncate"
+                    >
+                      {selectedContact.company_website}
+                    </a>
+                  </div>
+                )}
+                {selectedContact.linkedin_url && (
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">LinkedIn</label>
+                    <a
+                      href={selectedContact.linkedin_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-blue-600 hover:underline mt-1 block truncate"
+                    >
+                      {selectedContact.linkedin_url}
+                    </a>
+                  </div>
+                )}
               </div>
 
               <div className="border-t border-gray-100 pt-4">
@@ -325,7 +456,7 @@ export default function Contacts() {
                     {Object.entries(selectedContact.custom_fields).map(([key, value]) => (
                       <div key={key}>
                         <label className="text-xs font-medium text-gray-600 capitalize">{key.replace(/_/g, ' ')}</label>
-                        <p className="text-sm text-navy mt-1">{value || 'â€”'}</p>
+                        <p className="text-sm text-navy mt-1">{value || '—'}</p>
                       </div>
                     ))}
                   </div>
@@ -478,6 +609,61 @@ export default function Contacts() {
                     rows={3}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal resize-none"
                     placeholder="Any notes about this contact..."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Job Title</label>
+                  <input
+                    type="text"
+                    value={form.job_title}
+                    onChange={e => setForm({ ...form, job_title: e.target.value })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                    placeholder="e.g. VP of Operations"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Industry</label>
+                  <input
+                    type="text"
+                    value={form.industry}
+                    onChange={e => setForm({ ...form, industry: e.target.value })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                    placeholder="e.g. Real Estate, PropTech"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Company Size</label>
+                  <input
+                    type="text"
+                    value={form.company_size}
+                    onChange={e => setForm({ ...form, company_size: e.target.value })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                    placeholder="e.g. 11-50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Company Website</label>
+                  <input
+                    type="url"
+                    value={form.company_website}
+                    onChange={e => setForm({ ...form, company_website: e.target.value })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                    placeholder="https://example.com"
+                  />
+                </div>
+
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">LinkedIn URL</label>
+                  <input
+                    type="url"
+                    value={form.linkedin_url}
+                    onChange={e => setForm({ ...form, linkedin_url: e.target.value })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                    placeholder="https://linkedin.com/in/..."
                   />
                 </div>
               </div>

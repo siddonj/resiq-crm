@@ -1,10 +1,47 @@
 const express = require('express');
+const multer = require('multer');
 const pool = require('../models/db');
 const auth = require('../middleware/auth');
 const Email = require('../models/email');
 const { logAction } = require('../services/auditLogger');
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+// Simple CSV parser that handles quoted fields
+function parseCSVRow(line) {
+  const MAX_LINE_LENGTH = 100000;
+  const safeLen = Math.min(line.length, MAX_LINE_LENGTH);
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < safeLen; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current.trim());
+  return result;
+}
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return [];
+  const headers = parseCSVRow(lines[0]).map(h => h.toLowerCase().replace(/\s+/g, '_'));
+  return lines.slice(1).map(line => {
+    const values = parseCSVRow(line);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = values[i] || ''; });
+    return obj;
+  }).filter(row => Object.values(row).some(v => v.trim()));
+}
 
 let workflowEngine;
 
@@ -64,13 +101,18 @@ router.get('/', auth, async (req, res) => {
 router.get('/export', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT name, email, phone, company, type, service_line, notes, created_at FROM contacts WHERE user_id = $1 ORDER BY created_at DESC',
+      `SELECT name, email, phone, company, type, job_title, service_line, industry, company_size,
+              company_website, linkedin_url, email_verified, enriched_at, notes, created_at
+       FROM contacts WHERE user_id = $1 ORDER BY created_at DESC`,
       [req.user.id]
     );
-    const headers = ['Name', 'Email', 'Phone', 'Company', 'Type', 'Service Line', 'Notes', 'Created At'];
+    const headers = ['Name', 'Email', 'Phone', 'Company', 'Type', 'Job Title', 'Service Line',
+      'Industry', 'Company Size', 'Company Website', 'LinkedIn URL', 'Email Verified', 'Enriched At', 'Notes', 'Created At'];
     const escape = v => `"${(v ?? '').toString().replace(/"/g, '""')}"`;
     const rows = result.rows.map(c =>
-      [c.name, c.email, c.phone, c.company, c.type, c.service_line, c.notes, c.created_at].map(escape).join(',')
+      [c.name, c.email, c.phone, c.company, c.type, c.job_title, c.service_line, c.industry,
+       c.company_size, c.company_website, c.linkedin_url, c.email_verified, c.enriched_at, c.notes, c.created_at
+      ].map(escape).join(',')
     );
     const csv = [headers.join(','), ...rows].join('\n');
     res.setHeader('Content-Type', 'text/csv');
@@ -81,14 +123,86 @@ router.get('/export', auth, async (req, res) => {
   }
 });
 
+// CSV bulk import with optional background enrichment
+router.post('/import', auth, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'CSV file is required' });
+    const enrich = req.query.enrich === 'true';
+    const text = req.file.buffer.toString('utf8');
+    const rows = parseCSV(text);
+    if (rows.length === 0) return res.status(400).json({ error: 'No valid rows found in CSV' });
+
+    const VALID_TYPES = ['prospect', 'partner', 'vendor'];
+    const created = [];
+    const errors = [];
+
+    for (const row of rows) {
+      const name = row.name || row.full_name || '';
+      if (!name.trim()) { errors.push({ row, error: 'Missing name' }); continue; }
+
+      const type = VALID_TYPES.includes(row.type) ? row.type : 'prospect';
+      try {
+        const result = await pool.query(
+          `INSERT INTO contacts
+            (user_id, name, email, phone, company, type, job_title, service_line, notes,
+             linkedin_url, company_website, industry, company_size, custom_fields)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+          [
+            req.user.id,
+            name.trim(),
+            row.email || null,
+            row.phone || null,
+            row.company || null,
+            type,
+            row.job_title || row.title || null,
+            row.service_line || null,
+            row.notes || null,
+            row.linkedin_url || row.linkedin || null,
+            row.company_website || row.website || null,
+            row.industry || null,
+            row.company_size || null,
+            JSON.stringify({}),
+          ]
+        );
+        const contact = result.rows[0];
+        created.push(contact);
+        logAction(req.user.id, req.user.email, 'create', 'contact', contact.id, contact.name);
+
+        if (enrich) {
+          const { enrichmentQueue } = require('../workers/enrichmentWorker');
+          enrichmentQueue.add({ contactId: contact.id, dealId: null, userId: req.user.id })
+            .catch(e => console.error('Failed to queue enrichment:', e));
+        }
+      } catch (err) {
+        errors.push({ row, error: err.message });
+      }
+    }
+
+    res.status(201).json({
+      imported: created.length,
+      errors: errors.length,
+      errorDetails: errors.slice(0, 10),
+      enrichmentQueued: enrich && created.length > 0,
+    });
+  } catch (err) {
+    console.error('CSV import error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.post('/', auth, async (req, res) => {
   const ObjectToCreate = req.body;
   const customFields = ObjectToCreate.custom_fields || {};
-  const { name, email, phone, company, type, service_line, notes } = ObjectToCreate;
+  const { name, email, phone, company, type, service_line, notes, job_title, linkedin_url, company_website, industry, company_size } = ObjectToCreate;
   try {
     const result = await pool.query(
-      'INSERT INTO contacts (user_id, name, email, phone, company, type, service_line, notes, custom_fields) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *',
-      [req.user.id, name, email, phone, company, type || 'prospect', service_line, notes, JSON.stringify(customFields)]
+      `INSERT INTO contacts
+        (user_id, name, email, phone, company, type, service_line, notes, custom_fields,
+         job_title, linkedin_url, company_website, industry, company_size)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      [req.user.id, name, email, phone, company, type || 'prospect', service_line, notes,
+       JSON.stringify(customFields), job_title || null, linkedin_url || null, company_website || null,
+       industry || null, company_size || null]
     );
     const newContact = result.rows[0];
     logAction(req.user.id, req.user.email, 'create', 'contact', newContact.id, newContact.name);
@@ -114,15 +228,19 @@ router.post('/', auth, async (req, res) => {
 router.put('/:id', auth, async (req, res) => {
   const ObjectToUpdate = req.body;
   const customFields = ObjectToUpdate.custom_fields || {};
-  const { name, email, phone, company, type, service_line, notes } = ObjectToUpdate;
+  const { name, email, phone, company, type, service_line, notes, job_title, linkedin_url, company_website, industry, company_size } = ObjectToUpdate;
   try {
     const result = await pool.query(
-      `UPDATE contacts SET name=$1, email=$2, phone=$3, company=$4, type=$5, service_line=$6, notes=$7, custom_fields=$10
+      `UPDATE contacts SET
+        name=$1, email=$2, phone=$3, company=$4, type=$5, service_line=$6, notes=$7, custom_fields=$10,
+        job_title=$11, linkedin_url=$12, company_website=$13, industry=$14, company_size=$15
        WHERE id=$8 AND (user_id=$9 OR EXISTS (
          SELECT 1 FROM shared_resources WHERE resource_type='contact' AND resource_id=$8 AND permission='edit'
          AND (shared_with_user_id=$9 OR shared_with_team_id IN (SELECT team_id FROM team_members WHERE user_id=$9))
        )) RETURNING *`,
-      [name, email, phone, company, type || 'prospect', service_line || null, notes, req.params.id, req.user.id, JSON.stringify(customFields)]
+      [name, email, phone, company, type || 'prospect', service_line || null, notes,
+       req.params.id, req.user.id, JSON.stringify(customFields),
+       job_title || null, linkedin_url || null, company_website || null, industry || null, company_size || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     logAction(req.user.id, req.user.email, 'update', 'contact', req.params.id, result.rows[0].name);
@@ -253,6 +371,26 @@ router.post('/:id/enrich', auth, async (req, res) => {
     res.json({ message: 'Auto-Enrichment executed in background.' });
   } catch (error) {
     console.error('Error queuing manual enrichment:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Bulk AI enrichment for all contacts belonging to the user
+router.post('/enrich-all', auth, async (req, res) => {
+  try {
+    const { enrichmentQueue } = require('../workers/enrichmentWorker');
+    const result = await pool.query(
+      `SELECT id FROM contacts WHERE user_id = $1 AND (email IS NOT NULL OR company IS NOT NULL)
+       ORDER BY created_at DESC LIMIT 100`,
+      [req.user.id]
+    );
+    const contactIds = result.rows.map(r => r.id);
+    await Promise.all(
+      contactIds.map(contactId => enrichmentQueue.add({ contactId, dealId: null, userId: req.user.id }))
+    );
+    res.json({ queued: contactIds.length, message: `${contactIds.length} contacts queued for enrichment.` });
+  } catch (error) {
+    console.error('Error queuing bulk enrichment:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
