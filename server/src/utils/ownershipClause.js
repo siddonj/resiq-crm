@@ -7,16 +7,28 @@
  *  - manager  → sees own + shared + all records owned by fellow team-members
  *  - others   → sees own + explicitly shared
  *
- * @param {string} alias        - SQL alias for the resource table (e.g. 'c' or 'd')
- * @param {string} resourceType - 'contact' or 'deal'
+ * @param {string} alias        - SQL alias for the resource table. Must be 'c' or 'd'.
+ * @param {string} resourceType - Resource type string. Must be 'contact' or 'deal'.
  * @param {string} role         - The requesting user's role
  * @returns {string} A SQL fragment suitable for use in a WHERE clause
+ * @throws {Error} If alias or resourceType are not whitelisted values
  */
 function buildOwnershipClause(alias, resourceType, role) {
+  const ALLOWED_ALIASES = new Set(['c', 'd']);
+  const ALLOWED_RESOURCE_TYPES = new Set(['contact', 'deal']);
+
+  if (!ALLOWED_ALIASES.has(alias)) {
+    throw new Error(`Invalid alias: ${alias}`);
+  }
+  if (!ALLOWED_RESOURCE_TYPES.has(resourceType)) {
+    throw new Error(`Invalid resourceType: ${resourceType}`);
+  }
+
   if (role === 'admin') {
     return '1=1';
   }
 
+  // Safe to interpolate: both values are validated against whitelists above
   const sharedCheck = `EXISTS (
     SELECT 1 FROM shared_resources sr
     WHERE sr.resource_type = '${resourceType}' AND sr.resource_id = ${alias}.id
