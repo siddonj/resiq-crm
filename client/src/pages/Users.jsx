@@ -1,16 +1,7 @@
 import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
-
-const ROLE_LABELS = {
-  admin: 'Admin',
-  manager: 'Manager',
-  rep: 'Rep',
-  user: 'Rep',
-  viewer: 'Viewer',
-}
-
-const ALL_ROLES = ['admin', 'manager', 'rep', 'user', 'viewer']
+import { ALL_ROLES, ROLE_LABELS } from '../constants/roles'
 
 export default function Users() {
   const { token, user } = useAuth()

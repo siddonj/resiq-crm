@@ -3,16 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import GmailConnect from '../components/GmailConnect'
 import { useAuth } from '../context/AuthContext'
-
-const ROLES = ['admin', 'manager', 'rep', 'user', 'viewer']
-
-const ROLE_LABELS = {
-  admin: 'Admin',
-  manager: 'Manager',
-  rep: 'Rep',
-  user: 'Rep',
-  viewer: 'Viewer',
-}
+import { ALL_ROLES as ROLES, ROLE_LABELS } from '../constants/roles'
 
 export default function Settings() {
   const [searchParams] = useSearchParams()
