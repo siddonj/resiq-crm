@@ -4,6 +4,7 @@ const pool = require('../models/db');
 const auth = require('../middleware/auth');
 const Email = require('../models/email');
 const { logAction } = require('../services/auditLogger');
+const { buildOwnershipClause } = require('../utils/ownershipClause');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -69,6 +70,7 @@ router.get('/', auth, async (req, res) => {
   }
 
   const filterSQL = filters.length ? 'AND ' + filters.join(' AND ') : '';
+  const ownershipClause = buildOwnershipClause('c', 'contact', req.user.role);
 
   try {
     const result = await pool.query(`
@@ -84,11 +86,7 @@ router.get('/', auth, async (req, res) => {
           ELSE 'view'
         END AS access_permission
       FROM contacts c
-      WHERE (c.user_id = $1 OR EXISTS (
-        SELECT 1 FROM shared_resources sr
-        WHERE sr.resource_type = 'contact' AND sr.resource_id = c.id
-        AND (sr.shared_with_user_id = $1 OR sr.shared_with_team_id IN (SELECT team_id FROM team_members WHERE user_id = $1))
-      ))
+      WHERE ${ownershipClause}
       ${filterSQL}
       ORDER BY c.created_at DESC
     `, params);

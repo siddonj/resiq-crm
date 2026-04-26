@@ -3,8 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import GmailConnect from '../components/GmailConnect'
 import { useAuth } from '../context/AuthContext'
-
-const ROLES = ['admin', 'manager', 'user', 'viewer']
+import { ALL_ROLES as ROLES, ROLE_LABELS } from '../constants/roles'
 
 export default function Settings() {
   const [searchParams] = useSearchParams()
@@ -34,7 +33,7 @@ export default function Settings() {
   const [employees, setEmployees] = useState([])
   const [clients, setClients] = useState([])
   const [accountsLoading, setAccountsLoading] = useState(false)
-  const [empForm, setEmpForm] = useState({ name: '', email: '', role: 'user' })
+  const [empForm, setEmpForm] = useState({ name: '', email: '', role: 'rep' })
   const [empSaving, setEmpSaving] = useState(false)
   const [empMsg, setEmpMsg] = useState('')
   const [tempPassword, setTempPassword] = useState(null)
@@ -112,7 +111,7 @@ export default function Settings() {
     try {
       const res = await axios.post('/api/users/invite', empForm, headers)
       setTempPassword(res.data.tempPassword)
-      setEmpForm({ name: '', email: '', role: 'user' })
+      setEmpForm({ name: '', email: '', role: 'rep' })
       setEmployees(prev => [...prev, res.data.user])
     } catch (err) {
       setEmpMsg(err.response?.data?.error || 'Failed to invite employee.')
@@ -243,7 +242,7 @@ export default function Settings() {
                   <input type="text" placeholder="Name" value={empForm.name} onChange={e => setEmpForm({ ...empForm, name: e.target.value })} required className="flex-1 min-w-32 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal" />
                   <input type="email" placeholder="Email" value={empForm.email} onChange={e => setEmpForm({ ...empForm, email: e.target.value })} required className="flex-1 min-w-40 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal" />
                   <select value={empForm.role} onChange={e => setEmpForm({ ...empForm, role: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal">
-                    {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                    {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r]}</option>)}
                   </select>
                   <button type="submit" disabled={empSaving} className={btnCls}>
                     {empSaving ? 'Adding...' : 'Add Employee'}
@@ -269,7 +268,7 @@ export default function Settings() {
                         <tr key={emp.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3 font-medium text-gray-800">{emp.name}</td>
                           <td className="px-4 py-3 text-gray-500">{emp.email}</td>
-                          <td className="px-4 py-3 capitalize text-gray-600">{emp.role}</td>
+                          <td className="px-4 py-3 text-gray-600">{ROLE_LABELS[emp.role] || emp.role}</td>
                           <td className="px-4 py-3">
                             <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${emp.is_active ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                               {emp.is_active ? 'Active' : 'Inactive'}

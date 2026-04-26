@@ -1,0 +1,7 @@
+-- Migration 019: Add 'rep' role to users table
+-- This extends the role constraint to include 'rep' (sales representative),
+-- matching the user management requirements.
+
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check
+  CHECK (role IN ('admin', 'manager', 'user', 'rep', 'viewer'));

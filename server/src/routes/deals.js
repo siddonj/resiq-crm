@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../models/db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
+const { buildOwnershipClause } = require('../utils/ownershipClause');
 
 const router = express.Router();
 
@@ -26,6 +27,7 @@ router.get('/', auth, async (req, res) => {
   }
 
   const filterSQL = filters.length ? 'AND ' + filters.join(' AND ') : '';
+  const ownershipClause = buildOwnershipClause('d', 'deal', req.user.role);
 
   try {
     const result = await pool.query(`
@@ -41,11 +43,7 @@ router.get('/', auth, async (req, res) => {
           ELSE 'view'
         END AS access_permission
       FROM deals d
-      WHERE (d.user_id = $1 OR EXISTS (
-        SELECT 1 FROM shared_resources sr
-        WHERE sr.resource_type = 'deal' AND sr.resource_id = d.id
-        AND (sr.shared_with_user_id = $1 OR sr.shared_with_team_id IN (SELECT team_id FROM team_members WHERE user_id = $1))
-      ))
+      WHERE ${ownershipClause}
       ${filterSQL}
       ORDER BY d.created_at DESC
     `, params);

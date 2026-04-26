@@ -126,7 +126,7 @@ const FAQS = [
       { q: 'How do I add a new contact?', a: 'Go to Contacts in the sidebar and click "+ Add Contact". Fill in the name, email, phone, and company, then save. You can also import contacts via CSV.' },
       { q: 'How do I create a deal in the pipeline?', a: 'Go to Pipeline → "+ New Deal". Select or create a contact, choose a stage, set a value and close date, then save. Drag cards between columns to update stage.' },
       { q: 'How do I invite employees or guests?', a: 'Go to Settings → Accounts (admin only). Use the Employees section to create a team member account with a temporary password. Use Guest Accounts to send a client portal invite by email.' },
-      { q: 'What roles are available?', a: 'Admin — full access including user and settings management. Manager — can manage contacts, deals, and view team data. User — standard CRM access. Viewer — read-only. Roles are assigned when creating an account and can be changed later from Settings → Accounts.' },
+      { q: 'What roles are available?', a: 'Admin — full access including user and settings management. Manager — can manage contacts, deals, and view all team members\' data. Rep — standard CRM access for sales representatives. Viewer — read-only. Roles can be assigned via Users (admin only) and are also accessible under Settings → Accounts.' },
       { q: 'How do I connect Gmail?', a: 'Go to Settings → Integrations and click "Connect Gmail". You\'ll be redirected to Google to authorize. Once connected, emails to and from your contacts sync into their timelines automatically.' },
     ],
   },
