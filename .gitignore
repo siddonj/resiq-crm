@@ -4,6 +4,9 @@ dist/
 .DS_Store
 .postgres/
 .claude/
+.playwright-mcp/
+.qodo/
+help-desk-live-updates-enabled.png
 *.log
 .vscode/
 .idea/

@@ -39,17 +39,17 @@ docker network create traefik 2>/dev/null || echo "✅ Traefik network already e
 # ─── Build and start ──────────────────────────────────────────────────────────
 echo ""
 echo "Building Docker image..."
-docker compose build --no-cache
+docker compose -f docker-compose.prod.yml build --no-cache
 
 echo ""
 echo "Starting services..."
-docker compose up -d
+docker compose -f docker-compose.prod.yml up -d
 
 # ─── Wait for health ──────────────────────────────────────────────────────────
 echo ""
 echo "Waiting for app to be healthy..."
 attempt=0
-until docker compose exec -T app wget -qO- http://localhost:5000/api/webhooks/health &>/dev/null; do
+until docker compose -f docker-compose.prod.yml exec -T app wget -qO- http://localhost:5000/api/webhooks/health &>/dev/null; do
   attempt=$((attempt+1))
   if [ $attempt -gt 24 ]; then
     echo "❌ App failed to start. Check logs: docker compose logs app"
@@ -67,11 +67,11 @@ echo "╚═══════════════════════�
 echo ""
 echo "  App URL:     https://$DOMAIN"
 echo "  Health:      https://$DOMAIN/api/webhooks/health"
-echo "  Logs:        docker compose logs -f app"
+echo "  Logs:        docker compose -f docker-compose.prod.yml logs -f app"
 echo ""
 echo "Useful commands:"
-echo "  docker compose ps                  - Check all services"
-echo "  docker compose logs -f app         - Follow app logs"
-echo "  docker compose restart app         - Restart app only"
-echo "  docker compose pull && docker compose up -d  - Update to latest"
+echo "  docker compose -f docker-compose.prod.yml ps                  - Check all services"
+echo "  docker compose -f docker-compose.prod.yml logs -f app         - Follow app logs"
+echo "  docker compose -f docker-compose.prod.yml restart app         - Restart app only"
+echo "  docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d  - Update to latest"
 echo ""

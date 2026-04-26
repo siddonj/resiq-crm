@@ -3,10 +3,10 @@
 ## Architecture
 
 ```
-Internet → Nginx (80/443) → Node App (5000) → PostgreSQL + Redis
+Internet → Traefik (80/443) → Node App (5000) → PostgreSQL + Redis
 ```
 
-All four services run as Docker containers on a single VPS via Docker Compose.
+The app, PostgreSQL, and Redis run as Docker containers on a single VPS via Docker Compose. Traefik runs separately and is attached as an external network.
 
 ---
 
@@ -89,8 +89,8 @@ openssl rand -hex 32
 
 The deploy script handles this automatically. To renew manually:
 ```bash
-docker compose run --rm certbot renew
-docker compose restart nginx
+docker compose -f docker-compose.prod.yml run --rm certbot renew
+docker compose -f docker-compose.prod.yml restart nginx
 ```
 
 Certificates auto-renew every 12 hours via the certbot container.
@@ -103,7 +103,7 @@ Migrations run automatically on first start (`/docker-entrypoint-initdb.d`).
 
 To run manually:
 ```bash
-docker compose exec postgres psql -U resiq -d resiq_crm \
+docker compose -f docker-compose.prod.yml exec postgres psql -U resiq -d resiq_crm \
   -f /docker-entrypoint-initdb.d/001-initial.sql
 ```
 
@@ -113,22 +113,22 @@ docker compose exec postgres psql -U resiq -d resiq_crm \
 
 ```bash
 # Check status
-docker compose ps
+docker compose -f docker-compose.prod.yml ps
 
 # View logs
-docker compose logs -f app
-docker compose logs -f nginx
+docker compose -f docker-compose.prod.yml logs -f app
+docker compose -f docker-compose.prod.yml logs -f nginx
 
 # Restart app only
-docker compose restart app
+docker compose -f docker-compose.prod.yml restart app
 
 # Full restart
-docker compose down && docker compose up -d
+docker compose -f docker-compose.prod.yml down && docker compose -f docker-compose.prod.yml up -d
 
 # Update to latest code
 git pull
-docker compose build app --no-cache
-docker compose up -d app
+docker compose -f docker-compose.prod.yml build app --no-cache
+docker compose -f docker-compose.prod.yml up -d app
 ```
 
 ---
@@ -137,17 +137,17 @@ docker compose up -d app
 
 ```bash
 # Backup
-docker compose exec postgres pg_dump -U resiq resiq_crm > backup_$(date +%Y%m%d).sql
+docker compose -f docker-compose.prod.yml exec postgres pg_dump -U resiq resiq_crm > backup_$(date +%Y%m%d).sql
 
 # Restore
-docker compose exec -T postgres psql -U resiq resiq_crm < backup_20260419.sql
+docker compose -f docker-compose.prod.yml exec -T postgres psql -U resiq resiq_crm < backup_20260419.sql
 ```
 
 Set up automated daily backups with cron:
 ```bash
 crontab -e
 # Add:
-0 2 * * * cd /path/to/resiq-crm && docker compose exec postgres pg_dump -U resiq resiq_crm > /backups/backup_$(date +\%Y\%m\%d).sql
+0 2 * * * cd /path/to/resiq-crm && docker compose -f docker-compose.prod.yml exec postgres pg_dump -U resiq resiq_crm > /backups/backup_$(date +\%Y\%m\%d).sql
 ```
 
 ---
@@ -187,8 +187,8 @@ npm run dev
 
 ```bash
 git pull origin main
-docker compose build app --no-cache
-docker compose up -d app
+docker compose -f docker-compose.prod.yml build app --no-cache
+docker compose -f docker-compose.prod.yml up -d app
 # Zero-downtime: Docker Compose restarts only the app container
 ```
 
@@ -212,7 +212,7 @@ npm run dev
 # - Frontend: http://localhost:5173
 # - Backend API: http://localhost:5000
 # - Redis: localhost:6379
-# - PostgreSQL: localhost:5433
+# - PostgreSQL: localhost:5434
 ```
 
 ### Verify Services Are Running
@@ -222,7 +222,7 @@ npm run dev
 docker-compose ps
 
 # Test PostgreSQL connection
-psql "postgresql://resiq:resiq_dev@localhost:5433/resiq_crm" -c "SELECT version();"
+psql "postgresql://resiq:resiq_dev@localhost:5434/resiq_crm" -c "SELECT version();"
 
 # Test Redis connection
 redis-cli -p 6379 ping
@@ -290,7 +290,7 @@ docker-compose down --volumes  # This removes volumes too
 
 **Verify in Database:**
 ```bash
-psql "postgresql://resiq:resiq_dev@localhost:5433/resiq_crm"
+psql "postgresql://resiq:resiq_dev@localhost:5434/resiq_crm"
 
 # Check if OAuth tokens are stored (encrypted)
 SELECT id, oauth_provider, oauth_access_token IS NOT NULL as has_token 
@@ -335,7 +335,7 @@ FROM users WHERE id = 'your-user-id';
 
 5. **Check database:**
    ```bash
-   psql "postgresql://resiq:resiq_dev@localhost:5433/resiq_crm"
+   psql "postgresql://resiq:resiq_dev@localhost:5434/resiq_crm"
    
    SELECT id, sender_email, subject FROM emails LIMIT 5;
    ```
@@ -379,7 +379,7 @@ FROM users WHERE id = 'your-user-id';
 
 **Verify in Database:**
 ```bash
-psql "postgresql://resiq:resiq_dev@localhost:5433/resiq_crm"
+psql "postgresql://resiq:resiq_dev@localhost:5434/resiq_crm"
 
 SELECT id, name, trigger_type FROM workflows WHERE name = 'Auto-task on deal won';
 ```
@@ -396,7 +396,7 @@ SELECT id, name, trigger_type FROM workflows WHERE name = 'Auto-task on deal won
 
 **Verify in Database:**
 ```bash
-psql "postgresql://resiq:resiq_dev@localhost:5433/resiq_crm"
+psql "postgresql://resiq:resiq_dev@localhost:5434/resiq_crm"
 
 -- Check if task was created
 SELECT id, title, due_date FROM tasks WHERE title = 'Send contract for review' ORDER BY created_at DESC LIMIT 1;
@@ -427,7 +427,7 @@ SELECT workflow_id, status, executed_at FROM workflow_executions ORDER BY create
 ### Verify Schema
 
 ```bash
-psql "postgresql://resiq:resiq_dev@localhost:5433/resiq_crm"
+psql "postgresql://resiq:resiq_dev@localhost:5434/resiq_crm"
 
 -- List all tables
 \dt
@@ -539,8 +539,8 @@ SELECT * FROM pg_indexes WHERE tablename IN ('emails', 'workflows', 'workflow_ex
 
 ### "Database connection refused"
 - Check PostgreSQL is running: `docker-compose ps`
-- Verify DATABASE_URL in `.env` matches docker-compose (port 5433)
-- Check credentials: `psql -U resiq -h localhost -p 5433 -d resiq_crm`
+- Verify DATABASE_URL in `.env` matches docker-compose (port 5434)
+- Check credentials: `psql -U resiq -h localhost -p 5434 -d resiq_crm`
 
 ### "Gmail OAuth shows invalid_client error"
 - Double-check GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in `.env`
@@ -560,9 +560,9 @@ SELECT * FROM pg_indexes WHERE tablename IN ('emails', 'workflows', 'workflow_ex
 - Check execution history: `SELECT * FROM workflow_executions ORDER BY created_at DESC LIMIT 10;`
 
 ### "Database port conflicts"
-- Default PostgreSQL port (5433) may be in use
+- Default PostgreSQL port (5434) may be in use
 - Change port in `docker-compose.yml` and `DATABASE_URL`
-- Find what's using the port: `lsof -i :5433`
+- Find what's using the port: `lsof -i :5434`
 
 ---
 

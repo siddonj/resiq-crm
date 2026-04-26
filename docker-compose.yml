@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-resiq}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-resiq_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-resiq}
       POSTGRES_DB: ${POSTGRES_DB:-resiq_crm}
     ports:
       - "127.0.0.1:5434:5432"
@@ -38,41 +38,6 @@ services:
     networks:
       - resiq-network
 
-  # ResiQ Application
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: resiq-app
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-resiq}:${POSTGRES_PASSWORD:-resiq_dev}@postgres:5432/${POSTGRES_DB:-resiq_crm}
-      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:5000/api/health"]
-      interval: 30s
-      timeout: 10s
-      start_period: 40s
-      retries: 3
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.resiq.rule=Host(`${DOMAIN}`)"
-      - "traefik.http.routers.resiq.entrypoints=websecure"
-      - "traefik.http.routers.resiq.tls.certresolver=letsencrypt"
-      - "traefik.http.services.resiq.loadbalancer.server.port=5000"
-      - "traefik.docker.network=traefik"
-    networks:
-      - resiq-network
-      - traefik
-
 volumes:
   postgres_data:
     driver: local
@@ -82,6 +47,3 @@ volumes:
 networks:
   resiq-network:
     driver: bridge
-  # Connect to Traefik's network (already running on Hostinger VPS)
-  traefik:
-    external: true

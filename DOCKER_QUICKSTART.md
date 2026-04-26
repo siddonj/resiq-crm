@@ -2,6 +2,8 @@
 
 ## 🐳 Start Docker Containers
 
+> **Note:** `docker-compose.yml` is for local development (Postgres + Redis). For production, use `docker-compose.prod.yml` or `deploy.sh`.
+
 Run this command in your terminal:
 
 ```bash
