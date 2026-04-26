@@ -22,9 +22,9 @@ A full-featured CRM platform for managing contacts, deals, proposals, invoices, 
 | **Resource Sharing** | Share contacts/deals between users |
 | **Gmail Integration** | OAuth-connected email timeline per contact |
 | **Settings & CSV Export** | User profile, notification prefs, export any list |
-| **Engagement Tracking** | ✨ *NEW* Pixel-based open tracking for proposals/invoices, real-time engagement timeline |
-| **Support Tickets** | ✨ *NEW* Help Desk with Kanban board, client portal, real-time WebSocket updates |
-| **Reddit Lead Finder** | ✨ *NEW* AI-powered lead discovery from Reddit discussions using Claude MCP, relevance scoring, auto-qualification |
+| **Engagement Tracking** | ✅ *COMPLETE* (Phase 19) Pixel-based open tracking for proposals/invoices, real-time engagement timeline |
+| **Support Tickets** | ✅ *COMPLETE* (Phase 20) Help Desk with Kanban board, client portal, real-time WebSocket updates, email notifications |
+| **Multi-Source Lead Finder** | ✅ *COMPLETE* (Phase 19) AI-powered lead discovery from Reddit + LinkedIn using Claude MCP, relevance scoring, auto-qualification |
 
 ---
 
@@ -68,8 +68,9 @@ npm run dev
 
 - Frontend: http://localhost:5173
 - API: http://localhost:5000
-- Help Desk: http://localhost:5173/help-desk (real-time WebSocket updates)
-- Client Portal: http://localhost:5173/client/tickets (ticket submission)
+- Help Desk (real-time WebSocket): http://localhost:5173/help-desk
+- Client Portal (ticket submission): http://localhost:5173/client/tickets
+- Lead Finder (multi-source): http://localhost:5173/lead-finder
 
 ---
 
