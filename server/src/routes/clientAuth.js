@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const Client = require('../models/client');
+const auth = require('../middleware/auth');
 const clientAuth = require('../middleware/clientAuth');
 const { sendClientInvitationEmail } = require('../services/clientNotifications');
 
@@ -12,8 +13,7 @@ const router = express.Router();
  * Employee endpoint to invite a client
  * Requires: email, name, dealId (optional)
  */
-router.post('/client/invite', async (req, res) => {
-  // TODO: Add employee auth check
+router.post('/client/invite', auth, async (req, res) => {
   const { email, name, dealId } = req.body;
 
   if (!email?.trim() || !name?.trim()) {
@@ -28,7 +28,7 @@ router.post('/client/invite', async (req, res) => {
     }
 
     // Create invitation
-    const invitation = await Client.createInvitation(email.toLowerCase(), req.user?.id || null);
+    const invitation = await Client.createInvitation(email.toLowerCase(), req.user.id);
 
     // Send invitation email
     const emailSent = await sendClientInvitationEmail(email, name, invitation.token);
