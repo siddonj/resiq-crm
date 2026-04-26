@@ -565,4 +565,283 @@ router.get('/deals/forecast', auth, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/analytics/deals/win-loss
+ * Win/loss funnel analysis: stage counts, conversion rates, win/loss by service line
+ */
+router.get('/deals/win-loss', auth, async (req, res) => {
+  try {
+    // Stage funnel counts
+    const stageResult = await pool.query(
+      `SELECT
+        stage,
+        COUNT(*) as count,
+        COALESCE(SUM(value), 0) as total_value
+       FROM deals
+       WHERE user_id = $1
+       GROUP BY stage
+       ORDER BY CASE stage
+         WHEN 'lead' THEN 1 WHEN 'qualified' THEN 2 WHEN 'proposal' THEN 3
+         WHEN 'active' THEN 4 WHEN 'closed_won' THEN 5 WHEN 'closed_lost' THEN 6
+       END`,
+      [req.user.id]
+    );
+
+    // Win/loss by service line
+    const serviceLineResult = await pool.query(
+      `SELECT
+        COALESCE(NULLIF(service_line, ''), 'unspecified') as service_line,
+        COUNT(*) as total,
+        COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
+        COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost
+       FROM deals
+       WHERE user_id = $1
+       GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
+       ORDER BY total DESC`,
+      [req.user.id]
+    );
+
+    // Overall stats
+    const overallResult = await pool.query(
+      `SELECT
+        COUNT(*) as total,
+        COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
+        COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost,
+        COUNT(CASE WHEN stage NOT IN ('closed_won','closed_lost') THEN 1 END) as active
+       FROM deals WHERE user_id = $1`,
+      [req.user.id]
+    );
+
+    const o = overallResult.rows[0];
+    const totalClosed = parseInt(o.won) + parseInt(o.lost);
+
+    const stageFunnel = stageResult.rows.map(r => ({
+      stage: r.stage,
+      count: parseInt(r.count),
+      total_value: parseFloat(r.total_value),
+    }));
+
+    res.json({
+      stage_funnel: stageFunnel,
+      by_service_line: serviceLineResult.rows.map(r => {
+        const closed = parseInt(r.won) + parseInt(r.lost);
+        return {
+          service_line: r.service_line,
+          total: parseInt(r.total),
+          won: parseInt(r.won),
+          lost: parseInt(r.lost),
+          win_rate: closed > 0 ? parseFloat(((parseInt(r.won) / closed) * 100).toFixed(1)) : null,
+        };
+      }),
+      overall: {
+        total: parseInt(o.total),
+        won: parseInt(o.won),
+        lost: parseInt(o.lost),
+        active: parseInt(o.active),
+        win_rate: totalClosed > 0 ? parseFloat(((parseInt(o.won) / totalClosed) * 100).toFixed(1)) : null,
+      },
+    });
+  } catch (err) {
+    console.error('Error fetching win/loss data:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/analytics/deals/velocity
+ * Deal velocity: avg sales cycle length, time to win/lose, by service line
+ */
+router.get('/deals/velocity', auth, async (req, res) => {
+  try {
+    // Avg days for closed deals from created_at to close_date (won) or updated_at (lost)
+    const velocityResult = await pool.query(
+      `SELECT
+        COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won_count,
+        COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost_count,
+        ROUND(AVG(CASE WHEN stage = 'closed_won' AND close_date IS NOT NULL
+          THEN (close_date - created_at::date)
+          WHEN stage = 'closed_won' AND close_date IS NULL
+          THEN EXTRACT(EPOCH FROM (COALESCE(updated_at, NOW()) - created_at)) / 86400
+        END)::numeric, 1) as avg_days_to_win,
+        ROUND(AVG(CASE WHEN stage = 'closed_lost'
+          THEN EXTRACT(EPOCH FROM (COALESCE(updated_at, NOW()) - created_at)) / 86400
+        END)::numeric, 1) as avg_days_to_lose,
+        ROUND(AVG(CASE WHEN stage IN ('closed_won','closed_lost')
+          THEN EXTRACT(EPOCH FROM (COALESCE(close_date::timestamptz, updated_at, NOW()) - created_at)) / 86400
+        END)::numeric, 1) as avg_sales_cycle
+       FROM deals WHERE user_id = $1`,
+      [req.user.id]
+    );
+
+    // Avg days by service line (won deals only)
+    const byServiceLineResult = await pool.query(
+      `SELECT
+        COALESCE(NULLIF(service_line, ''), 'unspecified') as service_line,
+        COUNT(*) as total,
+        COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
+        ROUND(AVG(CASE WHEN stage = 'closed_won' AND close_date IS NOT NULL
+          THEN (close_date - created_at::date)
+          WHEN stage = 'closed_won' AND close_date IS NULL
+          THEN EXTRACT(EPOCH FROM (COALESCE(updated_at, NOW()) - created_at)) / 86400
+        END)::numeric, 1) as avg_days_to_win
+       FROM deals WHERE user_id = $1
+       GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
+       ORDER BY avg_days_to_win ASC NULLS LAST`,
+      [req.user.id]
+    );
+
+    // Stage-level history if available
+    const stageVelocityResult = await pool.query(
+      `SELECT
+        from_stage,
+        to_stage,
+        COUNT(*) as transitions,
+        ROUND(AVG(EXTRACT(EPOCH FROM (
+          LEAD(changed_at) OVER (PARTITION BY deal_id ORDER BY changed_at)
+          - changed_at
+        )) / 86400)::numeric, 1) as avg_days_in_from_stage
+       FROM deal_stage_history
+       WHERE user_id = $1
+       GROUP BY from_stage, to_stage
+       ORDER BY from_stage`,
+      [req.user.id]
+    ).catch(err => { console.error('Error fetching stage velocity (table may not exist yet):', err.message); return { rows: [] }; }); // graceful fallback if table doesn't exist yet
+
+    const v = velocityResult.rows[0];
+    res.json({
+      avg_sales_cycle_days: v.avg_sales_cycle !== null ? parseFloat(v.avg_sales_cycle) : null,
+      avg_days_to_win: v.avg_days_to_win !== null ? parseFloat(v.avg_days_to_win) : null,
+      avg_days_to_lose: v.avg_days_to_lose !== null ? parseFloat(v.avg_days_to_lose) : null,
+      won_count: parseInt(v.won_count),
+      lost_count: parseInt(v.lost_count),
+      by_service_line: byServiceLineResult.rows.map(r => ({
+        service_line: r.service_line,
+        total: parseInt(r.total),
+        won: parseInt(r.won),
+        avg_days_to_win: r.avg_days_to_win !== null ? parseFloat(r.avg_days_to_win) : null,
+      })),
+      stage_transitions: stageVelocityResult.rows,
+    });
+  } catch (err) {
+    console.error('Error fetching deal velocity:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/analytics/deals/mrr
+ * Monthly recurring / realized revenue from closed-won deals (last 24 months)
+ */
+router.get('/deals/mrr', auth, async (req, res) => {
+  try {
+    const monthlyResult = await pool.query(
+      `SELECT
+        DATE_TRUNC('month', COALESCE(close_date::timestamptz, updated_at, created_at)) as month,
+        COALESCE(SUM(value), 0) as revenue,
+        COUNT(*) as deals_closed,
+        COALESCE(AVG(value), 0) as avg_deal_size
+       FROM deals
+       WHERE user_id = $1
+         AND stage = 'closed_won'
+         AND COALESCE(close_date::timestamptz, updated_at, created_at) >= NOW() - INTERVAL '24 months'
+       GROUP BY DATE_TRUNC('month', COALESCE(close_date::timestamptz, updated_at, created_at))
+       ORDER BY month`,
+      [req.user.id]
+    );
+
+    // YTD revenue
+    const ytdResult = await pool.query(
+      `SELECT
+        COALESCE(SUM(value), 0) as ytd_revenue,
+        COUNT(*) as ytd_deals
+       FROM deals
+       WHERE user_id = $1
+         AND stage = 'closed_won'
+         AND COALESCE(close_date::timestamptz, updated_at, created_at) >= DATE_TRUNC('year', NOW())`,
+      [req.user.id]
+    );
+
+    const ytd = ytdResult.rows[0];
+    const monthly = monthlyResult.rows.map(r => ({
+      month: r.month,
+      revenue: parseFloat(r.revenue),
+      deals_closed: parseInt(r.deals_closed),
+      avg_deal_size: parseFloat(parseFloat(r.avg_deal_size).toFixed(2)),
+    }));
+
+    // Current month revenue
+    const currentMonth = monthly.find(m => {
+      const d = new Date(m.month);
+      const now = new Date();
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    });
+
+    // Last month revenue (for trend)
+    const lastMonth = monthly.length >= 2 ? monthly[monthly.length - 2] : null;
+    const currentRev = currentMonth?.revenue || 0;
+    const lastRev = lastMonth?.revenue || 0;
+    const trend = lastRev > 0 ? parseFloat((((currentRev - lastRev) / lastRev) * 100).toFixed(1)) : null;
+
+    res.json({
+      current_month_revenue: currentRev,
+      ytd_revenue: parseFloat(ytd.ytd_revenue),
+      ytd_deals: parseInt(ytd.ytd_deals),
+      mom_trend_pct: trend,
+      monthly,
+    });
+  } catch (err) {
+    console.error('Error fetching MRR data:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
+ * GET /api/analytics/deals/service-lines
+ * Full performance metrics per service line: close rate, avg deal size, revenue, velocity
+ */
+router.get('/deals/service-lines', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+        COALESCE(NULLIF(service_line, ''), 'unspecified') as service_line,
+        COUNT(*) as total_deals,
+        COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
+        COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost,
+        COUNT(CASE WHEN stage NOT IN ('closed_won','closed_lost') THEN 1 END) as active,
+        COALESCE(SUM(CASE WHEN stage = 'closed_won' THEN value ELSE 0 END), 0) as total_revenue,
+        COALESCE(AVG(value), 0) as avg_deal_size,
+        COALESCE(AVG(CASE WHEN stage = 'closed_won' THEN value END), 0) as avg_won_value,
+        ROUND(AVG(CASE WHEN stage = 'closed_won' AND close_date IS NOT NULL
+          THEN (close_date - created_at::date)
+          WHEN stage = 'closed_won' AND close_date IS NULL
+          THEN EXTRACT(EPOCH FROM (COALESCE(updated_at, NOW()) - created_at)) / 86400
+        END)::numeric, 1) as avg_days_to_win
+       FROM deals
+       WHERE user_id = $1
+       GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
+       ORDER BY total_revenue DESC`,
+      [req.user.id]
+    );
+
+    res.json(result.rows.map(r => {
+      const closed = parseInt(r.won) + parseInt(r.lost);
+      return {
+        service_line: r.service_line,
+        total_deals: parseInt(r.total_deals),
+        won: parseInt(r.won),
+        lost: parseInt(r.lost),
+        active: parseInt(r.active),
+        win_rate: closed > 0 ? parseFloat(((parseInt(r.won) / closed) * 100).toFixed(1)) : null,
+        total_revenue: parseFloat(r.total_revenue),
+        avg_deal_size: parseFloat(parseFloat(r.avg_deal_size).toFixed(2)),
+        avg_won_value: parseFloat(parseFloat(r.avg_won_value).toFixed(2)),
+        avg_days_to_win: r.avg_days_to_win !== null ? parseFloat(r.avg_days_to_win) : null,
+      };
+    }));
+  } catch (err) {
+    console.error('Error fetching service line metrics:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

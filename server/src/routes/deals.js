@@ -116,6 +116,10 @@ router.patch('/:id/stage', auth, async (req, res) => {
 
     if (oldDeal.stage !== newDeal.stage) {
       logAction(req.user.id, req.user.email, 'stage_change', 'deal', newDeal.id, newDeal.title, { from: oldDeal.stage, to: newDeal.stage });
+      pool.query(
+        'INSERT INTO deal_stage_history (deal_id, user_id, from_stage, to_stage) VALUES ($1, $2, $3, $4)',
+        [newDeal.id, req.user.id, oldDeal.stage, newDeal.stage]
+      ).catch(err => console.error(`Error recording stage history for deal ${newDeal.id} (${oldDeal.stage} → ${newDeal.stage}):`, err));
     }
 
     if (workflowEngine && oldDeal.stage !== newDeal.stage) {

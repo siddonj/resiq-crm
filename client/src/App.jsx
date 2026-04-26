@@ -25,6 +25,7 @@ import Forms from './pages/Forms'
 import HelpDesk from './pages/HelpDesk'
 import RedditLeads from './pages/RedditLeads'
 import MultiSourceLeads from './pages/MultiSourceLeads'
+import Analytics from './pages/Analytics'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -46,6 +47,7 @@ function AppRoutes() {
         <Route path="contacts" element={<Contacts />} />
         <Route path="pipeline" element={<Pipeline />} />
         <Route path="forecasting" element={<Forecasting />} />
+        <Route path="analytics" element={<Analytics />} />
         <Route path="workflows" element={<Workflows />} />
         <Route path="sequences" element={<Sequences />} />
         <Route path="settings" element={<Settings />} />
