@@ -16,25 +16,56 @@ const path = require('path');
 function loadEnv() {
   try {
     const envPath = path.join(__dirname, '.env');
-    if (fs.existsSync(envPath)) {
-      const envContent = fs.readFileSync(envPath, 'utf8');
-      envContent.split('\n').forEach(line => {
-        const match = line.match(/^([^=]+)=(.*)$/);
-        if (match) {
-          const key = match[1].trim();
-          const value = match[2].trim().replace(/^["']|["']$/g, '');
-          if (key && !process.env[key]) {
-            process.env[key] = value;
-          }
-        }
-      });
+    if (!fs.existsSync(envPath)) {
+      console.error('\n❌ Error: .env file not found at', envPath);
+      process.exit(1);
+    }
+    
+    const envContent = fs.readFileSync(envPath, 'utf8');
+    const lines = envContent.split('\n');
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      
+      // Skip empty lines and comments
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      
+      // Parse KEY=VALUE
+      const eqIndex = trimmed.indexOf('=');
+      if (eqIndex === -1) continue;
+      
+      const key = trimmed.substring(0, eqIndex).trim();
+      let value = trimmed.substring(eqIndex + 1).trim();
+      
+      // Remove quotes if present
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      
+      // Only set if not already in process.env (don't override command-line args)
+      if (key && !process.env[key]) {
+        process.env[key] = value;
+      }
     }
   } catch (err) {
-    console.error('Warning: Could not load .env file:', err.message);
+    console.error('\n❌ Warning: Could not load .env file:', err.message);
+    process.exit(1);
   }
 }
 
 loadEnv();
+
+// Debug: show what we loaded
+if (!process.env.DATABASE_URL) {
+  console.error('\n❌ Error: DATABASE_URL not found after loading .env\n');
+  console.log('Loaded environment variables:');
+  Object.keys(process.env)
+    .filter(k => k.includes('DATABASE') || k.includes('POSTGRES'))
+    .forEach(k => console.log(`  ${k}=${process.env[k]}`));
+  console.log('\nPlease check your .env file has DATABASE_URL set.\n');
+  process.exit(1);
+}
 
 // Dynamically require pg with helpful error message
 let Client;

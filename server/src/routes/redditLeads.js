@@ -4,7 +4,7 @@
 const express = require('express');
 const db = require('../models/db');
 const RedditMCPService = require('../services/redditMCPService');
-const { authMiddleware } = require('../middleware/auth');
+const authMiddleware = require('../middleware/auth');
 
 const router = express.Router();
 

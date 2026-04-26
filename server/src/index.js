@@ -35,6 +35,7 @@ const leadsRoutes = require('./routes/leads');
 const engagementRoutes = require('./routes/engagement');
 const ticketsRoutes = require('./routes/tickets');
 const redditLeadsRoutes = require('./routes/redditLeads');
+const multiSourceLeadsRoutes = require('./routes/multiSourceLeads');
 const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
 const { agentQueue, initAgentWorker } = require('./workers/agentWorker');
@@ -56,31 +57,52 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ noServer: true });
 const ticketWS = new TicketWebSocketServer();
 
+// Add error handler to wss
+wss.on('error', (error) => {
+  console.error('[WebSocket Server] Error:', error);
+});
+
 // Handle WebSocket upgrade
 server.on('upgrade', (req, socket, head) => {
-  if (req.url === '/ws/tickets') {
-    const { getTokenFromRequest, verifyWebSocketToken } = require('./middleware/wsAuth');
-    
-    // Extract token from Sec-WebSocket-Protocol header
-    const protocol = req.headers['sec-websocket-protocol'];
-    const token = protocol ? protocol.split(' ').pop() : null;
-    
-    if (!token) {
-      console.log('WebSocket upgrade rejected: no token');
-      socket.destroy();
-      return;
-    }
+  try {
+    if (req.url.startsWith('/ws/tickets')) {
+      const { verifyWebSocketToken } = require('./middleware/wsAuth');
+      
+      // Extract token from query parameter
+      const urlParams = new URL(`http://localhost${req.url}`);
+      const token = urlParams.searchParams.get('token');
+      
+      if (!token) {
+        console.log('[WebSocket] Upgrade rejected: no token in query parameter');
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
 
-    const decoded = verifyWebSocketToken(token);
-    if (!decoded) {
-      console.log('WebSocket upgrade rejected: invalid token');
-      socket.destroy();
-      return;
-    }
+      const decoded = verifyWebSocketToken(token);
+      if (!decoded) {
+        console.log('[WebSocket] Upgrade rejected: invalid token');
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
 
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      ticketWS.handleUpgrade(ws, req, decoded.id);
-    });
+      console.log(`[WebSocket] Token verified for user ${decoded.id}, calling wss.handleUpgrade`);
+      try {
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          console.log('[WebSocket] wss.handleUpgrade callback triggered, calling ticketWS.handleUpgrade');
+          ticketWS.handleUpgrade(ws, req, decoded.id);
+        });
+      } catch (upgradeErr) {
+        console.error('[WebSocket] wss.handleUpgrade failed:', upgradeErr);
+        socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+        socket.destroy();
+      }
+    }
+  } catch (err) {
+    console.error('[WebSocket] Upgrade error:', err);
+    socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+    socket.destroy();
   }
 });
 
@@ -120,6 +142,7 @@ app.use('/api/webhooks', webhookRoutes);
 app.use('/api/agents', agentsRoutes);
 app.use('/api/forms', formsRoutes);
 app.use('/api/leads', leadsRoutes);
+app.use('/api/multi-source-leads', multiSourceLeadsRoutes);
 app.use('/api/engagement', engagementRoutes);
 app.use('/api/tickets', ticketsRoutes);
 app.use('/api/reddit-leads', redditLeadsRoutes);

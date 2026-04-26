@@ -14,7 +14,15 @@ class TicketWebSocketManager {
   connect() {
     return new Promise((resolve, reject) => {
       try {
-        this.ws = new WebSocket(`${this.url}/ws/tickets`, [`Bearer ${this.token}`])
+        if (!this.token) {
+          console.error('❌ WebSocket connection failed: no token available');
+          reject(new Error('No authentication token available'));
+          return;
+        }
+
+        console.log('[WebSocket] Connecting with token:', this.token.substring(0, 20) + '...');
+        // Use query parameter for token (Sec-WebSocket-Protocol only accepts simple alphanumeric strings)
+        this.ws = new WebSocket(`${this.url}/ws/tickets?token=${encodeURIComponent(this.token)}`)
         
         this.ws.onopen = () => {
           console.log('✓ WebSocket connected')

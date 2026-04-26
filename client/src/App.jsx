@@ -23,6 +23,7 @@ import Agents from './pages/Agents'
 import Forms from './pages/Forms'
 import HelpDesk from './pages/HelpDesk'
 import RedditLeads from './pages/RedditLeads'
+import MultiSourceLeads from './pages/MultiSourceLeads'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -57,6 +58,8 @@ function AppRoutes() {
         <Route path="invoices" element={<Invoices />} />
         <Route path="time-tracking" element={<TimeTracking />} />
         <Route path="calendar" element={<Calendar />} />
+        <Route path="reddit-leads" element={<RedditLeads />} />
+        <Route path="multi-source-leads" element={<MultiSourceLeads />} />
         <Route path="help" element={<Help />} />
       </Route>
     </Routes>
