@@ -5,6 +5,7 @@ const navItems = [
   { to: '/', label: 'Overview', icon: '📊', end: true },
   { to: '/contacts', label: 'Contacts', icon: '👥' },
   { to: '/pipeline', label: 'Pipeline', icon: '🔁' },
+  { to: '/forecasting', label: 'Forecasting', icon: '📈' },
   { to: '/workflows', label: 'Workflows', icon: '⚡' },    { to: '/sequences', label: 'Sequences', icon: '✉️' },  { to: '/agents', label: 'AI Agents', icon: '🤖' },
   { to: '/forms', label: 'Web Forms', icon: '🌐' },
   { to: '/reminders', label: 'Reminders', icon: '🔔' },
