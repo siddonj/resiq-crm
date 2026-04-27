@@ -254,6 +254,11 @@ server.listen(PORT, async () => {
 
 // Serve React client in production
 if (process.env.NODE_ENV === 'production') {
+  // Return JSON 404 for unknown API routes instead of serving index.html.
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: 'API route not found' });
+  });
+
   const clientDist = path.join(__dirname, '../../client/dist');
   app.use(express.static(clientDist));
   app.get('*', (req, res) => {

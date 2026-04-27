@@ -259,6 +259,50 @@ router.get('/workflows/summary', auth, async (req, res) => {
 });
 
 /**
+ * GET /api/analytics/workflows/top
+ * Get top workflows by execution count with success rates.
+ */
+router.get('/workflows/top', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         w.id AS workflow_id,
+         w.name AS workflow_name,
+         COUNT(we.id) AS execution_count,
+         COALESCE(
+           ROUND(
+             100.0 * COUNT(CASE WHEN we.status = 'completed' THEN 1 END) /
+             NULLIF(COUNT(CASE WHEN we.status IN ('completed', 'failed') THEN 1 END), 0),
+             2
+           ),
+           0
+         ) AS success_rate
+       FROM workflows w
+       LEFT JOIN workflow_executions we
+         ON we.workflow_id = w.id
+       WHERE w.user_id = $1
+       GROUP BY w.id, w.name
+       HAVING COUNT(we.id) > 0
+       ORDER BY execution_count DESC
+       LIMIT 10`,
+      [req.user.id]
+    );
+
+    res.json(
+      result.rows.map((row) => ({
+        workflow_id: row.workflow_id,
+        workflow_name: row.workflow_name,
+        execution_count: parseInt(row.execution_count),
+        success_rate: parseFloat(row.success_rate),
+      }))
+    );
+  } catch (err) {
+    console.error('Error fetching top workflows:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+/**
  * GET /api/analytics/engagement/summary
  * Get engagement tracking metrics: open rates by asset type
  */

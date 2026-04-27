@@ -34,6 +34,7 @@ export default function WorkflowMetrics() {
   if (!summary) return <div className="text-sm text-brand-gray">No workflows yet</div>
 
   const { executions_this_month, workflows } = summary
+  const workflowList = Array.isArray(topWorkflows) ? topWorkflows : []
 
   return (
     <div className="space-y-4">
@@ -72,11 +73,13 @@ export default function WorkflowMetrics() {
       </div>
 
       {/* Top Workflows */}
-      {topWorkflows && topWorkflows.length > 0 && (
+      {workflowList.length > 0 && (
         <div className="mt-4 p-4 bg-gray-50 rounded-lg">
           <p className="text-xs font-semibold text-navy mb-3">Most Active Workflows</p>
           <div className="space-y-3">
-            {topWorkflows.map((wf, idx) => (
+            {workflowList.map((wf, idx) => {
+              const successRate = Number(wf.success_rate || 0)
+              return (
               <div key={idx} className="p-3 bg-white rounded border border-gray-200">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-sm font-medium text-navy">{wf.workflow_name}</p>
@@ -86,13 +89,13 @@ export default function WorkflowMetrics() {
                   <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-emerald-500 rounded-full"
-                      style={{ width: `${wf.success_rate}%` }}
+                      style={{ width: `${successRate}%` }}
                     />
                   </div>
-                  <span className="text-xs font-medium text-navy whitespace-nowrap">{wf.success_rate.toFixed(0)}%</span>
+                  <span className="text-xs font-medium text-navy whitespace-nowrap">{successRate.toFixed(0)}%</span>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         </div>
       )}
