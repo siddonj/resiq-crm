@@ -213,6 +213,20 @@ async function updateCampaignStatus(token, campaignId, status) {
   return response.data;
 }
 
+async function setSuppression(token, leadId, suppressed, reason = null) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/leads/${leadId}/suppression`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ suppressed, reason }),
+  });
+
+  assert(response.ok, `set suppression failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
 async function generateDraft(token, leadId, channel) {
   const response = await fetchJson(`${BASE_URL}/api/outbound/drafts/generate`, {
     method: 'POST',
@@ -295,6 +309,19 @@ async function exportCsv(token, path) {
   };
 }
 
+async function expectGenerateDraftConflict(token, leadId, channel) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/drafts/generate`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ leadId, channel }),
+  });
+
+  return response;
+}
+
 async function findLinkedInTaskId(databaseUrl, userId, draftId) {
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
@@ -374,6 +401,12 @@ async function run() {
   const leads = await listLeads(auth.token);
   assert(leads.total === 2, `expected 2 leads after dedupe run, got ${leads.total}`);
   const leadIds = leads.leads.map((lead) => lead.id);
+  const blockedLeadId = leadIds[1];
+
+  await setSuppression(auth.token, blockedLeadId, true, 'Smoke suppression check');
+  const blockedDraftAttempt = await expectGenerateDraftConflict(auth.token, blockedLeadId, 'email');
+  assert(blockedDraftAttempt.status === 409, `expected suppressed draft generation to return 409, got ${blockedDraftAttempt.status}`);
+  await setSuppression(auth.token, blockedLeadId, false, null);
 
   const campaign = await createCampaign(auth.token, {
     name: `Smoke Campaign ${Date.now()}`,
@@ -438,6 +471,13 @@ async function run() {
     campaignId: campaign.id,
     campaignStatus: activeCampaign.status,
     campaignCount: campaignsList.campaigns.length,
+  });
+
+  steps.push({
+    step: 'suppression',
+    ok: true,
+    blockedLeadId,
+    blockedDraftStatus: blockedDraftAttempt.status,
   });
 
   steps.push({

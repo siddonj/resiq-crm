@@ -351,6 +351,30 @@ export default function OutboundAutomation() {
     })
   }
 
+  const handleSuppression = async (lead, suppressed) => {
+    await runAction(`suppression-${lead.id}-${suppressed ? 'on' : 'off'}`, async () => {
+      const reason = suppressed
+        ? window.prompt('Suppression reason (required):', lead.suppression_reason || 'Unsubscribe request') || ''
+        : ''
+
+      if (suppressed && !reason.trim()) {
+        throw new Error('Suppression reason is required.')
+      }
+
+      await axios.patch(
+        `/api/outbound/leads/${lead.id}/suppression`,
+        {
+          suppressed,
+          reason: suppressed ? reason.trim() : null,
+        },
+        authHeaders
+      )
+
+      setMessage(suppressed ? 'Lead suppressed.' : 'Lead unsuppressed.')
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchCampaigns()])
+    })
+  }
+
   const leadsStats = analytics?.leads || {}
   const emailLimit = analytics?.dailySendLimits?.email
   const linkedinLimit = analytics?.dailySendLimits?.linkedin
@@ -700,6 +724,23 @@ export default function OutboundAutomation() {
                         >
                           Draft LinkedIn
                         </button>
+                        {lead.status === 'suppressed' ? (
+                          <button
+                            onClick={() => handleSuppression(lead, false)}
+                            disabled={busyKey === `suppression-${lead.id}-off`}
+                            className="text-xs border border-emerald-200 text-emerald-700 rounded px-2 py-1 hover:bg-emerald-50 disabled:opacity-60"
+                          >
+                            Unsuppress
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleSuppression(lead, true)}
+                            disabled={busyKey === `suppression-${lead.id}-on`}
+                            className="text-xs border border-rose-200 text-rose-700 rounded px-2 py-1 hover:bg-rose-50 disabled:opacity-60"
+                          >
+                            Suppress
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

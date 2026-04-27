@@ -757,6 +757,62 @@ router.post('/leads/:id/score', async (req, res) => {
 });
 
 /**
+ * PATCH /api/outbound/leads/:id/suppression
+ * Body: { suppressed: boolean, reason?: string }
+ */
+router.patch('/leads/:id/suppression', async (req, res) => {
+  const suppressed = Boolean(req.body.suppressed);
+  const reason = req.body.reason ? String(req.body.reason).trim() : null;
+
+  const leadRes = await pool.query(
+    `SELECT * FROM outbound_leads WHERE id = $1 AND user_id = $2`,
+    [req.params.id, req.user.id]
+  );
+
+  if (leadRes.rows.length === 0) {
+    return res.status(404).json({ error: 'Lead not found.' });
+  }
+
+  if (suppressed && !reason) {
+    return res.status(400).json({ error: 'Suppression reason is required.' });
+  }
+
+  const updatedRes = await pool.query(
+    `UPDATE outbound_leads
+     SET status = CASE
+          WHEN $1::boolean = TRUE THEN 'suppressed'
+          WHEN status = 'suppressed' THEN 'new'
+          ELSE status
+        END,
+        suppression_reason = CASE WHEN $1::boolean = TRUE THEN $2 ELSE NULL END,
+        updated_at = NOW()
+     WHERE id = $3 AND user_id = $4
+     RETURNING *`,
+    [suppressed, reason, req.params.id, req.user.id]
+  );
+
+  const updatedLead = updatedRes.rows[0];
+  await logLeadEvent({
+    userId: req.user.id,
+    leadId: updatedLead.id,
+    eventType: suppressed ? 'lead_suppressed' : 'lead_unsuppressed',
+    metadata: { reason: suppressed ? reason : null },
+  });
+
+  logAction(
+    req.user.id,
+    req.user.email,
+    suppressed ? 'outbound_lead_suppressed' : 'outbound_lead_unsuppressed',
+    'outbound_lead',
+    updatedLead.id,
+    updatedLead.name,
+    { reason: suppressed ? reason : null }
+  );
+
+  return res.json(updatedLead);
+});
+
+/**
  * POST /api/outbound/drafts/generate
  * Body: { leadId, channel: 'email'|'linkedin' }
  */
@@ -776,6 +832,9 @@ router.post('/drafts/generate', async (req, res) => {
   }
 
   const lead = leadRes.rows[0];
+  if (lead.status === 'suppressed' || lead.suppression_reason) {
+    return res.status(409).json({ error: 'Lead is suppressed and cannot be contacted.' });
+  }
   let subject = null;
   let body = '';
 
@@ -918,6 +977,20 @@ router.post('/drafts/:id/send', async (req, res) => {
     return res.status(409).json({ error: 'Draft must be approved before sending.' });
   }
 
+  const leadRes = await pool.query(
+    `SELECT id, status, suppression_reason
+     FROM outbound_leads
+     WHERE id = $1 AND user_id = $2`,
+    [draft.lead_id, req.user.id]
+  );
+  if (leadRes.rows.length === 0) {
+    return res.status(404).json({ error: 'Lead not found for this draft.' });
+  }
+  const lead = leadRes.rows[0];
+  if (lead.status === 'suppressed' || lead.suppression_reason) {
+    return res.status(409).json({ error: 'Lead is suppressed and cannot be contacted.' });
+  }
+
   const usage = await getDailySendUsage(req.user.id, 'email');
   if (!requireWithinDailyLimit(usage)) {
     return res.status(429).json({
@@ -974,9 +1047,10 @@ router.post('/drafts/:id/send', async (req, res) => {
 router.post('/linkedin/tasks/:id/complete', async (req, res) => {
   const { notes = null } = req.body;
   const existingTaskRes = await pool.query(
-    `SELECT t.*, d.status AS draft_status
+    `SELECT t.*, d.status AS draft_status, l.status AS lead_status, l.suppression_reason
      FROM linkedin_outreach_tasks t
      LEFT JOIN outbound_message_drafts d ON d.id = t.draft_id
+     LEFT JOIN outbound_leads l ON l.id = t.lead_id
      WHERE t.id = $1 AND t.user_id = $2`,
     [req.params.id, req.user.id]
   );
@@ -996,6 +1070,10 @@ router.post('/linkedin/tasks/:id/complete', async (req, res) => {
       taskStatus: currentTask.status,
       draftStatus: currentTask.draft_status,
     });
+  }
+
+  if (currentTask.lead_status === 'suppressed' || currentTask.suppression_reason) {
+    return res.status(409).json({ error: 'Lead is suppressed and cannot be contacted.' });
   }
 
   const usage = await getDailySendUsage(req.user.id, 'linkedin');

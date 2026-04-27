@@ -275,6 +275,7 @@ Implemented now:
   - daily per-user send limits (email + LinkedIn)
   - required draft approval before send/completion
   - outbound event export and outbound audit export (CSV/JSON)
+  - suppression hard blocks before draft generation and send/completion
 - Phase 4 campaign foundation implemented:
   - `outbound_campaigns` table
   - `outbound_campaign_members` table
@@ -301,6 +302,5 @@ Local prerequisites:
 Recommended next build steps:
 
 - Add persistent Draft Inbox and LinkedIn Task Board endpoints/UI
-- Add suppression and unsubscribe hard blocks before send
 - Add outbound workflow tests in CI
 - Add tenant branding/profile screens for white-label packaging
