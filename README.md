@@ -1,215 +1,100 @@
 # ResiQ CRM
 
-A full-featured CRM platform for managing contacts, deals, proposals, invoices, and client communications — built with React, Node.js/Express, and PostgreSQL.
+ResiQ CRM is a full-stack CRM platform for property-tech consulting workflows, including:
 
----
+- contacts, deals, activities, reminders
+- proposals, invoices, time tracking, calendar booking
+- help desk and client portal
+- role-based access and audit logs
+- outbound automation for email + LinkedIn with human approval
 
-## Features
+## Current Outbound Capabilities
 
-| Module | Highlights |
-|--------|-----------|
-| **Contacts & Pipeline** | Contact management, Kanban deal pipeline, activity logging |
-| **Dashboard** | Sales analytics, pipeline summary, workflow metrics, due reminders |
-| **Workflows** | Visual workflow builder with triggers (deal stage, contact created) and actions |
-| **Proposals** | Section-based builder, pricing table, e-signature, PDF download |
-| **Invoices** | Line items (qty/rate/tax/discount), Stripe payment link, PDF download, auto overdue reminders |
-| **Time Tracking** | Manual log + live start/stop timer, billable flag, convert to invoice |
-| **Calendar** | Month/week view, Google Calendar OAuth sync, public scheduling page (`/book/:slug`) |
-| **Reminders** | Due-date reminders linked to contacts and deals |
-| **Teams** | Team creation and membership management |
-| **RBAC** | Four roles: admin, manager, user, viewer |
-| **Audit Logs** | Full action history across all entities |
-| **Resource Sharing** | Share contacts/deals between users |
-| **Gmail Integration** | OAuth-connected email timeline per contact |
-| **Settings & CSV Export** | User profile, notification prefs, export any list |
-| **Engagement Tracking** | ✅ *COMPLETE* (Phase 19) Pixel-based open tracking for proposals/invoices, real-time engagement timeline |
-| **Support Tickets** | ✅ *COMPLETE* (Phase 20) Help Desk with Kanban board, client portal, real-time WebSocket updates, email notifications |
-| **Multi-Source Lead Finder** | ✅ *COMPLETE* (Phase 19) AI-powered lead discovery from Reddit + LinkedIn using Claude MCP, relevance scoring, auto-qualification |
+Outbound automation is now implemented under `/api/outbound` and in the UI at `/outbound-automation`.
 
----
+- CSV lead import with dedupe and scoring
+- draft generation for email and LinkedIn
+- approval-required send flow
+- daily send limits (email + LinkedIn)
+- suppression hard blocks
+- campaign runs and campaign members
+- event and audit export (CSV/JSON)
 
 ## Tech Stack
 
-**Frontend**
-- React 18 + React Router v6
-- Vite
-- Tailwind CSS
-- Axios
+- Frontend: React, Vite, Tailwind, Axios
+- Backend: Node.js, Express, PostgreSQL, Redis, Bull
+- Auth: JWT
+- Integrations: Google (Gmail/Calendar), Twilio, Stripe
 
-**Backend**
-- Node.js + Express
-- PostgreSQL (via `pg`)
-- Redis + Bull (workflow queue, email sync worker)
-- JWT authentication
-- Google APIs (Gmail, Calendar)
+## Repository Layout
 
----
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18+
-- PostgreSQL 15+
-- Redis (optional — needed for workflows and Gmail sync)
-
-### Quick Start (5 minutes)
-
-```bash
-# 1. Install all dependencies and run migrations
-node setup.js
-
-# 2. Edit .env with your configuration
-# Required: DATABASE_URL, SMTP settings for email notifications
-
-# 3. Start development servers
-npm run dev
+```text
+resiq-crm/
+  client/                 React frontend
+  server/                 Express API
+  database/
+    schema.sql            Base schema
+    migrations/           Incremental migrations (002+)
+  scripts/
+    outbound-smoke-test.js
+  docker-compose.yml      Local infra (Postgres/Redis)
+  docker-compose.prod.yml Production stack
 ```
 
-- Frontend: http://localhost:5173
-- API: http://localhost:5000
-- Help Desk (real-time WebSocket): http://localhost:5173/help-desk
-- Client Portal (ticket submission): http://localhost:5173/client/tickets
-- Lead Finder (multi-source): http://localhost:5173/lead-finder
+## Local Quick Start
 
----
+1. Create `.env` from example.
 
-### Manual Setup Steps
+```bash
+cp .env.example .env
+```
 
-#### 1. Install dependencies
+2. Set required values in `.env`:
+
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `ENCRYPTION_KEY` (must be exactly 32 bytes)
+
+3. Install dependencies and run migrations.
 
 ```bash
 npm run install:all
-```
-
-#### 2. Set up the database
-
-Create a PostgreSQL database and user:
-
-```sql
-CREATE USER resiq WITH PASSWORD 'resiq_dev';
-CREATE DATABASE resiq_crm OWNER resiq;
-GRANT ALL PRIVILEGES ON DATABASE resiq_crm TO resiq;
-```
-
-Run all migrations automatically:
-
-```bash
 npm run migrate
 ```
 
-Or manually apply migrations one at a time:
-
-```bash
-psql -U resiq -d resiq_crm -f database/migrations/001-initial.sql
-psql -U resiq -d resiq_crm -f database/migrations/002-add-rbac-teams.sql
-# ... (all other migrations)
-psql -U resiq -d resiq_crm -f database/migrations/013-add-support-tickets.sql
-```
-
-#### 3. Configure environment
-
-Copy and edit `.env`:
-
-```env
-PORT=5000
-DATABASE_URL=postgresql://resiq:resiq_dev@localhost:5432/resiq_crm
-JWT_SECRET=change_me_in_production
-ENCRYPTION_KEY=exactly-32-chars-pad-pad-pad-pad-
-
-# Email notifications (Phase 20 — Support Tickets)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASS=your-app-password
-SMTP_FROM=noreply@example.com
-
-# Optional — Redis (workflows + email sync)
-REDIS_URL=redis://localhost:6379
-
-# Optional — Gmail OAuth
-GMAIL_CLIENT_ID=your_client_id
-GMAIL_CLIENT_SECRET=your_client_secret
-API_URL=http://localhost:5000
-
-# Optional — Google Calendar OAuth
-GCAL_CLIENT_ID=your_client_id
-GCAL_CLIENT_SECRET=your_client_secret
-```
-
-#### 4. Start development servers
+4. Start the app.
 
 ```bash
 npm run dev
 ```
 
----
+5. Open:
 
-## Docker (infrastructure only)
+- frontend: `http://localhost:5173`
+- API health: `http://localhost:5000/api/health`
+- outbound UI: `http://localhost:5173/outbound-automation`
 
-Start PostgreSQL and Redis via Docker Compose:
+## Smoke Test
+
+Run outbound end-to-end smoke coverage:
 
 ```bash
-docker-compose up -d
+npm run test:outbound-smoke
 ```
 
-This starts Postgres on port `5434` and Redis on `6379`. Update `DATABASE_URL` in `server/.env` accordingly.
+This validates import, dedupe, draft generation, approval gates, send/completion flows, campaign creation, suppression checks, and export endpoints.
 
----
+## Environment Notes
 
-## Google Integrations
+- Keep `ALLOW_SYNTHETIC_LEADS=false` in production.
+- Daily limits default to:
+  - `OUTBOUND_DAILY_EMAIL_SEND_LIMIT=40`
+  - `OUTBOUND_DAILY_LINKEDIN_SEND_LIMIT=50`
 
-### Gmail
+## Production Docs
 
-1. Create an OAuth 2.0 client in Google Cloud Console
-2. Add `http://localhost:5000/api/integrations/gmail/callback` as an authorised redirect URI
-3. Enable the Gmail API
-4. Add `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET` to `server/.env`
-5. Connect from **Settings → Gmail**
-
-### Google Calendar
-
-1. Enable the Google Calendar API on the same (or a new) OAuth client
-2. Add `http://localhost:5000/api/integrations/gcal/callback` as an authorised redirect URI
-3. Add `GCAL_CLIENT_ID` / `GCAL_CLIENT_SECRET` to `server/.env` (or reuse Gmail credentials)
-4. Connect from **Calendar → ⚙ Schedule → Connect Google Calendar**
-
----
-
-## Public Scheduling Page
-
-Each user can enable a public booking page at `/book/:slug`.
-
-1. Go to **Calendar → ⚙ Schedule**
-2. Set your URL slug, slot duration, and availability
-3. Share the link — clients pick a slot and it auto-creates a calendar event, activity, and reminder
-
----
-
-## Project Structure
-
-```
-resiq-crm/
-├── client/               # React frontend (Vite)
-│   └── src/
-│       ├── components/   # Shared UI components
-│       ├── context/      # AuthContext
-│       └── pages/        # One file per route
-├── server/               # Express API
-│   └── src/
-│       ├── middleware/   # auth.js
-│       ├── models/       # db.js (pg Pool)
-│       ├── routes/       # One file per resource
-│       ├── services/     # Gmail, Google Calendar, OAuth, audit logger
-│       └── workers/      # Bull queue workers
-├── database/
-│   └── migrations/       # SQL migration files (run in order)
-└── docker-compose.yml    # Postgres + Redis for local dev
-```
-
----
-
-## Roadmap
-
-- **Phase 14** — Client Portal (client auth, proposal signing, invoice payment)
-- **Phase 15** — SMS via Twilio (two-way messaging, opt-out, templates)
+- Setup guide: [SETUP.md](./SETUP.md)
+- Deployment runbook: [DEPLOYMENT.md](./DEPLOYMENT.md)
+- Release checklist: [PRODUCTION_READINESS_CHECKLIST.md](./PRODUCTION_READINESS_CHECKLIST.md)
+- Outbound implementation plan/status: [OUTBOUND_AUTOMATION_DEVELOPMENT_DOC.md](./OUTBOUND_AUTOMATION_DEVELOPMENT_DOC.md)
