@@ -235,6 +235,28 @@ Current lead generation logic creates synthetic Reddit/LinkedIn outputs, which i
 - Data hygiene is enforced before leads enter outbound flow
 - Multifamily object model supports deeper segmentation without re-architecture
 
+### Progress status (as of April 27, 2026)
+
+- Phase 21 completion: 12%
+- Measurement basis (weighted by planned capabilities):
+  - Sequence state machine v2: 0%
+  - Workflow rules engine: 0%
+  - Scoring v2 + explainability: 45%
+  - Forecast + goals: 0%
+  - Attribution + source ROI: 0%
+  - Data quality command center: 0%
+  - Multifamily custom objects: 0%
+
+Phase 21 slice delivered now:
+
+- Added explainable scoring baseline:
+  - engagement score signal layer (event-driven)
+  - score reason payloads (`fit`, `intent`, `engagement`, `summary`)
+  - score history timeline table + write path
+- Added endpoint:
+  - `GET /api/outbound/scoring/:leadId/explain`
+  - returns current explanation + recent scoring history
+
 ## 7. Data Model Additions
 
 Recommended new tables:
@@ -377,3 +399,5 @@ Recommended next build steps:
 - Add persistent Draft Inbox and LinkedIn Task Board endpoints/UI
 - Add outbound workflow tests in CI
 - Add tenant branding/profile screens for white-label packaging
+- Continue Phase 21 with slice 2:
+  - sequence enrollment state table + transition guards (one-active-sequence-per-lead)

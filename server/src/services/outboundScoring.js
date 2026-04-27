@@ -55,10 +55,12 @@ function scoreFit(lead) {
   const textBlob = `${title} ${company} ${notes} ${website}`;
 
   let score = 0;
+  const reasons = [];
 
   for (const pattern of TITLE_PATTERNS) {
     if (title.includes(pattern)) {
       score = Math.max(score, 40);
+      reasons.push(`Title match: ${pattern}`);
       break;
     }
   }
@@ -68,6 +70,9 @@ function scoreFit(lead) {
     if (textBlob.includes(keyword)) multifamilyHits++;
   }
   score += Math.min(35, multifamilyHits * 7);
+  if (multifamilyHits > 0) {
+    reasons.push(`Industry signal keywords matched (${multifamilyHits})`);
+  }
 
   if (
     location.includes('us') ||
@@ -75,32 +80,64 @@ function scoreFit(lead) {
     location.includes('usa')
   ) {
     score += 10;
+    reasons.push('Location fit: United States');
   }
 
-  if (lead.linkedin_url) score += 8;
-  if (lead.email) score += 7;
+  if (lead.linkedin_url) {
+    score += 8;
+    reasons.push('Lead has LinkedIn profile');
+  }
+  if (lead.email) {
+    score += 7;
+    reasons.push('Lead has email contact');
+  }
 
-  return toScore(score);
+  if (reasons.length === 0) {
+    reasons.push('No strong fit signals detected');
+  }
+
+  return { score: toScore(score), reasons };
 }
 
 function scoreIntent(lead) {
   const textBlob = normalizeText(`${lead.title} ${lead.company} ${lead.notes}`);
   let score = 0;
+  const reasons = [];
 
   for (const trigger of INTENT_TRIGGERS) {
-    if (textBlob.includes(trigger)) score += 14;
+    if (textBlob.includes(trigger)) {
+      score += 14;
+      reasons.push(`Intent trigger detected: ${trigger}`);
+    }
   }
 
-  if (textBlob.includes('hiring') || textBlob.includes('opening')) score += 10;
-  if (textBlob.includes('new software') || textBlob.includes('switching')) score += 10;
+  if (textBlob.includes('hiring') || textBlob.includes('opening')) {
+    score += 10;
+    reasons.push('Hiring/opening activity detected');
+  }
+  if (textBlob.includes('new software') || textBlob.includes('switching')) {
+    score += 10;
+    reasons.push('Potential tool-change activity detected');
+  }
 
-  return toScore(score);
+  if (reasons.length === 0) {
+    reasons.push('No active buying-intent triggers detected');
+  }
+
+  return { score: toScore(score), reasons };
 }
 
-function scoreLead(lead) {
-  const fitScore = scoreFit(lead);
-  const intentScore = scoreIntent(lead);
-  const totalScore = toScore(fitScore * 0.7 + intentScore * 0.3);
+function scoreLead(lead, options = {}) {
+  const fit = scoreFit(lead);
+  const intent = scoreIntent(lead);
+  const engagementScore = toScore(Number(options.engagementScore || 0));
+  const engagementReasons = Array.isArray(options.engagementReasons) && options.engagementReasons.length > 0
+    ? options.engagementReasons
+    : ['No engagement history yet'];
+
+  const fitScore = fit.score;
+  const intentScore = intent.score;
+  const totalScore = toScore(fitScore * 0.6 + intentScore * 0.25 + engagementScore * 0.15);
 
   let nextRecommendedAction = 'review';
   let status = 'new';
@@ -122,13 +159,19 @@ function scoreLead(lead) {
   return {
     fitScore,
     intentScore,
+    engagementScore,
     totalScore,
     nextRecommendedAction,
     status,
+    reasons: {
+      fit: fit.reasons,
+      intent: intent.reasons,
+      engagement: engagementReasons,
+      summary: [`Total score ${totalScore} (fit 60%, intent 25%, engagement 15%)`],
+    },
   };
 }
 
 module.exports = {
   scoreLead,
 };
-

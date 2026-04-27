@@ -151,6 +151,78 @@ async function logLeadEvent({ userId, leadId, eventType, channel = null, metadat
   );
 }
 
+async function computeEngagementSignals(userId, leadId) {
+  const result = await pool.query(
+    `SELECT
+       COUNT(*) FILTER (WHERE event_type IN ('draft_generated', 'draft_approved'))::int AS prep_events,
+       COUNT(*) FILTER (WHERE event_type IN ('draft_sent', 'linkedin_task_completed'))::int AS contact_events,
+       COUNT(*) FILTER (WHERE event_type IN ('lead_replied', 'meeting_booked', 'opportunity_created'))::int AS positive_events,
+       MAX(created_at) AS last_event_at
+     FROM lead_source_events
+     WHERE user_id = $1
+       AND lead_id = $2`,
+    [userId, leadId]
+  );
+
+  const row = result.rows[0] || {};
+  const prepEvents = Number(row.prep_events || 0);
+  const contactEvents = Number(row.contact_events || 0);
+  const positiveEvents = Number(row.positive_events || 0);
+  const lastEventAt = row.last_event_at ? new Date(row.last_event_at) : null;
+
+  let score = 0;
+  const reasons = [];
+
+  if (prepEvents > 0) {
+    score += Math.min(24, prepEvents * 8);
+    reasons.push(`Draft activity recorded (${prepEvents})`);
+  }
+  if (contactEvents > 0) {
+    score += Math.min(35, contactEvents * 12);
+    reasons.push(`Contact actions recorded (${contactEvents})`);
+  }
+  if (positiveEvents > 0) {
+    score += Math.min(45, positiveEvents * 20);
+    reasons.push(`Positive outcomes recorded (${positiveEvents})`);
+  }
+  if (lastEventAt) {
+    const ageDays = (Date.now() - lastEventAt.getTime()) / (1000 * 60 * 60 * 24);
+    if (ageDays <= 14) {
+      score += 10;
+      reasons.push('Recent engagement in last 14 days');
+    } else if (ageDays > 90) {
+      reasons.push('Engagement is stale (older than 90 days)');
+    }
+  } else {
+    reasons.push('No engagement events recorded yet');
+  }
+
+  return {
+    engagementScore: Math.max(0, Math.min(100, Math.round(score))),
+    engagementReasons: reasons,
+  };
+}
+
+async function recordLeadScoreHistory({ userId, leadId, score, source = 'manual_rescore' }) {
+  await pool.query(
+    `INSERT INTO lead_score_history
+      (user_id, lead_id, fit_score, intent_score, engagement_score, total_score, status, next_recommended_action, reasons, source)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)`,
+    [
+      userId,
+      leadId,
+      score.fitScore,
+      score.intentScore,
+      score.engagementScore || 0,
+      score.totalScore,
+      score.status,
+      score.nextRecommendedAction,
+      JSON.stringify(score.reasons || {}),
+      source,
+    ]
+  );
+}
+
 async function getDailySendUsage(userId, channel) {
   const eventTypes = SEND_EVENT_TYPES[channel] || [];
   const limitSettingKey =
@@ -300,6 +372,12 @@ router.post('/leads/import/csv', upload.single('file'), async (req, res) => {
         );
 
         importedRows++;
+        await recordLeadScoreHistory({
+          userId: req.user.id,
+          leadId: inserted.rows[0].id,
+          score,
+          source: 'import',
+        });
         await logLeadEvent({
           userId: req.user.id,
           leadId: inserted.rows[0].id,
@@ -720,7 +798,8 @@ router.post('/leads/:id/score', async (req, res) => {
   }
 
   const lead = leadRes.rows[0];
-  const score = scoreLead(lead);
+  const engagement = await computeEngagementSignals(req.user.id, lead.id);
+  const score = scoreLead(lead, engagement);
 
   const updated = await pool.query(
     `UPDATE outbound_leads
@@ -749,7 +828,64 @@ router.post('/leads/:id/score', async (req, res) => {
     metadata: score,
   });
 
+  await recordLeadScoreHistory({
+    userId: req.user.id,
+    leadId: req.params.id,
+    score,
+    source: 'manual_rescore',
+  });
+
   return res.json(updated.rows[0]);
+});
+
+/**
+ * GET /api/outbound/scoring/:leadId/explain
+ * Phase 21 Slice 1: explainable scoring + score history timeline
+ */
+router.get('/scoring/:leadId/explain', async (req, res) => {
+  const leadRes = await pool.query(
+    `SELECT * FROM outbound_leads WHERE id = $1 AND user_id = $2`,
+    [req.params.leadId, req.user.id]
+  );
+  if (leadRes.rows.length === 0) {
+    return res.status(404).json({ error: 'Lead not found.' });
+  }
+
+  const lead = leadRes.rows[0];
+  const engagement = await computeEngagementSignals(req.user.id, lead.id);
+  const explanation = scoreLead(lead, engagement);
+
+  const historyRes = await pool.query(
+    `SELECT id, fit_score, intent_score, engagement_score, total_score, status, next_recommended_action, reasons, source, created_at
+     FROM lead_score_history
+     WHERE user_id = $1 AND lead_id = $2
+     ORDER BY created_at DESC
+     LIMIT 30`,
+    [req.user.id, lead.id]
+  );
+
+  const latestHistory = historyRes.rows[0] || null;
+  const previousHistory = historyRes.rows[1] || null;
+  const scoreDelta = latestHistory && previousHistory
+    ? Number(latestHistory.total_score) - Number(previousHistory.total_score)
+    : null;
+
+  return res.json({
+    lead: {
+      id: lead.id,
+      name: lead.name,
+      company: lead.company,
+      title: lead.title,
+      status: lead.status,
+      totalScore: lead.total_score,
+      fitScore: lead.fit_score,
+      intentScore: lead.intent_score,
+      nextRecommendedAction: lead.next_recommended_action,
+    },
+    explanation,
+    scoreDeltaFromPrevious: scoreDelta,
+    history: historyRes.rows,
+  });
 });
 
 /**
