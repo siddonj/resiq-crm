@@ -16,6 +16,10 @@ function getClient() {
   return client;
 }
 
+function isSyntheticGenerationAllowed() {
+  return process.env.ALLOW_SYNTHETIC_LEADS === 'true';
+}
+
 class MultiSourceLeadService {
   /**
    * Extract first valid JSON array from text
@@ -50,6 +54,12 @@ class MultiSourceLeadService {
    */
   static async searchAllSources(configs) {
     try {
+      if (!isSyntheticGenerationAllowed()) {
+        throw new Error(
+          'Synthetic lead generation is disabled. Use real lead ingestion via /api/outbound/leads/import/csv.'
+        );
+      }
+
       if (!process.env.ANTHROPIC_API_KEY) {
         throw new Error('ANTHROPIC_API_KEY environment variable not set');
       }

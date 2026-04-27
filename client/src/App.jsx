@@ -26,6 +26,7 @@ import HelpDesk from './pages/HelpDesk'
 import RedditLeads from './pages/RedditLeads'
 import MultiSourceLeads from './pages/MultiSourceLeads'
 import Analytics from './pages/Analytics'
+import OutboundAutomation from './pages/OutboundAutomation'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -64,6 +65,7 @@ function AppRoutes() {
         <Route path="calendar" element={<Calendar />} />
         <Route path="reddit-leads" element={<RedditLeads />} />
         <Route path="multi-source-leads" element={<MultiSourceLeads />} />
+        <Route path="outbound-automation" element={<OutboundAutomation />} />
         <Route path="help" element={<Help />} />
       </Route>
     </Routes>

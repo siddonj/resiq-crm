@@ -7,8 +7,11 @@ const navItems = [
   { to: '/pipeline', label: 'Pipeline', icon: '🔁' },
   { to: '/forecasting', label: 'Forecasting', icon: '📈' },
   { to: '/analytics', label: 'Analytics', icon: '📉' },
-  { to: '/workflows', label: 'Workflows', icon: '⚡' },    { to: '/sequences', label: 'Sequences', icon: '✉️' },  { to: '/agents', label: 'AI Agents', icon: '🤖' },
+  { to: '/workflows', label: 'Workflows', icon: '⚡' },
+  { to: '/sequences', label: 'Sequences', icon: '✉️' },
+  { to: '/agents', label: 'AI Agents', icon: '🤖' },
   { to: '/forms', label: 'Web Forms', icon: '🌐' },
+  { to: '/outbound-automation', label: 'Outbound', icon: '📤' },
   { to: '/reminders', label: 'Reminders', icon: '🔔' },
   { to: '/proposals', label: 'Proposals', icon: '📄' },
   { to: '/invoices', label: 'Invoices', icon: '🧾' },
@@ -30,9 +33,7 @@ export default function DashboardLayout() {
 
   return (
     <div className="flex h-screen bg-gray-100 font-dmsans">
-      {/* Sidebar */}
       <aside className="w-64 bg-navy text-white flex flex-col">
-        {/* Logo */}
         <div className="px-6 py-6 border-b border-white/10">
           <h1 className="font-syne text-2xl font-bold text-white">
             Resi<span className="text-teal">Q</span>
@@ -40,8 +41,7 @@ export default function DashboardLayout() {
           <p className="text-brand-gray text-xs mt-0.5">CRM Platform</p>
         </div>
 
-        {/* Nav */}
-        <nav className="flex-1 px-4 py-6 space-y-1">
+        <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
           {navItems.map(({ to, label, icon, end }) => (
             <NavLink
               key={to}
@@ -59,30 +59,31 @@ export default function DashboardLayout() {
               {label}
             </NavLink>
           ))}
-          {adminNavItems.some(item => item.roles.includes(user?.role)) && (
+          {adminNavItems.some((item) => item.roles.includes(user?.role)) && (
             <>
               <div className="my-2 border-t border-white/10" />
-              {adminNavItems.filter(item => item.roles.includes(user?.role)).map(({ to, label, icon }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                      isActive
-                        ? 'bg-teal text-white'
-                        : 'text-brand-gray hover:bg-white/10 hover:text-white'
-                    }`
-                  }
-                >
-                  <span>{icon}</span>
-                  {label}
-                </NavLink>
-              ))}
+              {adminNavItems
+                .filter((item) => item.roles.includes(user?.role))
+                .map(({ to, label, icon }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                        isActive
+                          ? 'bg-teal text-white'
+                          : 'text-brand-gray hover:bg-white/10 hover:text-white'
+                      }`
+                    }
+                  >
+                    <span>{icon}</span>
+                    {label}
+                  </NavLink>
+                ))}
             </>
           )}
         </nav>
 
-        {/* User */}
         <div className="px-6 py-4 border-t border-white/10">
           <p className="text-sm text-white font-medium truncate">{user?.name}</p>
           <p className="text-xs text-brand-gray truncate">{user?.email}</p>
@@ -95,7 +96,6 @@ export default function DashboardLayout() {
         </div>
       </aside>
 
-      {/* Main */}
       <main className="flex-1 overflow-auto">
         <Outlet />
       </main>

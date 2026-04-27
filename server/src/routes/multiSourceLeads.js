@@ -54,6 +54,15 @@ router.get('/health', async (req, res) => {
  */
 router.post('/search', async (req, res) => {
   try {
+    const allowSyntheticRequest = req.body.allowSynthetic === true;
+    const allowSyntheticEnv = process.env.ALLOW_SYNTHETIC_LEADS === 'true';
+    if (!allowSyntheticRequest || !allowSyntheticEnv) {
+      return res.status(410).json({
+        error: 'Synthetic lead generation is disabled',
+        message: 'Use /api/outbound/leads/import/csv for real lead ingestion.',
+      });
+    }
+
     const {
       sources = ['reddit', 'linkedin'],
       subreddits = ['startups', 'smallbusiness'],
@@ -96,8 +105,8 @@ router.post('/search', async (req, res) => {
         const result = await db.query(
           `INSERT INTO unified_leads 
            (source_id, source, author, title, content, url, company, relevance_score, 
-            lead_keywords, contact_email, contact_name, linkedin_url, discovered_at, metadata)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13)
+            lead_keywords, contact_email, contact_name, linkedin_url, discovered_at, metadata, is_synthetic, lead_source_confidence)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, TRUE, 5)
            ON CONFLICT (source_id) DO UPDATE SET
              status = EXCLUDED.status,
              updated_at = NOW()
@@ -174,6 +183,15 @@ router.post('/search', async (req, res) => {
  */
 router.post('/test-search', async (req, res) => {
   try {
+    const allowSyntheticRequest = req.body.allowSynthetic === true;
+    const allowSyntheticEnv = process.env.ALLOW_SYNTHETIC_LEADS === 'true';
+    if (!allowSyntheticRequest || !allowSyntheticEnv) {
+      return res.status(410).json({
+        error: 'Synthetic lead generation is disabled',
+        message: 'Use /api/outbound/leads/import/csv for real lead ingestion.',
+      });
+    }
+
     const {
       sources = ['reddit', 'linkedin'],
       subreddits = ['startups', 'smallbusiness'],
@@ -216,8 +234,8 @@ router.post('/test-search', async (req, res) => {
         const result = await db.query(
           `INSERT INTO unified_leads 
            (source_id, source, author, title, content, url, company, relevance_score, 
-            lead_keywords, contact_email, contact_name, linkedin_url, discovered_at, metadata)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13)
+            lead_keywords, contact_email, contact_name, linkedin_url, discovered_at, metadata, is_synthetic, lead_source_confidence)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, TRUE, 5)
            ON CONFLICT (source_id) DO UPDATE SET
              status = EXCLUDED.status,
              updated_at = NOW()
