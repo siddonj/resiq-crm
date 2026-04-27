@@ -132,6 +132,9 @@ const STALE_LEAD_DAYS = 90;
 const VALID_MULTIFAMILY_OBJECT_TYPES = new Set(['portfolio', 'property', 'tech_stack', 'initiative']);
 const VALID_MULTIFAMILY_ENTITY_TYPES = new Set(['outbound_lead', 'contact', 'deal', 'company']);
 const VALID_MULTIFAMILY_EXPLORER_ENTITY_TYPES = new Set(['contact', 'deal', 'company']);
+const VALID_DRAFT_STATUSES = new Set(['drafted', 'approved', 'sent', 'archived']);
+const VALID_DRAFT_CHANNELS = new Set(['email', 'linkedin']);
+const VALID_LINKEDIN_TASK_STATUSES = new Set(['pending', 'drafted', 'approved', 'completed', 'skipped', 'blocked']);
 
 function parseCSVRow(line) {
   const result = [];
@@ -809,6 +812,121 @@ function mapMultifamilyAssociationRow(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function mapDraftInboxRow(row) {
+  return {
+    id: row.id,
+    leadId: row.lead_id,
+    channel: row.channel,
+    subject: row.subject || null,
+    body: row.body,
+    status: row.status,
+    approvedAt: row.approved_at,
+    sentAt: row.sent_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lead: {
+      id: row.lead_id,
+      name: row.lead_name || null,
+      email: row.lead_email || null,
+      company: row.lead_company || null,
+      title: row.lead_title || null,
+      totalScore: Number(row.lead_total_score || 0),
+      status: row.lead_status || null,
+    },
+    linkedinTask: row.linkedin_task_id
+      ? {
+          id: row.linkedin_task_id,
+          status: row.linkedin_task_status,
+          dueAt: row.linkedin_task_due_at,
+          completedAt: row.linkedin_task_completed_at,
+        }
+      : null,
+  };
+}
+
+function computeLinkedinTaskPriority(task) {
+  const status = String(task.status || '').toLowerCase();
+  const statusWeights = {
+    approved: 35,
+    drafted: 25,
+    pending: 20,
+    blocked: 10,
+    skipped: 0,
+    completed: 0,
+  };
+
+  const nowMs = Date.now();
+  const dueAtMs = task.due_at ? new Date(task.due_at).getTime() : null;
+  let dueWeight = 0;
+  if (Number.isFinite(dueAtMs)) {
+    if (dueAtMs < nowMs) {
+      const daysOverdue = Math.max(0, Math.floor((nowMs - dueAtMs) / (1000 * 60 * 60 * 24)));
+      dueWeight += 45 + Math.min(15, daysOverdue * 4);
+    } else {
+      const daysUntilDue = Math.max(0, Math.floor((dueAtMs - nowMs) / (1000 * 60 * 60 * 24)));
+      dueWeight += Math.max(0, 20 - Math.min(20, daysUntilDue * 2));
+    }
+  } else {
+    dueWeight += 10;
+  }
+
+  const leadScoreWeight = Math.min(35, Math.max(0, Number(task.lead_total_score || 0) * 0.35));
+  return Math.round((statusWeights[status] || 0) + dueWeight + leadScoreWeight);
+}
+
+function mapLinkedinTaskBoardRow(row) {
+  return {
+    id: row.id,
+    leadId: row.lead_id,
+    draftId: row.draft_id || null,
+    taskType: row.task_type,
+    status: row.status,
+    dueAt: row.due_at,
+    completedAt: row.completed_at,
+    notes: row.notes || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    priorityScore: computeLinkedinTaskPriority(row),
+    lead: {
+      id: row.lead_id,
+      name: row.lead_name || null,
+      email: row.lead_email || null,
+      company: row.lead_company || null,
+      title: row.lead_title || null,
+      totalScore: Number(row.lead_total_score || 0),
+      status: row.lead_status || null,
+      suppressionReason: row.lead_suppression_reason || null,
+    },
+    draft: row.draft_id
+      ? {
+          id: row.draft_id,
+          channel: row.draft_channel || null,
+          status: row.draft_status || null,
+          subject: row.draft_subject || null,
+        }
+      : null,
+  };
+}
+
+function mapTaskBoardBuckets(rows) {
+  const buckets = {
+    pending: [],
+    drafted: [],
+    approved: [],
+    blocked: [],
+    completed: [],
+    skipped: [],
+  };
+  for (const row of rows) {
+    const item = mapLinkedinTaskBoardRow(row);
+    if (!buckets[item.status]) {
+      buckets[item.status] = [];
+    }
+    buckets[item.status].push(item);
+  }
+  return buckets;
 }
 
 function normalizeMultifamilyExplorerEntityType(value) {
@@ -4753,9 +4871,10 @@ router.post('/leads/:id/outcome', async (req, res) => {
  * Body: { leadId, channel: 'email'|'linkedin' }
  */
 router.post('/drafts/generate', async (req, res) => {
-  const { leadId, channel = 'email' } = req.body;
+  const leadId = req.body?.leadId;
+  const channel = String(req.body?.channel || 'email').toLowerCase();
   if (!leadId) return res.status(400).json({ error: 'leadId is required.' });
-  if (!['email', 'linkedin'].includes(channel)) {
+  if (!VALID_DRAFT_CHANNELS.has(channel)) {
     return res.status(400).json({ error: 'channel must be email or linkedin.' });
   }
 
@@ -4820,6 +4939,262 @@ router.post('/drafts/generate', async (req, res) => {
     linkedinTaskId: linkedinTask ? linkedinTask.id : null,
     linkedinTaskStatus: linkedinTask ? linkedinTask.status : null,
     linkedinTaskDueAt: linkedinTask ? linkedinTask.due_at : null,
+  });
+});
+
+/**
+ * GET /api/outbound/drafts/inbox
+ * Query: status, channel, leadId, limit
+ */
+router.get('/drafts/inbox', async (req, res) => {
+  const status = req.query.status ? String(req.query.status).trim().toLowerCase() : '';
+  const channel = req.query.channel ? String(req.query.channel).trim().toLowerCase() : '';
+  const leadId = req.query.leadId ? sanitizeUuidValue(req.query.leadId) : null;
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 100)));
+
+  if (status && !VALID_DRAFT_STATUSES.has(status)) {
+    return res.status(400).json({ error: 'Invalid draft status filter.' });
+  }
+  if (channel && !VALID_DRAFT_CHANNELS.has(channel)) {
+    return res.status(400).json({ error: 'Invalid draft channel filter.' });
+  }
+  if (req.query.leadId && !leadId) {
+    return res.status(400).json({ error: 'Invalid leadId filter.' });
+  }
+
+  const params = [req.user.id];
+  const filters = ['d.user_id = $1'];
+
+  if (status) {
+    params.push(status);
+    filters.push(`d.status = $${params.length}`);
+  }
+
+  if (channel) {
+    params.push(channel);
+    filters.push(`d.channel = $${params.length}`);
+  }
+
+  if (leadId) {
+    params.push(leadId);
+    filters.push(`d.lead_id = $${params.length}`);
+  }
+
+  params.push(limit);
+  const limitIdx = params.length;
+
+  const [draftsRes, summaryRes] = await Promise.all([
+    pool.query(
+      `SELECT
+         d.*,
+         l.name AS lead_name,
+         l.email AS lead_email,
+         l.company AS lead_company,
+         l.title AS lead_title,
+         l.total_score AS lead_total_score,
+         l.status AS lead_status,
+         t.id AS linkedin_task_id,
+         t.status AS linkedin_task_status,
+         t.due_at AS linkedin_task_due_at,
+         t.completed_at AS linkedin_task_completed_at
+       FROM outbound_message_drafts d
+       LEFT JOIN outbound_leads l ON l.id = d.lead_id
+       LEFT JOIN linkedin_outreach_tasks t ON t.draft_id = d.id AND t.user_id = d.user_id
+       WHERE ${filters.join(' AND ')}
+       ORDER BY d.updated_at DESC
+       LIMIT $${limitIdx}`,
+      params
+    ),
+    pool.query(
+      `SELECT
+         COUNT(*)::int AS total_count,
+         COUNT(*) FILTER (WHERE status = 'drafted')::int AS drafted_count,
+         COUNT(*) FILTER (WHERE status = 'approved')::int AS approved_count,
+         COUNT(*) FILTER (WHERE status = 'sent')::int AS sent_count,
+         COUNT(*) FILTER (WHERE channel = 'linkedin' AND status IN ('drafted', 'approved'))::int AS pending_linkedin_count
+       FROM outbound_message_drafts
+       WHERE user_id = $1`,
+      [req.user.id]
+    ),
+  ]);
+
+  return res.json({
+    total: draftsRes.rows.length,
+    drafts: draftsRes.rows.map(mapDraftInboxRow),
+    summary: summaryRes.rows[0] || {
+      total_count: 0,
+      drafted_count: 0,
+      approved_count: 0,
+      sent_count: 0,
+      pending_linkedin_count: 0,
+    },
+  });
+});
+
+/**
+ * GET /api/outbound/linkedin/tasks/board
+ * Query: status, limit
+ */
+router.get('/linkedin/tasks/board', async (req, res) => {
+  const status = req.query.status ? String(req.query.status).trim().toLowerCase() : '';
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
+
+  if (status && !VALID_LINKEDIN_TASK_STATUSES.has(status)) {
+    return res.status(400).json({ error: 'Invalid linkedin task status filter.' });
+  }
+
+  const params = [req.user.id];
+  const filters = ['t.user_id = $1'];
+  if (status) {
+    params.push(status);
+    filters.push(`t.status = $${params.length}`);
+  }
+
+  params.push(limit);
+  const limitIdx = params.length;
+
+  const tasksRes = await pool.query(
+    `SELECT
+       t.*,
+       l.name AS lead_name,
+       l.email AS lead_email,
+       l.company AS lead_company,
+       l.title AS lead_title,
+       l.total_score AS lead_total_score,
+       l.status AS lead_status,
+       l.suppression_reason AS lead_suppression_reason,
+       d.channel AS draft_channel,
+       d.status AS draft_status,
+       d.subject AS draft_subject
+     FROM linkedin_outreach_tasks t
+     LEFT JOIN outbound_leads l ON l.id = t.lead_id
+     LEFT JOIN outbound_message_drafts d ON d.id = t.draft_id
+     WHERE ${filters.join(' AND ')}
+     ORDER BY
+       CASE t.status
+         WHEN 'approved' THEN 1
+         WHEN 'drafted' THEN 2
+         WHEN 'pending' THEN 3
+         WHEN 'blocked' THEN 4
+         WHEN 'completed' THEN 5
+         ELSE 6
+       END,
+       t.due_at ASC NULLS LAST,
+       t.updated_at DESC
+     LIMIT $${limitIdx}`,
+    params
+  );
+
+  const boardBuckets = mapTaskBoardBuckets(tasksRes.rows);
+  const usage = await getDailySendUsage(req.user.id, 'linkedin');
+  const openStatuses = new Set(['pending', 'drafted', 'approved', 'blocked']);
+  const openTasks = tasksRes.rows.filter((row) => openStatuses.has(row.status));
+  const overdueCount = openTasks.filter((row) => row.due_at && new Date(row.due_at).getTime() < Date.now()).length;
+  const approvedReadyCount = openTasks.filter((row) => row.status === 'approved').length;
+  const draftedCount = openTasks.filter((row) => row.status === 'drafted').length;
+  const recommendedToday = Math.max(0, Math.min(usage.remaining, approvedReadyCount + Math.ceil(draftedCount * 0.5)));
+  const referenceDailyCapacity = usage.limit > 0 ? usage.limit : Math.max(1, usage.remaining);
+  const estimatedDaysToClearOpen = referenceDailyCapacity > 0 ? Math.ceil(openTasks.length / referenceDailyCapacity) : null;
+
+  return res.json({
+    total: tasksRes.rows.length,
+    tasks: tasksRes.rows.map(mapLinkedinTaskBoardRow),
+    board: boardBuckets,
+    workload: {
+      openCount: openTasks.length,
+      approvedReadyCount,
+      draftedCount,
+      overdueCount,
+      dailyUsage: usage,
+      recommendedToday,
+      estimatedDaysToClearOpen,
+    },
+  });
+});
+
+/**
+ * POST /api/outbound/linkedin/tasks/rebalance
+ * Body: { dailyCapacity? }
+ */
+router.post('/linkedin/tasks/rebalance', async (req, res) => {
+  const usage = await getDailySendUsage(req.user.id, 'linkedin');
+  const requestedCapacity = Number(req.body?.dailyCapacity || 0);
+  const fallbackCapacity = usage.limit > 0 ? usage.limit : 20;
+  const dailyCapacity = Math.max(1, Math.min(500, Number.isFinite(requestedCapacity) && requestedCapacity > 0 ? requestedCapacity : fallbackCapacity));
+
+  const openRes = await pool.query(
+    `SELECT
+       t.id,
+       t.status,
+       t.due_at,
+       t.created_at,
+       l.total_score AS lead_total_score
+     FROM linkedin_outreach_tasks t
+     LEFT JOIN outbound_leads l ON l.id = t.lead_id
+     WHERE t.user_id = $1
+       AND t.status IN ('pending', 'drafted', 'approved', 'blocked')
+     ORDER BY t.created_at ASC`,
+    [req.user.id]
+  );
+
+  const openTasks = openRes.rows
+    .map((row) => ({ ...row, priority_score: computeLinkedinTaskPriority(row) }))
+    .sort((a, b) => {
+      if (b.priority_score !== a.priority_score) return b.priority_score - a.priority_score;
+      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    });
+
+  if (openTasks.length === 0) {
+    return res.json({
+      rebalancedCount: 0,
+      dailyCapacity,
+      windowDays: 0,
+      updatedTaskIds: [],
+      workload: {
+        openCount: 0,
+        recommendedToday: 0,
+      },
+    });
+  }
+
+  const start = new Date();
+  start.setHours(9, 0, 0, 0);
+
+  const updatedTaskIds = [];
+  for (let index = 0; index < openTasks.length; index++) {
+    const task = openTasks[index];
+    const dayOffset = Math.floor(index / dailyCapacity);
+    const slot = index % dailyCapacity;
+    const nextDueAt = new Date(start.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+    nextDueAt.setHours(9 + Math.min(8, slot), 0, 0, 0);
+
+    await pool.query(
+      `UPDATE linkedin_outreach_tasks
+       SET due_at = $1,
+           updated_at = NOW()
+       WHERE id = $2
+         AND user_id = $3`,
+      [nextDueAt.toISOString(), task.id, req.user.id]
+    );
+    updatedTaskIds.push(task.id);
+  }
+
+  logAction(req.user.id, req.user.email, 'outbound_linkedin_workload_rebalanced', 'linkedin_task', null, null, {
+    rebalancedCount: updatedTaskIds.length,
+    dailyCapacity,
+  });
+
+  const windowDays = Math.ceil(openTasks.length / dailyCapacity);
+  return res.json({
+    rebalancedCount: updatedTaskIds.length,
+    dailyCapacity,
+    windowDays,
+    updatedTaskIds,
+    workload: {
+      openCount: openTasks.length,
+      recommendedToday: Math.max(0, Math.min(usage.remaining, dailyCapacity)),
+      dailyUsage: usage,
+    },
   });
 });
 

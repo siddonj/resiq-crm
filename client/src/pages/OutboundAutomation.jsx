@@ -118,7 +118,12 @@ export default function OutboundAutomation() {
   const [busyKey, setBusyKey] = useState('')
   const [csvFile, setCsvFile] = useState(null)
   const [importResult, setImportResult] = useState(null)
-  const [sessionDrafts, setSessionDrafts] = useState([])
+  const [, setSessionDrafts] = useState([])
+  const [draftInbox, setDraftInbox] = useState([])
+  const [draftInboxSummary, setDraftInboxSummary] = useState(null)
+  const [loadingDraftInbox, setLoadingDraftInbox] = useState(false)
+  const [linkedinTaskBoard, setLinkedinTaskBoard] = useState(null)
+  const [loadingLinkedinTaskBoard, setLoadingLinkedinTaskBoard] = useState(false)
   const [campaigns, setCampaigns] = useState([])
   const [loadingCampaigns, setLoadingCampaigns] = useState(false)
   const [sequences, setSequences] = useState([])
@@ -238,6 +243,33 @@ export default function OutboundAutomation() {
       setLoadingLeads(false)
     }
   }, [authHeaders, filters, token])
+
+  const fetchDraftInbox = useCallback(async () => {
+    if (!token) return
+    setLoadingDraftInbox(true)
+    try {
+      const { data } = await axios.get('/api/outbound/drafts/inbox?limit=200', authHeaders)
+      setDraftInbox(Array.isArray(data.drafts) ? data.drafts : [])
+      setDraftInboxSummary(data.summary || null)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load draft inbox.')
+    } finally {
+      setLoadingDraftInbox(false)
+    }
+  }, [authHeaders, token])
+
+  const fetchLinkedinTaskBoard = useCallback(async () => {
+    if (!token) return
+    setLoadingLinkedinTaskBoard(true)
+    try {
+      const { data } = await axios.get('/api/outbound/linkedin/tasks/board?limit=200', authHeaders)
+      setLinkedinTaskBoard(data || null)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load LinkedIn task board.')
+    } finally {
+      setLoadingLinkedinTaskBoard(false)
+    }
+  }, [authHeaders, token])
 
   const fetchCampaigns = useCallback(async () => {
     if (!token) return
@@ -420,6 +452,14 @@ export default function OutboundAutomation() {
   }, [fetchLeads])
 
   useEffect(() => {
+    fetchDraftInbox()
+  }, [fetchDraftInbox])
+
+  useEffect(() => {
+    fetchLinkedinTaskBoard()
+  }, [fetchLinkedinTaskBoard])
+
+  useEffect(() => {
     fetchAnalytics()
   }, [fetchAnalytics])
 
@@ -517,7 +557,15 @@ export default function OutboundAutomation() {
       const { data } = await axios.post('/api/outbound/leads/import/csv', form, authHeaders)
       setImportResult(data)
       setMessage(`Import complete: ${data.importedRows} imported, ${data.duplicateRows} duplicate, ${data.failedRows} failed.`)
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
+      await Promise.all([
+        fetchLeads(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
+        fetchAnalytics(),
+        fetchForecastSummary(),
+        fetchAttributionSummary(),
+        fetchDataQualityIssues(),
+      ])
     })
   }
 
@@ -525,7 +573,15 @@ export default function OutboundAutomation() {
     await runAction(`score-${leadId}`, async () => {
       await axios.post(`/api/outbound/leads/${leadId}/score`, {}, authHeaders)
       setMessage('Lead rescored.')
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
+      await Promise.all([
+        fetchLeads(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
+        fetchAnalytics(),
+        fetchForecastSummary(),
+        fetchAttributionSummary(),
+        fetchDataQualityIssues(),
+      ])
     })
   }
 
@@ -551,7 +607,14 @@ export default function OutboundAutomation() {
 
       setSessionDrafts((prev) => [nextDraft, ...prev.filter((item) => item.id !== nextDraft.id)])
       setMessage(`${channel === 'email' ? 'Email' : 'LinkedIn'} draft generated.`)
-      await Promise.all([fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
+      await Promise.all([
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
+        fetchAnalytics(),
+        fetchForecastSummary(),
+        fetchAttributionSummary(),
+        fetchDataQualityIssues(),
+      ])
     })
   }
 
@@ -572,26 +635,36 @@ export default function OutboundAutomation() {
       )
 
       setMessage('Draft approved.')
-      await Promise.all([fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
+      await Promise.all([
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
+        fetchAnalytics(),
+        fetchForecastSummary(),
+        fetchAttributionSummary(),
+        fetchDataQualityIssues(),
+      ])
     })
   }
 
-  const handleCompleteLinkedInTask = async (draft) => {
-    if (!draft.linkedinTaskId) {
+  const handleCompleteLinkedInTask = async (draftOrTask) => {
+    const taskId = draftOrTask.linkedinTaskId || draftOrTask.id
+    const draftId = draftOrTask.id && draftOrTask.linkedinTaskId ? draftOrTask.id : draftOrTask.draftId
+
+    if (!taskId) {
       setError('No LinkedIn task id is available for this draft.')
       return
     }
 
-    await runAction(`complete-task-${draft.linkedinTaskId}`, async () => {
+    await runAction(`complete-task-${taskId}`, async () => {
       await axios.post(
-        `/api/outbound/linkedin/tasks/${draft.linkedinTaskId}/complete`,
+        `/api/outbound/linkedin/tasks/${taskId}/complete`,
         { notes: 'Completed from outbound automation page.' },
         authHeaders
       )
 
       setSessionDrafts((prev) =>
         prev.map((item) =>
-          item.id === draft.id
+          item.id === draftId
             ? {
                 ...item,
                 linkedinTaskStatus: 'completed',
@@ -601,7 +674,15 @@ export default function OutboundAutomation() {
       )
 
       setMessage('LinkedIn task marked complete.')
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
+      await Promise.all([
+        fetchLeads(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
+        fetchAnalytics(),
+        fetchForecastSummary(),
+        fetchAttributionSummary(),
+        fetchDataQualityIssues(),
+      ])
     })
   }
 
@@ -621,7 +702,15 @@ export default function OutboundAutomation() {
       )
 
       setMessage('Email draft marked as sent.')
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
+      await Promise.all([
+        fetchLeads(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
+        fetchAnalytics(),
+        fetchForecastSummary(),
+        fetchAttributionSummary(),
+        fetchDataQualityIssues(),
+      ])
     })
   }
 
@@ -640,6 +729,16 @@ export default function OutboundAutomation() {
       const filename = type === 'events' ? 'outbound-events.csv' : 'outbound-audit.csv'
       downloadBlobFile(response.data, filename)
       setMessage(`${type === 'events' ? 'Event' : 'Audit'} export downloaded.`)
+    })
+  }
+
+  const handleRebalanceLinkedinTasks = async () => {
+    await runAction('linkedin-rebalance', async () => {
+      const { data } = await axios.post('/api/outbound/linkedin/tasks/rebalance', {}, authHeaders)
+      setMessage(
+        `LinkedIn queue rebalanced: ${toInt(data.rebalancedCount)} tasks across ${toInt(data.windowDays, 1)} day(s).`
+      )
+      await Promise.all([fetchLinkedinTaskBoard(), fetchDraftInbox()])
     })
   }
 
@@ -677,7 +776,15 @@ export default function OutboundAutomation() {
       const { data } = await axios.post('/api/outbound/campaigns', payload, authHeaders)
       setCampaignForm((prev) => ({ ...prev, name: '' }))
       setMessage(`Campaign created: ${data.name} (${data.addedMembers} members).`)
-      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
+      await Promise.all([
+        fetchCampaigns(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
+        fetchAnalytics(),
+        fetchForecastSummary(),
+        fetchAttributionSummary(),
+        fetchDataQualityIssues(),
+      ])
     })
   }
 
@@ -685,7 +792,15 @@ export default function OutboundAutomation() {
     await runAction(`campaign-status-${campaignId}-${status}`, async () => {
       await axios.patch(`/api/outbound/campaigns/${campaignId}/status`, { status }, authHeaders)
       setMessage(`Campaign status updated to ${status}.`)
-      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
+      await Promise.all([
+        fetchCampaigns(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
+        fetchAnalytics(),
+        fetchForecastSummary(),
+        fetchAttributionSummary(),
+        fetchDataQualityIssues(),
+      ])
     })
   }
 
@@ -706,6 +821,8 @@ export default function OutboundAutomation() {
       await Promise.all([
         fetchSequenceEnrollments(),
         fetchLeads(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
         fetchAnalytics(),
         fetchForecastSummary(),
         fetchAttributionSummary(),
@@ -728,6 +845,8 @@ export default function OutboundAutomation() {
       await Promise.all([
         fetchSequenceEnrollments(),
         fetchLeads(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
         fetchAnalytics(),
         fetchForecastSummary(),
         fetchAttributionSummary(),
@@ -845,6 +964,8 @@ export default function OutboundAutomation() {
       await Promise.all([
         fetchWorkflowRules(),
         fetchLeads(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
         fetchAnalytics(),
         fetchSequenceEnrollments(),
         fetchForecastSummary(),
@@ -870,7 +991,13 @@ export default function OutboundAutomation() {
         authHeaders
       )
       setMessage('Forecast goals saved.')
-      await Promise.all([fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
+      await Promise.all([
+        fetchForecastSummary(),
+        fetchAttributionSummary(),
+        fetchDataQualityIssues(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
+      ])
     })
   }
 
@@ -896,6 +1023,8 @@ export default function OutboundAutomation() {
       setMessage(suppressed ? 'Lead suppressed.' : 'Lead unsuppressed.')
       await Promise.all([
         fetchLeads(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
         fetchAnalytics(),
         fetchCampaigns(),
         fetchSequenceEnrollments(),
@@ -914,7 +1043,7 @@ export default function OutboundAutomation() {
         authHeaders
       )
       setMessage(`Data quality issue marked as ${status}.`)
-      await Promise.all([fetchDataQualityIssues(), fetchLeads()])
+      await Promise.all([fetchDataQualityIssues(), fetchLeads(), fetchDraftInbox(), fetchLinkedinTaskBoard()])
     })
   }
 
@@ -946,6 +1075,8 @@ export default function OutboundAutomation() {
         fetchDataQualityIssues(),
         fetchDataQualityMergeOperations(),
         fetchLeads(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
         fetchAnalytics(),
         fetchCampaigns(),
         fetchSequenceEnrollments(),
@@ -1063,6 +1194,13 @@ export default function OutboundAutomation() {
   const attributionSources = Array.isArray(attributionSummary?.bySource) ? attributionSummary.bySource : []
   const attributionSequences = Array.isArray(attributionSummary?.bySequence) ? attributionSummary.bySequence : []
   const attributionPersonas = Array.isArray(attributionSummary?.byPersona) ? attributionSummary.byPersona : []
+  const draftInboxCounts = draftInboxSummary || {}
+  const linkedinWorkload = linkedinTaskBoard?.workload || {}
+  const linkedinBoardBuckets = linkedinTaskBoard?.board || {}
+  const linkedinApprovedTasks = Array.isArray(linkedinBoardBuckets.approved) ? linkedinBoardBuckets.approved : []
+  const linkedinDraftedTasks = Array.isArray(linkedinBoardBuckets.drafted) ? linkedinBoardBuckets.drafted : []
+  const linkedinPendingTasks = Array.isArray(linkedinBoardBuckets.pending) ? linkedinBoardBuckets.pending : []
+  const linkedinCompletedTasks = Array.isArray(linkedinBoardBuckets.completed) ? linkedinBoardBuckets.completed : []
   const dataQualityOpenCount = toInt(dataQualitySummary?.open_count)
   const dataQualityOpenBlockingCount = toInt(dataQualitySummary?.open_blocking_count)
   const dataQualityResolvedCount = toInt(dataQualitySummary?.resolved_count)
@@ -1132,6 +1270,8 @@ export default function OutboundAutomation() {
           <button
             onClick={() => {
               fetchLeads()
+              fetchDraftInbox()
+              fetchLinkedinTaskBoard()
               fetchAnalytics()
               fetchCampaigns()
               fetchSequences()
@@ -2649,24 +2789,58 @@ export default function OutboundAutomation() {
         )}
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm p-6">
-        <h3 className="text-sm font-semibold text-navy mb-4">Session Drafts</h3>
-        {sessionDrafts.length === 0 ? (
-          <p className="text-sm text-brand-gray">No drafts generated in this session yet.</p>
+      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">Draft Inbox</h3>
+            <p className="text-xs text-brand-gray mt-0.5">Persistent draft queue across sessions and devices.</p>
+          </div>
+          <button
+            onClick={fetchDraftInbox}
+            className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
+          >
+            Refresh Inbox
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Total Drafts</p>
+            <p className="text-lg font-bold text-navy">{toInt(draftInboxCounts.total_count)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Drafted</p>
+            <p className="text-lg font-bold text-navy">{toInt(draftInboxCounts.drafted_count)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Approved</p>
+            <p className="text-lg font-bold text-indigo-700">{toInt(draftInboxCounts.approved_count)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Sent</p>
+            <p className="text-lg font-bold text-emerald-700">{toInt(draftInboxCounts.sent_count)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Pending LinkedIn</p>
+            <p className="text-lg font-bold text-amber-700">{toInt(draftInboxCounts.pending_linkedin_count)}</p>
+          </div>
+        </div>
+
+        {loadingDraftInbox ? (
+          <p className="text-sm text-brand-gray">Loading draft inbox...</p>
+        ) : draftInbox.length === 0 ? (
+          <p className="text-sm text-brand-gray">No drafts in inbox yet.</p>
         ) : (
           <div className="space-y-3">
-            {sessionDrafts.map((draft) => (
+            {draftInbox.slice(0, 30).map((draft) => (
               <div key={draft.id} className="border border-gray-100 rounded-lg p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-navy">
-                      {draft.channel === 'linkedin' ? 'LinkedIn' : 'Email'} draft for {draft.leadName}
+                      {draft.channel === 'linkedin' ? 'LinkedIn' : 'Email'} draft for {draft.lead?.name || 'Unknown lead'}
                     </p>
                     <p className="text-xs text-brand-gray">
-                      Draft status: {draft.status}
-                      {draft.channel === 'linkedin' && draft.linkedinTaskStatus
-                        ? ` | LinkedIn task: ${draft.linkedinTaskStatus}`
-                        : ''}
+                      {draft.status} {draft.channel === 'linkedin' && draft.linkedinTask ? `| Task ${draft.linkedinTask.status}` : ''}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -2679,17 +2853,6 @@ export default function OutboundAutomation() {
                         Approve
                       </button>
                     )}
-                    {draft.channel === 'linkedin' &&
-                      draft.status === 'approved' &&
-                      draft.linkedinTaskStatus !== 'completed' && (
-                        <button
-                          onClick={() => handleCompleteLinkedInTask(draft)}
-                          disabled={busyKey === `complete-task-${draft.linkedinTaskId}`}
-                          className="text-xs border border-purple-200 text-purple-700 rounded px-2 py-1 hover:bg-purple-50 disabled:opacity-60"
-                        >
-                          Complete Task
-                        </button>
-                      )}
                     {draft.channel === 'email' && draft.status === 'approved' && (
                       <button
                         onClick={() => handleSendEmailDraft(draft)}
@@ -2699,13 +2862,147 @@ export default function OutboundAutomation() {
                         Mark Sent
                       </button>
                     )}
+                    {draft.channel === 'linkedin' && draft.status === 'approved' && draft.linkedinTask?.status !== 'completed' && (
+                      <button
+                        onClick={() => handleCompleteLinkedInTask(draft.linkedinTask)}
+                        disabled={busyKey === `complete-task-${draft.linkedinTask?.id}`}
+                        className="text-xs border border-amber-200 text-amber-700 rounded px-2 py-1 hover:bg-amber-50 disabled:opacity-60"
+                      >
+                        Complete Task
+                      </button>
+                    )}
                   </div>
                 </div>
-
                 {draft.subject && <p className="text-xs text-brand-gray mt-2">Subject: {draft.subject}</p>}
                 <p className="text-xs text-gray-600 mt-2 whitespace-pre-wrap line-clamp-3">{draft.body}</p>
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">LinkedIn Task Board</h3>
+            <p className="text-xs text-brand-gray mt-0.5">Workload balancing board for manual LinkedIn execution.</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={fetchLinkedinTaskBoard}
+              className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
+            >
+              Refresh Board
+            </button>
+            <button
+              onClick={handleRebalanceLinkedinTasks}
+              disabled={busyKey === 'linkedin-rebalance'}
+              className="text-xs border border-indigo-200 text-indigo-700 rounded-lg px-3 py-1.5 hover:bg-indigo-50 disabled:opacity-60"
+            >
+              {busyKey === 'linkedin-rebalance' ? 'Rebalancing...' : 'Rebalance Queue'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Open Tasks</p>
+            <p className="text-lg font-bold text-navy">{toInt(linkedinWorkload.openCount)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Ready to Send</p>
+            <p className="text-lg font-bold text-indigo-700">{toInt(linkedinWorkload.approvedReadyCount)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Overdue</p>
+            <p className="text-lg font-bold text-rose-700">{toInt(linkedinWorkload.overdueCount)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Recommended Today</p>
+            <p className="text-lg font-bold text-emerald-700">{toInt(linkedinWorkload.recommendedToday)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Days to Clear</p>
+            <p className="text-lg font-bold text-navy">{toInt(linkedinWorkload.estimatedDaysToClearOpen)}</p>
+          </div>
+        </div>
+
+        {loadingLinkedinTaskBoard ? (
+          <p className="text-sm text-brand-gray">Loading LinkedIn task board...</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="border border-gray-100 rounded-lg p-3">
+              <p className="text-xs font-semibold text-navy mb-2">Approved ({linkedinApprovedTasks.length})</p>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {linkedinApprovedTasks.length === 0 ? (
+                  <p className="text-xs text-brand-gray">No approved tasks.</p>
+                ) : (
+                  linkedinApprovedTasks.slice(0, 20).map((task) => (
+                    <div key={task.id} className="rounded border border-gray-100 p-2">
+                      <p className="text-xs font-semibold text-navy">{task.lead?.name || 'Unknown lead'}</p>
+                      <p className="text-[11px] text-brand-gray">{task.lead?.company || task.lead?.email || 'No context'}</p>
+                      <p className="text-[11px] text-brand-gray">Priority {toInt(task.priorityScore)}</p>
+                      <button
+                        onClick={() => handleCompleteLinkedInTask(task)}
+                        disabled={busyKey === `complete-task-${task.id}`}
+                        className="mt-1 text-[11px] border border-emerald-200 text-emerald-700 rounded px-2 py-0.5 hover:bg-emerald-50 disabled:opacity-60"
+                      >
+                        Complete
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="border border-gray-100 rounded-lg p-3">
+              <p className="text-xs font-semibold text-navy mb-2">Drafted ({linkedinDraftedTasks.length})</p>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {linkedinDraftedTasks.length === 0 ? (
+                  <p className="text-xs text-brand-gray">No drafted tasks.</p>
+                ) : (
+                  linkedinDraftedTasks.slice(0, 20).map((task) => (
+                    <div key={task.id} className="rounded border border-gray-100 p-2">
+                      <p className="text-xs font-semibold text-navy">{task.lead?.name || 'Unknown lead'}</p>
+                      <p className="text-[11px] text-brand-gray">{task.lead?.company || task.lead?.email || 'No context'}</p>
+                      <p className="text-[11px] text-brand-gray">Approve the linked draft in Draft Inbox</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="border border-gray-100 rounded-lg p-3">
+              <p className="text-xs font-semibold text-navy mb-2">Pending ({linkedinPendingTasks.length})</p>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {linkedinPendingTasks.length === 0 ? (
+                  <p className="text-xs text-brand-gray">No pending tasks.</p>
+                ) : (
+                  linkedinPendingTasks.slice(0, 20).map((task) => (
+                    <div key={task.id} className="rounded border border-gray-100 p-2">
+                      <p className="text-xs font-semibold text-navy">{task.lead?.name || 'Unknown lead'}</p>
+                      <p className="text-[11px] text-brand-gray">{task.lead?.company || task.lead?.email || 'No context'}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="border border-gray-100 rounded-lg p-3">
+              <p className="text-xs font-semibold text-navy mb-2">Completed ({linkedinCompletedTasks.length})</p>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {linkedinCompletedTasks.length === 0 ? (
+                  <p className="text-xs text-brand-gray">No completed tasks yet.</p>
+                ) : (
+                  linkedinCompletedTasks.slice(0, 20).map((task) => (
+                    <div key={task.id} className="rounded border border-gray-100 p-2">
+                      <p className="text-xs font-semibold text-navy">{task.lead?.name || 'Unknown lead'}</p>
+                      <p className="text-[11px] text-brand-gray">{task.lead?.company || task.lead?.email || 'No context'}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

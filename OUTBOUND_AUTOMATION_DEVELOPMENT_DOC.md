@@ -237,15 +237,15 @@ Current lead generation logic creates synthetic Reddit/LinkedIn outputs, which i
 
 ### Progress status (as of April 27, 2026)
 
-- Phase 21 completion: 85%
+- Phase 21 completion: 92%
 - Measurement basis (weighted by planned capabilities):
   - Sequence state machine v2: 35%
   - Workflow rules engine: 30%
   - Scoring v2 + explainability: 45%
   - Forecast + goals: 40%
   - Attribution + source ROI: 35%
-  - Data quality command center: 60%
-  - Multifamily custom objects: 60%
+  - Data quality command center: 65%
+  - Multifamily custom objects: 65%
 
 Phase 21 slice delivered now:
 
@@ -444,6 +444,26 @@ Additional Phase 21 slice delivered now (Slice 8):
   - multifamily explorer entity search for contacts/deals/companies
   - bulk association workflows for contacts/deals/companies
 
+Additional Phase 21 slice delivered now (Slice 9):
+
+- Added persistent Draft Inbox APIs:
+  - `GET /api/outbound/drafts/inbox`
+- Added LinkedIn Task Board APIs:
+  - `GET /api/outbound/linkedin/tasks/board`
+  - `POST /api/outbound/linkedin/tasks/rebalance`
+- Added workload balancing logic:
+  - status-aware + score-aware task priority calculation
+  - queue rebalance into daily execution windows
+  - open/overdue/ready workload summary and clearance horizon estimates
+- Added outbound UI enhancements in `/outbound-automation`:
+  - persistent Draft Inbox replacing session-only visibility
+  - LinkedIn Task Board with approved/drafted/pending/completed swimlanes
+  - one-click queue rebalance controls
+- Expanded smoke test coverage:
+  - persistent inbox retrieval and draft lifecycle assertions
+  - LinkedIn board bucket checks across drafted/approved/completed
+  - workload rebalance execution validation
+
 ## 7. Data Model Additions
 
 Recommended new tables:
@@ -583,8 +603,8 @@ Local prerequisites:
 
 Recommended next build steps:
 
-- Add persistent Draft Inbox and LinkedIn Task Board endpoints/UI
 - Add outbound workflow tests in CI
 - Add tenant branding/profile screens for white-label packaging
-- Continue Phase 21 with slice 9:
-  - draft inbox persistence + linked task board UX and workload balancing
+- Add saved filter views + bulk action presets for solo operator speed
+- Continue Phase 21 with slice 10:
+  - outbound workflow CI coverage + operator productivity enhancements (saved views, bulk actions, SLA alerts)

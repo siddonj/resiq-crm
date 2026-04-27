@@ -591,6 +591,49 @@ async function sendEmailDraft(token, draftId) {
   return response;
 }
 
+async function getDraftInbox(token, status = '', channel = '') {
+  const params = new URLSearchParams();
+  params.set('limit', '200');
+  if (status) params.set('status', status);
+  if (channel) params.set('channel', channel);
+
+  const response = await fetchJson(`${BASE_URL}/api/outbound/drafts/inbox?${params.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `get draft inbox failed: ${JSON.stringify(response.data)}`);
+  assert(Array.isArray(response.data.drafts), 'draft inbox response missing drafts array');
+  return response.data;
+}
+
+async function getLinkedinTaskBoard(token) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/linkedin/tasks/board?limit=200`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `get linkedin task board failed: ${JSON.stringify(response.data)}`);
+  assert(response.data && response.data.board, 'linkedin task board response missing board data');
+  return response.data;
+}
+
+async function rebalanceLinkedinTasks(token, dailyCapacity = null) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/linkedin/tasks/rebalance`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(dailyCapacity ? { dailyCapacity } : {}),
+  });
+
+  assert(response.ok, `rebalance linkedin tasks failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
 async function completeLinkedInTask(token, taskId) {
   const response = await fetchJson(`${BASE_URL}/api/outbound/linkedin/tasks/${taskId}/complete`, {
     method: 'POST',
@@ -1099,6 +1142,22 @@ async function run() {
 
   const emailDraft = await generateDraft(auth.token, leadId, 'email');
   const linkedinDraft = await generateDraft(auth.token, leadId, 'linkedin');
+  const draftInboxAfterGenerate = await getDraftInbox(auth.token);
+  assert(
+    draftInboxAfterGenerate.drafts.some((draft) => draft.id === emailDraft.id),
+    'expected generated email draft in persistent inbox'
+  );
+  assert(
+    draftInboxAfterGenerate.drafts.some((draft) => draft.id === linkedinDraft.id),
+    'expected generated linkedin draft in persistent inbox'
+  );
+
+  const linkedinBoardBeforeApproval = await getLinkedinTaskBoard(auth.token);
+  assert(
+    Array.isArray(linkedinBoardBeforeApproval.board?.drafted),
+    'expected drafted bucket in LinkedIn board before approval'
+  );
+
   const sendBlockedBeforeApproval = await sendEmailDraft(auth.token, emailDraft.id);
   assert(
     sendBlockedBeforeApproval.status === 409,
@@ -1109,9 +1168,34 @@ async function run() {
   const sentEmail = await sendEmailDraft(auth.token, emailDraft.id);
   assert(sentEmail.ok, `sending approved email draft failed: ${JSON.stringify(sentEmail.data)}`);
   const approvedLinkedin = await approveDraft(auth.token, linkedinDraft.id);
+  const linkedinBoardAfterApproval = await getLinkedinTaskBoard(auth.token);
+  assert(
+    (linkedinBoardAfterApproval.board?.approved || []).length >= 1,
+    'expected at least one approved task after linkedin draft approval'
+  );
+
+  const rebalanceResult = await rebalanceLinkedinTasks(auth.token, 5);
+  assert(
+    Number(rebalanceResult.rebalancedCount || 0) >= 1,
+    `expected rebalance to update at least one task, got ${rebalanceResult.rebalancedCount}`
+  );
 
   const taskId = await findLinkedInTaskId(databaseUrl, auth.userId, linkedinDraft.id);
   const completedTask = await completeLinkedInTask(auth.token, taskId);
+  const linkedinBoardAfterComplete = await getLinkedinTaskBoard(auth.token);
+  assert(
+    (linkedinBoardAfterComplete.board?.completed || []).some((task) => task.id === taskId),
+    'expected completed linkedin task to appear in completed board bucket'
+  );
+
+  const draftInboxAfterCompletion = await getDraftInbox(auth.token);
+  const completedLinkedinDraft = draftInboxAfterCompletion.drafts.find((draft) => draft.id === linkedinDraft.id);
+  assert(completedLinkedinDraft, 'expected linkedin draft to remain in persistent inbox after completion');
+  assert(
+    completedLinkedinDraft.status === 'sent',
+    `expected linkedin draft to become sent after task completion, got ${completedLinkedinDraft.status}`
+  );
+
   const leadOutcome = await setLeadOutcome(auth.token, leadId, 'opportunity', 'Smoke attribution summary validation');
   assert(leadOutcome.lead.status === 'opportunity', `expected lead status opportunity, got ${leadOutcome.lead.status}`);
   const attributionSummary = await getAttributionSummary(auth.token, 'monthly');
@@ -1195,6 +1279,17 @@ async function run() {
     summaryContactAssociations: multifamilySummary.associationCounts?.contact,
     summaryDealAssociations: multifamilySummary.associationCounts?.deal,
     summaryCompanyAssociations: multifamilySummary.associationCounts?.company,
+  });
+
+  steps.push({
+    step: 'draft_inbox_task_board',
+    ok: true,
+    draftInboxTotal: draftInboxAfterCompletion.summary?.total_count,
+    draftedCountBeforeApproval: (linkedinBoardBeforeApproval.board?.drafted || []).length,
+    approvedCountAfterApproval: (linkedinBoardAfterApproval.board?.approved || []).length,
+    completedCountAfterCompletion: (linkedinBoardAfterComplete.board?.completed || []).length,
+    rebalanceCount: rebalanceResult.rebalancedCount,
+    rebalanceWindowDays: rebalanceResult.windowDays,
   });
 
   steps.push({
