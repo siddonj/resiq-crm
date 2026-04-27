@@ -129,6 +129,8 @@ const VALID_DATA_QUALITY_ISSUE_TYPES = new Set([
 const DATA_QUALITY_BLOCKING_TYPES = new Set(['missing_contact_channel']);
 const MIN_SOURCE_CONFIDENCE_THRESHOLD = 40;
 const STALE_LEAD_DAYS = 90;
+const VALID_MULTIFAMILY_OBJECT_TYPES = new Set(['portfolio', 'property', 'tech_stack', 'initiative']);
+const VALID_MULTIFAMILY_ENTITY_TYPES = new Set(['outbound_lead', 'contact', 'deal', 'company']);
 
 function parseCSVRow(line) {
   const result = [];
@@ -754,6 +756,99 @@ function mapDataQualityIssueRow(row) {
         }
       : null,
   };
+}
+
+function normalizeMultifamilyObjectType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!VALID_MULTIFAMILY_OBJECT_TYPES.has(normalized)) return null;
+  return normalized;
+}
+
+function normalizeMultifamilyEntityType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!VALID_MULTIFAMILY_ENTITY_TYPES.has(normalized)) return null;
+  return normalized;
+}
+
+function mapMultifamilyObjectRow(row) {
+  return {
+    id: row.id,
+    objectType: row.object_type,
+    name: row.name,
+    description: row.description || null,
+    metadata: row.metadata || {},
+    associationCounts: {
+      outboundLead: Number(row.outbound_lead_count || 0),
+      contact: Number(row.contact_count || 0),
+      deal: Number(row.deal_count || 0),
+      company: Number(row.company_count || 0),
+      total: Number(row.total_association_count || 0),
+    },
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapMultifamilyAssociationRow(row) {
+  return {
+    id: row.id,
+    objectId: row.object_id,
+    objectType: row.object_type,
+    entityType: row.entity_type,
+    entityId: row.entity_id || null,
+    companyName: row.company_name || null,
+    targetKey: row.target_key,
+    metadata: row.metadata || {},
+    target: {
+      name: row.target_name || null,
+      email: row.target_email || null,
+      company: row.target_company || null,
+      title: row.target_title || null,
+    },
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function verifyMultifamilyAssociationTarget(userId, entityType, entityId) {
+  if (entityType === 'outbound_lead') {
+    const result = await pool.query(
+      `SELECT id, name, email, company, title
+       FROM outbound_leads
+       WHERE id = $1
+         AND user_id = $2
+       LIMIT 1`,
+      [entityId, userId]
+    );
+    return result.rows[0] || null;
+  }
+
+  if (entityType === 'contact') {
+    const result = await pool.query(
+      `SELECT id, name, email, company, NULL::text AS title
+       FROM contacts
+       WHERE id = $1
+         AND user_id = $2
+       LIMIT 1`,
+      [entityId, userId]
+    );
+    return result.rows[0] || null;
+  }
+
+  if (entityType === 'deal') {
+    const result = await pool.query(
+      `SELECT d.id, d.title AS name, NULL::text AS email, c.company AS company, d.service_line AS title
+       FROM deals d
+       LEFT JOIN contacts c ON c.id = d.contact_id
+       WHERE d.id = $1
+         AND d.user_id = $2
+       LIMIT 1`,
+      [entityId, userId]
+    );
+    return result.rows[0] || null;
+  }
+
+  return null;
 }
 
 function deriveAttributionStage(eventType, metadata = {}) {
@@ -2003,11 +2098,442 @@ router.get('/leads/import/:jobId/status', async (req, res) => {
 });
 
 /**
+ * GET /api/outbound/multifamily/summary
+ */
+router.get('/multifamily/summary', async (req, res) => {
+  const [objectsRes, associationsRes] = await Promise.all([
+    pool.query(
+      `SELECT
+         object_type,
+         COUNT(*)::int AS count
+       FROM multifamily_objects
+       WHERE user_id = $1
+       GROUP BY object_type`,
+      [req.user.id]
+    ),
+    pool.query(
+      `SELECT
+         entity_type,
+         COUNT(*)::int AS count
+       FROM multifamily_object_associations
+       WHERE user_id = $1
+       GROUP BY entity_type`,
+      [req.user.id]
+    ),
+  ]);
+
+  const objectCounts = {
+    portfolio: 0,
+    property: 0,
+    tech_stack: 0,
+    initiative: 0,
+  };
+  for (const row of objectsRes.rows) {
+    objectCounts[row.object_type] = Number(row.count || 0);
+  }
+
+  const associationCounts = {
+    outbound_lead: 0,
+    contact: 0,
+    deal: 0,
+    company: 0,
+  };
+  for (const row of associationsRes.rows) {
+    associationCounts[row.entity_type] = Number(row.count || 0);
+  }
+
+  return res.json({
+    objectCounts,
+    associationCounts,
+  });
+});
+
+/**
+ * GET /api/outbound/multifamily/objects
+ * Query: objectType
+ */
+router.get('/multifamily/objects', async (req, res) => {
+  const objectType = req.query.objectType ? normalizeMultifamilyObjectType(req.query.objectType) : null;
+  if (req.query.objectType && !objectType) {
+    return res.status(400).json({ error: 'Invalid objectType.' });
+  }
+
+  const params = [req.user.id];
+  let whereClause = 'o.user_id = $1';
+  if (objectType) {
+    params.push(objectType);
+    whereClause += ` AND o.object_type = $${params.length}`;
+  }
+
+  const result = await pool.query(
+    `SELECT
+       o.*,
+       COUNT(a.id)::int AS total_association_count,
+       COUNT(a.id) FILTER (WHERE a.entity_type = 'outbound_lead')::int AS outbound_lead_count,
+       COUNT(a.id) FILTER (WHERE a.entity_type = 'contact')::int AS contact_count,
+       COUNT(a.id) FILTER (WHERE a.entity_type = 'deal')::int AS deal_count,
+       COUNT(a.id) FILTER (WHERE a.entity_type = 'company')::int AS company_count
+     FROM multifamily_objects o
+     LEFT JOIN multifamily_object_associations a
+       ON a.object_id = o.id
+      AND a.user_id = o.user_id
+     WHERE ${whereClause}
+     GROUP BY o.id
+     ORDER BY o.object_type, o.updated_at DESC`,
+    params
+  );
+
+  return res.json({
+    total: result.rows.length,
+    objects: result.rows.map(mapMultifamilyObjectRow),
+  });
+});
+
+/**
+ * POST /api/outbound/multifamily/objects
+ * Body: { objectType, name, description?, metadata? }
+ */
+router.post('/multifamily/objects', async (req, res) => {
+  const objectType = normalizeMultifamilyObjectType(req.body.objectType);
+  const name = String(req.body.name || '').trim();
+  const description = req.body.description == null ? null : String(req.body.description).trim() || null;
+  const metadata = isPlainObject(req.body.metadata) ? req.body.metadata : {};
+
+  if (!objectType) {
+    return res.status(400).json({ error: 'Valid objectType is required.' });
+  }
+  if (!name) {
+    return res.status(400).json({ error: 'name is required.' });
+  }
+
+  const insertedRes = await pool.query(
+    `INSERT INTO multifamily_objects
+      (user_id, object_type, name, description, metadata, updated_at)
+     VALUES
+      ($1, $2, $3, $4, $5::jsonb, NOW())
+     RETURNING *`,
+    [req.user.id, objectType, name, description, JSON.stringify(metadata)]
+  );
+
+  const inserted = insertedRes.rows[0];
+  logAction(req.user.id, req.user.email, 'multifamily_object_created', 'multifamily_object', inserted.id, inserted.name, {
+    objectType: inserted.object_type,
+  });
+
+  return res.status(201).json(
+    mapMultifamilyObjectRow({
+      ...inserted,
+      total_association_count: 0,
+      outbound_lead_count: 0,
+      contact_count: 0,
+      deal_count: 0,
+      company_count: 0,
+    })
+  );
+});
+
+/**
+ * PATCH /api/outbound/multifamily/objects/:id
+ * Body: { name?, description?, metadata? }
+ */
+router.patch('/multifamily/objects/:id', async (req, res) => {
+  const existingRes = await pool.query(
+    `SELECT *
+     FROM multifamily_objects
+     WHERE id = $1
+       AND user_id = $2
+     LIMIT 1`,
+    [req.params.id, req.user.id]
+  );
+  if (!existingRes.rows.length) {
+    return res.status(404).json({ error: 'Multifamily object not found.' });
+  }
+
+  const existing = existingRes.rows[0];
+  const nextName = req.body.name == null ? existing.name : String(req.body.name).trim();
+  const nextDescription =
+    req.body.description == null ? existing.description : String(req.body.description).trim() || null;
+  const nextMetadata = req.body.metadata == null ? existing.metadata || {} : isPlainObject(req.body.metadata) ? req.body.metadata : {};
+
+  if (!nextName) {
+    return res.status(400).json({ error: 'name cannot be empty.' });
+  }
+
+  const updatedRes = await pool.query(
+    `UPDATE multifamily_objects
+     SET name = $1,
+         description = $2,
+         metadata = $3::jsonb,
+         updated_at = NOW()
+     WHERE id = $4
+       AND user_id = $5
+     RETURNING *`,
+    [nextName, nextDescription, JSON.stringify(nextMetadata), req.params.id, req.user.id]
+  );
+
+  const updated = updatedRes.rows[0];
+  logAction(req.user.id, req.user.email, 'multifamily_object_updated', 'multifamily_object', updated.id, updated.name, {
+    objectType: updated.object_type,
+  });
+
+  return res.json(
+    mapMultifamilyObjectRow({
+      ...updated,
+      total_association_count: 0,
+      outbound_lead_count: 0,
+      contact_count: 0,
+      deal_count: 0,
+      company_count: 0,
+    })
+  );
+});
+
+/**
+ * DELETE /api/outbound/multifamily/objects/:id
+ */
+router.delete('/multifamily/objects/:id', async (req, res) => {
+  const deletedRes = await pool.query(
+    `DELETE FROM multifamily_objects
+     WHERE id = $1
+       AND user_id = $2
+     RETURNING id, name, object_type`,
+    [req.params.id, req.user.id]
+  );
+  if (!deletedRes.rows.length) {
+    return res.status(404).json({ error: 'Multifamily object not found.' });
+  }
+
+  const deleted = deletedRes.rows[0];
+  logAction(req.user.id, req.user.email, 'multifamily_object_deleted', 'multifamily_object', deleted.id, deleted.name, {
+    objectType: deleted.object_type,
+  });
+  return res.status(204).send();
+});
+
+/**
+ * GET /api/outbound/multifamily/objects/:id/associations
+ * Query: entityType
+ */
+router.get('/multifamily/objects/:id/associations', async (req, res) => {
+  const entityType = req.query.entityType ? normalizeMultifamilyEntityType(req.query.entityType) : null;
+  if (req.query.entityType && !entityType) {
+    return res.status(400).json({ error: 'Invalid entityType.' });
+  }
+
+  const objectRes = await pool.query(
+    `SELECT id
+     FROM multifamily_objects
+     WHERE id = $1
+       AND user_id = $2
+     LIMIT 1`,
+    [req.params.id, req.user.id]
+  );
+  if (!objectRes.rows.length) {
+    return res.status(404).json({ error: 'Multifamily object not found.' });
+  }
+
+  const params = [req.user.id, req.params.id];
+  let filter = 'a.user_id = $1 AND a.object_id = $2';
+  if (entityType) {
+    params.push(entityType);
+    filter += ` AND a.entity_type = $${params.length}`;
+  }
+
+  const result = await pool.query(
+    `SELECT
+       a.*,
+       CASE
+         WHEN a.entity_type = 'outbound_lead' THEN l.name
+         WHEN a.entity_type = 'contact' THEN c.name
+         WHEN a.entity_type = 'deal' THEN d.title
+         WHEN a.entity_type = 'company' THEN a.company_name
+         ELSE NULL
+       END AS target_name,
+       CASE
+         WHEN a.entity_type = 'outbound_lead' THEN l.email
+         WHEN a.entity_type = 'contact' THEN c.email
+         ELSE NULL
+       END AS target_email,
+       CASE
+         WHEN a.entity_type = 'outbound_lead' THEN l.company
+         WHEN a.entity_type = 'contact' THEN c.company
+         ELSE NULL
+       END AS target_company,
+       CASE
+         WHEN a.entity_type = 'outbound_lead' THEN l.title
+         WHEN a.entity_type = 'deal' THEN d.service_line
+         ELSE NULL
+       END AS target_title
+     FROM multifamily_object_associations a
+     LEFT JOIN outbound_leads l
+       ON a.entity_type = 'outbound_lead'
+      AND l.id = a.entity_id
+     LEFT JOIN contacts c
+       ON a.entity_type = 'contact'
+      AND c.id = a.entity_id
+     LEFT JOIN deals d
+       ON a.entity_type = 'deal'
+      AND d.id = a.entity_id
+     WHERE ${filter}
+     ORDER BY a.updated_at DESC`,
+    params
+  );
+
+  return res.json({
+    total: result.rows.length,
+    associations: result.rows.map(mapMultifamilyAssociationRow),
+  });
+});
+
+/**
+ * POST /api/outbound/multifamily/objects/:id/associations
+ * Body: { entityType, entityId?, companyName?, metadata? }
+ */
+router.post('/multifamily/objects/:id/associations', async (req, res) => {
+  const objectRes = await pool.query(
+    `SELECT id, object_type, name
+     FROM multifamily_objects
+     WHERE id = $1
+       AND user_id = $2
+     LIMIT 1`,
+    [req.params.id, req.user.id]
+  );
+  if (!objectRes.rows.length) {
+    return res.status(404).json({ error: 'Multifamily object not found.' });
+  }
+  const object = objectRes.rows[0];
+
+  const entityType = normalizeMultifamilyEntityType(req.body.entityType);
+  const entityId = sanitizeUuidValue(req.body.entityId || '');
+  const companyName = String(req.body.companyName || '').trim();
+  const metadata = isPlainObject(req.body.metadata) ? req.body.metadata : {};
+
+  if (!entityType) {
+    return res.status(400).json({ error: 'Valid entityType is required.' });
+  }
+
+  let targetKey = '';
+  let targetRecord = null;
+
+  if (entityType === 'company') {
+    if (!companyName) {
+      return res.status(400).json({ error: 'companyName is required for company associations.' });
+    }
+    targetKey = companyName.toLowerCase();
+  } else {
+    if (!entityId) {
+      return res.status(400).json({ error: 'entityId is required for non-company associations.' });
+    }
+    targetRecord = await verifyMultifamilyAssociationTarget(req.user.id, entityType, entityId);
+    if (!targetRecord) {
+      return res.status(404).json({ error: `${entityType} target not found.` });
+    }
+    targetKey = entityId;
+  }
+
+  const associationRes = await pool.query(
+    `INSERT INTO multifamily_object_associations
+      (user_id, object_id, object_type, entity_type, entity_id, company_name, target_key, metadata, updated_at)
+     VALUES
+      ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW())
+     ON CONFLICT (user_id, object_id, entity_type, target_key)
+     DO UPDATE SET
+       metadata = EXCLUDED.metadata,
+       updated_at = NOW()
+     RETURNING *`,
+    [
+      req.user.id,
+      object.id,
+      object.object_type,
+      entityType,
+      entityType === 'company' ? null : entityId,
+      entityType === 'company' ? companyName : null,
+      targetKey,
+      JSON.stringify(metadata),
+    ]
+  );
+
+  const association = associationRes.rows[0];
+  logAction(
+    req.user.id,
+    req.user.email,
+    'multifamily_object_association_upserted',
+    'multifamily_object_association',
+    association.id,
+    object.name,
+    {
+      objectType: object.object_type,
+      entityType,
+      entityId: association.entity_id,
+      companyName: association.company_name,
+    }
+  );
+
+  return res.status(201).json(
+    mapMultifamilyAssociationRow({
+      ...association,
+      target_name: entityType === 'company' ? companyName : targetRecord?.name || null,
+      target_email: targetRecord?.email || null,
+      target_company: targetRecord?.company || null,
+      target_title: targetRecord?.title || null,
+    })
+  );
+});
+
+/**
+ * DELETE /api/outbound/multifamily/objects/:id/associations/:associationId
+ */
+router.delete('/multifamily/objects/:id/associations/:associationId', async (req, res) => {
+  const deletedRes = await pool.query(
+    `DELETE FROM multifamily_object_associations
+     WHERE id = $1
+       AND object_id = $2
+       AND user_id = $3
+     RETURNING id, object_id, entity_type, entity_id, company_name`,
+    [req.params.associationId, req.params.id, req.user.id]
+  );
+  if (!deletedRes.rows.length) {
+    return res.status(404).json({ error: 'Multifamily association not found.' });
+  }
+
+  const deleted = deletedRes.rows[0];
+  logAction(
+    req.user.id,
+    req.user.email,
+    'multifamily_object_association_deleted',
+    'multifamily_object_association',
+    deleted.id,
+    null,
+    {
+      objectId: deleted.object_id,
+      entityType: deleted.entity_type,
+      entityId: deleted.entity_id,
+      companyName: deleted.company_name,
+    }
+  );
+
+  return res.status(204).send();
+});
+
+/**
  * GET /api/outbound/leads
  */
 router.get('/leads', async (req, res) => {
   const { status, minScore = 0, search = '', limit = 100 } = req.query;
   await syncDataQualityIssuesForUser(req.user.id);
+
+  const objectTypeFilter = normalizeMultifamilyObjectType(req.query.objectType || '');
+  const objectIdFilter = sanitizeUuidValue(req.query.objectId || '');
+  const specificObjectFilters = [
+    { objectType: 'portfolio', objectId: sanitizeUuidValue(req.query.portfolioId || '') },
+    { objectType: 'property', objectId: sanitizeUuidValue(req.query.propertyId || '') },
+    { objectType: 'tech_stack', objectId: sanitizeUuidValue(req.query.techStackId || '') },
+    { objectType: 'initiative', objectId: sanitizeUuidValue(req.query.initiativeId || '') },
+  ].filter((entry) => entry.objectId);
+
+  if ((req.query.objectType || req.query.objectId) && (!objectTypeFilter || !objectIdFilter)) {
+    return res.status(400).json({ error: 'objectType and objectId must both be valid when provided.' });
+  }
 
   const params = [req.user.id, Number(minScore)];
   let sql = `
@@ -2043,6 +2569,40 @@ router.get('/leads', async (req, res) => {
       OR COALESCE(l.title, '') ILIKE $${idx}
       OR COALESCE(l.email, '') ILIKE $${idx}
     )`;
+  }
+
+  if (objectTypeFilter && objectIdFilter) {
+    params.push(objectTypeFilter);
+    const objectTypeIdx = params.length;
+    params.push(objectIdFilter);
+    const objectIdIdx = params.length;
+    sql += `
+      AND EXISTS (
+        SELECT 1
+        FROM multifamily_object_associations moa
+        WHERE moa.user_id = l.user_id
+          AND moa.entity_type = 'outbound_lead'
+          AND moa.entity_id = l.id
+          AND moa.object_type = $${objectTypeIdx}
+          AND moa.object_id = $${objectIdIdx}
+      )`;
+  }
+
+  for (const objectFilter of specificObjectFilters) {
+    params.push(objectFilter.objectType);
+    const objectTypeIdx = params.length;
+    params.push(objectFilter.objectId);
+    const objectIdIdx = params.length;
+    sql += `
+      AND EXISTS (
+        SELECT 1
+        FROM multifamily_object_associations moa
+        WHERE moa.user_id = l.user_id
+          AND moa.entity_type = 'outbound_lead'
+          AND moa.entity_id = l.id
+          AND moa.object_type = $${objectTypeIdx}
+          AND moa.object_id = $${objectIdIdx}
+      )`;
   }
 
   params.push(Math.min(500, Math.max(1, Number(limit))));

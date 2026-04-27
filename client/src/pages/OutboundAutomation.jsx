@@ -16,6 +16,12 @@ const LEAD_STATUSES = [
 ]
 
 const SOURCE_TYPES = ['csv', 'manual', 'api', 'other']
+const MULTIFAMILY_OBJECT_TYPES = [
+  { value: 'portfolio', label: 'Portfolio' },
+  { value: 'property', label: 'Property' },
+  { value: 'tech_stack', label: 'Tech Stack' },
+  { value: 'initiative', label: 'Initiative' },
+]
 const WORKFLOW_TRIGGER_EVENTS = [
   'lead_imported',
   'draft_generated',
@@ -128,6 +134,15 @@ export default function OutboundAutomation() {
   const [dataQualitySummary, setDataQualitySummary] = useState(null)
   const [loadingDataQuality, setLoadingDataQuality] = useState(false)
   const [dataQualityStatusFilter, setDataQualityStatusFilter] = useState('open')
+  const [multifamilyObjects, setMultifamilyObjects] = useState([])
+  const [multifamilySummary, setMultifamilySummary] = useState(null)
+  const [loadingMultifamily, setLoadingMultifamily] = useState(false)
+  const [leadObjectSelection, setLeadObjectSelection] = useState({})
+  const [multifamilyForm, setMultifamilyForm] = useState({
+    objectType: 'portfolio',
+    name: '',
+    description: '',
+  })
   const [goalForm, setGoalForm] = useState({
     targetMeetings: 10,
     targetOpportunities: 3,
@@ -149,6 +164,8 @@ export default function OutboundAutomation() {
     status: '',
     minScore: 0,
     search: '',
+    objectType: '',
+    objectId: '',
     limit: 100,
   })
   const [importConfig, setImportConfig] = useState({
@@ -191,6 +208,8 @@ export default function OutboundAutomation() {
       const params = new URLSearchParams()
       if (filters.status) params.append('status', filters.status)
       if (filters.search) params.append('search', filters.search)
+      if (filters.objectType) params.append('objectType', filters.objectType)
+      if (filters.objectId) params.append('objectId', filters.objectId)
       params.append('minScore', String(filters.minScore))
       params.append('limit', String(filters.limit))
 
@@ -307,6 +326,23 @@ export default function OutboundAutomation() {
     }
   }, [authHeaders, token, dataQualityStatusFilter])
 
+  const fetchMultifamilyObjects = useCallback(async () => {
+    if (!token) return
+    setLoadingMultifamily(true)
+    try {
+      const [objectsRes, summaryRes] = await Promise.all([
+        axios.get('/api/outbound/multifamily/objects', authHeaders),
+        axios.get('/api/outbound/multifamily/summary', authHeaders),
+      ])
+      setMultifamilyObjects(Array.isArray(objectsRes.data.objects) ? objectsRes.data.objects : [])
+      setMultifamilySummary(summaryRes.data || null)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load multifamily objects.')
+    } finally {
+      setLoadingMultifamily(false)
+    }
+  }, [authHeaders, token])
+
   useEffect(() => {
     fetchLeads()
   }, [fetchLeads])
@@ -342,6 +378,10 @@ export default function OutboundAutomation() {
   useEffect(() => {
     fetchDataQualityIssues()
   }, [fetchDataQualityIssues])
+
+  useEffect(() => {
+    fetchMultifamilyObjects()
+  }, [fetchMultifamilyObjects])
 
   useEffect(() => {
     if (!ruleTestLeadId && leads.length > 0) {
@@ -530,6 +570,8 @@ export default function OutboundAutomation() {
           status: filters.status || 'all',
           minScore: filters.minScore,
           search: filters.search || '',
+          objectType: filters.objectType || null,
+          objectId: filters.objectId || null,
         },
         leadIds: leads.map((lead) => lead.id),
       }
@@ -778,6 +820,53 @@ export default function OutboundAutomation() {
     })
   }
 
+  const handleCreateMultifamilyObject = async (event) => {
+    event.preventDefault()
+    const name = String(multifamilyForm.name || '').trim()
+    if (!name) {
+      setError('Multifamily object name is required.')
+      return
+    }
+
+    await runAction(`multifamily-create-${multifamilyForm.objectType}`, async () => {
+      await axios.post(
+        '/api/outbound/multifamily/objects',
+        {
+          objectType: multifamilyForm.objectType,
+          name,
+          description: multifamilyForm.description || '',
+          metadata: {},
+        },
+        authHeaders
+      )
+      setMultifamilyForm((prev) => ({ ...prev, name: '', description: '' }))
+      setMessage('Multifamily object created.')
+      await fetchMultifamilyObjects()
+    })
+  }
+
+  const handleAssociateObjectToLead = async (leadId) => {
+    const selection = leadObjectSelection[leadId] || {}
+    if (!selection.objectType || !selection.objectId) {
+      setError('Select object type and object before associating.')
+      return
+    }
+
+    await runAction(`multifamily-associate-${leadId}`, async () => {
+      await axios.post(
+        `/api/outbound/multifamily/objects/${selection.objectId}/associations`,
+        {
+          entityType: 'outbound_lead',
+          entityId: leadId,
+          metadata: { source: 'outbound_ui' },
+        },
+        authHeaders
+      )
+      setMessage('Lead associated to multifamily object.')
+      await Promise.all([fetchMultifamilyObjects(), fetchLeads()])
+    })
+  }
+
   const leadsStats = analytics?.leads || {}
   const emailLimit = analytics?.dailySendLimits?.email
   const linkedinLimit = analytics?.dailySendLimits?.linkedin
@@ -793,6 +882,23 @@ export default function OutboundAutomation() {
   const dataQualityOpenCount = toInt(dataQualitySummary?.open_count)
   const dataQualityOpenBlockingCount = toInt(dataQualitySummary?.open_blocking_count)
   const dataQualityResolvedCount = toInt(dataQualitySummary?.resolved_count)
+  const multifamilyObjectCounts = multifamilySummary?.objectCounts || {}
+  const multifamilyAssociationCounts = multifamilySummary?.associationCounts || {}
+  const multifamilyObjectsByType = useMemo(() => {
+    const map = {
+      portfolio: [],
+      property: [],
+      tech_stack: [],
+      initiative: [],
+    }
+    for (const object of multifamilyObjects) {
+      if (map[object.objectType]) {
+        map[object.objectType].push(object)
+      }
+    }
+    return map
+  }, [multifamilyObjects])
+  const filterScopedObjects = filters.objectType ? multifamilyObjectsByType[filters.objectType] || [] : []
   const openEnrollmentByLead = useMemo(() => {
     const map = {}
     for (const enrollment of sequenceEnrollments) {
@@ -838,6 +944,7 @@ export default function OutboundAutomation() {
               fetchForecastSummary()
               fetchAttributionSummary()
               fetchDataQualityIssues()
+              fetchMultifamilyObjects()
             }}
             className="text-sm bg-teal text-white px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
           >
@@ -1173,6 +1280,113 @@ export default function OutboundAutomation() {
               </div>
             </div>
           </>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">Multifamily Object Explorer</h3>
+            <p className="text-xs text-brand-gray mt-0.5">
+              Manage portfolio, property, tech stack, and initiative objects used for segmentation.
+            </p>
+          </div>
+          <button
+            onClick={fetchMultifamilyObjects}
+            className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
+          >
+            Refresh Objects
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Portfolios</p>
+            <p className="text-lg font-bold text-navy">{toInt(multifamilyObjectCounts.portfolio)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Properties</p>
+            <p className="text-lg font-bold text-navy">{toInt(multifamilyObjectCounts.property)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Tech Stacks</p>
+            <p className="text-lg font-bold text-navy">{toInt(multifamilyObjectCounts.tech_stack)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Initiatives</p>
+            <p className="text-lg font-bold text-navy">{toInt(multifamilyObjectCounts.initiative)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Lead Associations</p>
+            <p className="text-lg font-bold text-navy">{toInt(multifamilyAssociationCounts.outbound_lead)}</p>
+          </div>
+        </div>
+
+        <form onSubmit={handleCreateMultifamilyObject} className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <select
+            value={multifamilyForm.objectType}
+            onChange={(event) => setMultifamilyForm((prev) => ({ ...prev, objectType: event.target.value }))}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+          >
+            {MULTIFAMILY_OBJECT_TYPES.map((typeOption) => (
+              <option key={typeOption.value} value={typeOption.value}>
+                {typeOption.label}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={multifamilyForm.name}
+            onChange={(event) => setMultifamilyForm((prev) => ({ ...prev, name: event.target.value }))}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+            placeholder="Object name"
+          />
+          <input
+            type="text"
+            value={multifamilyForm.description}
+            onChange={(event) => setMultifamilyForm((prev) => ({ ...prev, description: event.target.value }))}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+            placeholder="Description"
+          />
+          <button
+            type="submit"
+            disabled={busyKey === `multifamily-create-${multifamilyForm.objectType}`}
+            className="bg-navy text-white rounded-lg px-3 py-2 text-sm font-semibold hover:bg-navy/90 disabled:opacity-60"
+          >
+            {busyKey === `multifamily-create-${multifamilyForm.objectType}` ? 'Creating...' : 'Create Object'}
+          </button>
+        </form>
+
+        {loadingMultifamily ? (
+          <p className="text-sm text-brand-gray">Loading multifamily objects...</p>
+        ) : multifamilyObjects.length === 0 ? (
+          <p className="text-sm text-brand-gray">No multifamily objects created yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
+                  <th className="py-2 pr-3">Type</th>
+                  <th className="py-2 pr-3">Name</th>
+                  <th className="py-2 pr-3">Description</th>
+                  <th className="py-2 pr-3">Associations</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {multifamilyObjects.slice(0, 20).map((object) => (
+                  <tr key={object.id}>
+                    <td className="py-2 pr-3 text-xs text-gray-700">{object.objectType}</td>
+                    <td className="py-2 pr-3 font-semibold text-navy">{object.name}</td>
+                    <td className="py-2 pr-3 text-xs text-brand-gray">{object.description || 'No description'}</td>
+                    <td className="py-2 pr-3 text-xs text-brand-gray">
+                      Leads {toInt(object.associationCounts?.outboundLead)} | Contacts {toInt(object.associationCounts?.contact)} |
+                      Deals {toInt(object.associationCounts?.deal)} | Companies {toInt(object.associationCounts?.company)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -1757,7 +1971,7 @@ export default function OutboundAutomation() {
 
       <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
         <h3 className="text-sm font-semibold text-navy">Leads</h3>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
           <select
             value={filters.status}
             onChange={(event) => setFilters((prev) => ({ ...prev, status: event.target.value }))}
@@ -1787,6 +2001,39 @@ export default function OutboundAutomation() {
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
             placeholder="search lead/company/title"
           />
+
+          <select
+            value={filters.objectType}
+            onChange={(event) =>
+              setFilters((prev) => ({
+                ...prev,
+                objectType: event.target.value,
+                objectId: '',
+              }))
+            }
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="">All object types</option>
+            {MULTIFAMILY_OBJECT_TYPES.map((typeOption) => (
+              <option key={typeOption.value} value={typeOption.value}>
+                {typeOption.label}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filters.objectId}
+            onChange={(event) => setFilters((prev) => ({ ...prev, objectId: event.target.value }))}
+            disabled={!filters.objectType}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400"
+          >
+            <option value="">{filters.objectType ? 'All objects' : 'Select type first'}</option>
+            {filterScopedObjects.map((object) => (
+              <option key={object.id} value={object.id}>
+                {object.name}
+              </option>
+            ))}
+          </select>
 
           <button
             onClick={fetchLeads}
@@ -1888,6 +2135,59 @@ export default function OutboundAutomation() {
                                 : toInt(lead.open_blocking_issue_count) > 0
                                 ? 'Blocked'
                                 : 'Enroll'}
+                            </button>
+                          </>
+                        )}
+                        {multifamilyObjects.length > 0 && (
+                          <>
+                            <select
+                              value={leadObjectSelection[lead.id]?.objectType || 'portfolio'}
+                              onChange={(event) =>
+                                setLeadObjectSelection((prev) => ({
+                                  ...prev,
+                                  [lead.id]: {
+                                    objectType: event.target.value,
+                                    objectId: '',
+                                  },
+                                }))
+                              }
+                              className="text-xs border border-gray-200 rounded px-2 py-1 text-gray-700"
+                            >
+                              {MULTIFAMILY_OBJECT_TYPES.map((typeOption) => (
+                                <option key={typeOption.value} value={typeOption.value}>
+                                  {typeOption.label}
+                                </option>
+                              ))}
+                            </select>
+                            <select
+                              value={leadObjectSelection[lead.id]?.objectId || ''}
+                              onChange={(event) =>
+                                setLeadObjectSelection((prev) => ({
+                                  ...prev,
+                                  [lead.id]: {
+                                    objectType: prev[lead.id]?.objectType || 'portfolio',
+                                    objectId: event.target.value,
+                                  },
+                                }))
+                              }
+                              className="text-xs border border-gray-200 rounded px-2 py-1 text-gray-700"
+                            >
+                              <option value="">Select object</option>
+                              {(multifamilyObjectsByType[leadObjectSelection[lead.id]?.objectType || 'portfolio'] || []).map((object) => (
+                                <option key={object.id} value={object.id}>
+                                  {object.name}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => handleAssociateObjectToLead(lead.id)}
+                              disabled={
+                                busyKey === `multifamily-associate-${lead.id}` ||
+                                !Boolean(leadObjectSelection[lead.id]?.objectId)
+                              }
+                              className="text-xs border border-slate-200 text-slate-700 rounded px-2 py-1 hover:bg-slate-50 disabled:opacity-60"
+                            >
+                              Tag
                             </button>
                           </>
                         )}

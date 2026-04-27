@@ -159,13 +159,60 @@ async function importCsv(token, csvText, sourceReference) {
   return response.data;
 }
 
-async function listLeads(token) {
-  const response = await fetchJson(`${BASE_URL}/api/outbound/leads?limit=20`, {
+async function listLeads(token, filters = {}) {
+  const params = new URLSearchParams();
+  params.set('limit', '50');
+  for (const [key, value] of Object.entries(filters || {})) {
+    if (value != null && value !== '') {
+      params.set(key, String(value));
+    }
+  }
+
+  const response = await fetchJson(`${BASE_URL}/api/outbound/leads?${params.toString()}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 
   assert(response.ok, `list leads failed: ${JSON.stringify(response.data)}`);
   assert(Array.isArray(response.data.leads), 'list leads response missing leads array');
+  return response.data;
+}
+
+async function createMultifamilyObject(token, payload) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/multifamily/objects`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `create multifamily object failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function associateMultifamilyObject(token, objectId, payload) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/multifamily/objects/${objectId}/associations`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `associate multifamily object failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function getMultifamilySummary(token) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/multifamily/summary`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `get multifamily summary failed: ${JSON.stringify(response.data)}`);
   return response.data;
 }
 
@@ -567,6 +614,8 @@ async function run() {
       'pipeline_forecasts',
       'attribution_touchpoints',
       'data_quality_issues',
+      'multifamily_objects',
+      'multifamily_object_associations',
     ],
     60000
   );
@@ -626,6 +675,40 @@ async function run() {
       (issue) => issue.leadId === lowQualityLead.id && issue.issueType === 'missing_contact_channel'
     ),
     'expected missing_contact_channel issue for low quality lead'
+  );
+
+  const portfolioObject = await createMultifamilyObject(auth.token, {
+    objectType: 'portfolio',
+    name: `Smoke Portfolio ${Date.now()}`,
+    description: 'Slice 7 multifamily segmentation test',
+    metadata: {
+      region: 'TX',
+      ownerType: 'operator',
+    },
+  });
+  const portfolioAssociation = await associateMultifamilyObject(auth.token, portfolioObject.id, {
+    entityType: 'outbound_lead',
+    entityId: highQualityLeadIds[0],
+    metadata: { source: 'smoke_test' },
+  });
+  assert(
+    portfolioAssociation.entityType === 'outbound_lead' && portfolioAssociation.entityId === highQualityLeadIds[0],
+    'expected multifamily association to outbound lead'
+  );
+
+  const leadsByPortfolio = await listLeads(auth.token, { portfolioId: portfolioObject.id });
+  assert(
+    leadsByPortfolio.leads.some((lead) => lead.id === highQualityLeadIds[0]),
+    'expected associated lead in portfolio filtered leads'
+  );
+  const multifamilySummary = await getMultifamilySummary(auth.token);
+  assert(
+    Number(multifamilySummary.objectCounts?.portfolio || 0) >= 1,
+    'expected at least one portfolio object in multifamily summary'
+  );
+  assert(
+    Number(multifamilySummary.associationCounts?.outbound_lead || 0) >= 1,
+    'expected at least one outbound lead multifamily association'
   );
 
   const initialSuppression = await setSuppression(auth.token, blockedLeadId, true, 'Smoke suppression check');
@@ -854,6 +937,16 @@ async function run() {
     openBlockingIssues: dataQualityOpen.summary?.open_blocking_count,
     lowQualityLeadId: lowQualityLead.id,
     blockedEnrollStatus: lowQualityEnrollAttempt.status,
+  });
+
+  steps.push({
+    step: 'multifamily_objects',
+    ok: true,
+    portfolioObjectId: portfolioObject.id,
+    portfolioAssociationId: portfolioAssociation.id,
+    filteredLeadCount: leadsByPortfolio.total,
+    summaryPortfolioCount: multifamilySummary.objectCounts?.portfolio,
+    summaryLeadAssociations: multifamilySummary.associationCounts?.outbound_lead,
   });
 
   steps.push({

@@ -237,7 +237,7 @@ Current lead generation logic creates synthetic Reddit/LinkedIn outputs, which i
 
 ### Progress status (as of April 27, 2026)
 
-- Phase 21 completion: 65%
+- Phase 21 completion: 75%
 - Measurement basis (weighted by planned capabilities):
   - Sequence state machine v2: 35%
   - Workflow rules engine: 30%
@@ -245,7 +245,7 @@ Current lead generation logic creates synthetic Reddit/LinkedIn outputs, which i
   - Forecast + goals: 40%
   - Attribution + source ROI: 35%
   - Data quality command center: 40%
-  - Multifamily custom objects: 0%
+  - Multifamily custom objects: 35%
 
 Phase 21 slice delivered now:
 
@@ -390,6 +390,42 @@ Additional Phase 21 slice delivered now (Slice 6):
   - low-quality lead import and queue validation
   - enrollment guardrail conflict validation for missing contact channel
 
+Additional Phase 21 slice delivered now (Slice 7):
+
+- Added multifamily custom object data model:
+  - `multifamily_objects`
+  - `multifamily_object_associations`
+- Added object types:
+  - `portfolio`
+  - `property`
+  - `tech_stack`
+  - `initiative`
+- Added multifamily object APIs:
+  - `GET /api/outbound/multifamily/summary`
+  - `GET /api/outbound/multifamily/objects`
+  - `POST /api/outbound/multifamily/objects`
+  - `PATCH /api/outbound/multifamily/objects/:id`
+  - `DELETE /api/outbound/multifamily/objects/:id`
+  - `GET /api/outbound/multifamily/objects/:id/associations`
+  - `POST /api/outbound/multifamily/objects/:id/associations`
+  - `DELETE /api/outbound/multifamily/objects/:id/associations/:associationId`
+- Added association target support for:
+  - outbound leads
+  - contacts
+  - deals
+  - company names
+- Added outbound lead segmentation support:
+  - `/api/outbound/leads` now supports object filters (`objectType` + `objectId` and typed ids)
+- Added Multifamily Object Explorer UI section in `/outbound-automation`:
+  - create/list objects
+  - object and association counters
+  - lead tagging controls from the lead grid
+  - lead filter controls by object type + object
+- Expanded smoke test coverage:
+  - multifamily object table readiness check
+  - create object + associate to lead
+  - verify lead segmentation filter by multifamily object
+
 ## 7. Data Model Additions
 
 Recommended new tables:
@@ -532,5 +568,5 @@ Recommended next build steps:
 - Add persistent Draft Inbox and LinkedIn Task Board endpoints/UI
 - Add outbound workflow tests in CI
 - Add tenant branding/profile screens for white-label packaging
-- Continue Phase 21 with slice 7:
-  - multifamily custom object model (`portfolio`, `property`, `tech_stack`, `initiative`) and associations
+- Continue Phase 21 with slice 8:
+  - data quality merge operations + advanced multifamily explorer workflows for contacts/deals/companies
