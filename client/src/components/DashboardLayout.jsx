@@ -1,35 +1,95 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
-const navItems = [
-  { to: '/', label: 'Overview', icon: '📊', end: true },
-  { to: '/contacts', label: 'Contacts', icon: '👥' },
-  { to: '/pipeline', label: 'Pipeline', icon: '🔁' },
-  { to: '/forecasting', label: 'Forecasting', icon: '📈' },
-  { to: '/analytics', label: 'Analytics', icon: '📉' },
-  { to: '/workflows', label: 'Workflows', icon: '⚡' },
-  { to: '/sequences', label: 'Sequences', icon: '✉️' },
-  { to: '/agents', label: 'AI Agents', icon: '🤖' },
-  { to: '/forms', label: 'Web Forms', icon: '🌐' },
-  { to: '/outbound-automation', label: 'Outbound', icon: '📤' },
-  { to: '/reminders', label: 'Reminders', icon: '🔔' },
-  { to: '/proposals', label: 'Proposals', icon: '📄' },
-  { to: '/invoices', label: 'Invoices', icon: '🧾' },
-  { to: '/time-tracking', label: 'Time Tracking', icon: '⏱' },
-  { to: '/calendar', label: 'Calendar', icon: '📅' },
-  { to: '/help-desk', label: 'Help Desk', icon: '🎟️' },
-  { to: '/help', label: 'Help', icon: '❓' },
-  { to: '/settings', label: 'Settings', icon: '⚙️' },
+const navTabs = [
+  {
+    id: 'workspace',
+    label: 'Workspace',
+    items: [
+      { to: '/', label: 'Overview', end: true },
+      { to: '/contacts', label: 'Contacts' },
+      { to: '/pipeline', label: 'Pipeline' },
+      { to: '/forecasting', label: 'Forecasting' },
+      { to: '/analytics', label: 'Analytics' },
+      { to: '/reminders', label: 'Reminders' },
+    ],
+  },
+  {
+    id: 'automation',
+    label: 'Automation',
+    items: [
+      { to: '/outbound-automation', label: 'Outbound' },
+      { to: '/sequences', label: 'Sequences' },
+      { to: '/workflows', label: 'Workflows' },
+      { to: '/agents', label: 'AI Agents' },
+      { to: '/forms', label: 'Web Forms' },
+    ],
+  },
+  {
+    id: 'operations',
+    label: 'Operations',
+    items: [
+      { to: '/proposals', label: 'Proposals' },
+      { to: '/invoices', label: 'Invoices' },
+      { to: '/time-tracking', label: 'Time Tracking' },
+      { to: '/calendar', label: 'Calendar' },
+      { to: '/help-desk', label: 'Help Desk' },
+    ],
+  },
+  {
+    id: 'account',
+    label: 'Account',
+    items: [
+      { to: '/settings', label: 'Settings' },
+      { to: '/help', label: 'Help' },
+      { to: '/teams', label: 'Teams', roles: ['admin', 'manager'] },
+      { to: '/users', label: 'Users', roles: ['admin', 'manager'] },
+      { to: '/audit-logs', label: 'Audit Logs', roles: ['admin', 'manager'] },
+    ],
+  },
 ]
 
-const adminNavItems = [
-  { to: '/teams', label: 'Teams', icon: '🏢', roles: ['admin', 'manager'] },
-  { to: '/audit-logs', label: 'Audit Logs', icon: '📋', roles: ['admin', 'manager'] },
-  { to: '/users', label: 'Users', icon: '👨‍💼', roles: ['admin', 'manager'] },
-]
+function hasRouteAccess(item, role) {
+  if (!item.roles || item.roles.length === 0) return true
+  return item.roles.includes(role)
+}
+
+function isItemActivePath(item, pathname) {
+  if (item.to === '/') return pathname === '/'
+  return pathname === item.to || pathname.startsWith(`${item.to}/`)
+}
 
 export default function DashboardLayout() {
   const { user, logout } = useAuth()
+  const location = useLocation()
+  const role = user?.role
+
+  const availableTabs = useMemo(
+    () =>
+      navTabs
+        .map((tab) => ({
+          ...tab,
+          items: tab.items.filter((item) => hasRouteAccess(item, role)),
+        }))
+        .filter((tab) => tab.items.length > 0),
+    [role]
+  )
+
+  const [activeTabId, setActiveTabId] = useState(availableTabs[0]?.id || 'workspace')
+
+  useEffect(() => {
+    const matchingTab =
+      availableTabs.find((tab) => tab.items.some((item) => isItemActivePath(item, location.pathname))) ||
+      availableTabs[0]
+
+    if (matchingTab && matchingTab.id !== activeTabId) {
+      setActiveTabId(matchingTab.id)
+    }
+  }, [location.pathname, availableTabs, activeTabId])
+
+  const activeTab =
+    availableTabs.find((tab) => tab.id === activeTabId) || availableTabs[0] || { label: 'Navigation', items: [] }
 
   return (
     <div className="flex h-screen bg-gray-100 font-dmsans">
@@ -41,47 +101,44 @@ export default function DashboardLayout() {
           <p className="text-brand-gray text-xs mt-0.5">CRM Platform</p>
         </div>
 
-        <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
-          {navItems.map(({ to, label, icon, end }) => (
+        <div className="px-4 py-4 border-b border-white/10">
+          <div className="grid grid-cols-2 gap-1">
+            {availableTabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTabId(tab.id)}
+                className={`px-2.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                  tab.id === activeTab.id
+                    ? 'bg-teal text-white'
+                    : 'bg-white/5 text-brand-gray hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
+          <p className="px-3 pb-2 text-[11px] uppercase tracking-wide text-brand-gray/80">
+            {activeTab.label}
+          </p>
+          {activeTab.items.map(({ to, label, end }) => (
             <NavLink
               key={to}
               to={to}
               end={end}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                `flex items-center px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-teal text-white'
                     : 'text-brand-gray hover:bg-white/10 hover:text-white'
                 }`
               }
             >
-              <span>{icon}</span>
               {label}
             </NavLink>
           ))}
-          {adminNavItems.some((item) => item.roles.includes(user?.role)) && (
-            <>
-              <div className="my-2 border-t border-white/10" />
-              {adminNavItems
-                .filter((item) => item.roles.includes(user?.role))
-                .map(({ to, label, icon }) => (
-                  <NavLink
-                    key={to}
-                    to={to}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                        isActive
-                          ? 'bg-teal text-white'
-                          : 'text-brand-gray hover:bg-white/10 hover:text-white'
-                      }`
-                    }
-                  >
-                    <span>{icon}</span>
-                    {label}
-                  </NavLink>
-                ))}
-            </>
-          )}
         </nav>
 
         <div className="px-6 py-4 border-t border-white/10">
