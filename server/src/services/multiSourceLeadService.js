@@ -3,6 +3,7 @@
 // Uses Claude AI to analyze and extract contact information
 
 const Anthropic = require('@anthropic-ai/sdk');
+const { getSetting } = require('./appSettings');
 
 // Defer client initialization until first use to ensure dotenv is loaded
 let client = null;
@@ -16,8 +17,8 @@ function getClient() {
   return client;
 }
 
-function isSyntheticGenerationAllowed() {
-  return process.env.ALLOW_SYNTHETIC_LEADS === 'true';
+async function isSyntheticGenerationAllowed() {
+  return Boolean(await getSetting('allow_synthetic_leads'));
 }
 
 class MultiSourceLeadService {
@@ -54,7 +55,7 @@ class MultiSourceLeadService {
    */
   static async searchAllSources(configs) {
     try {
-      if (!isSyntheticGenerationAllowed()) {
+      if (!(await isSyntheticGenerationAllowed())) {
         throw new Error(
           'Synthetic lead generation is disabled. Use real lead ingestion via /api/outbound/leads/import/csv.'
         );

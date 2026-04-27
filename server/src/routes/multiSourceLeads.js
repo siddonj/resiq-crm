@@ -5,6 +5,7 @@ const express = require('express');
 const db = require('../models/db');
 const MultiSourceLeadService = require('../services/multiSourceLeadService');
 const authMiddleware = require('../middleware/auth');
+const { getSetting } = require('../services/appSettings');
 
 const router = express.Router();
 
@@ -55,8 +56,8 @@ router.get('/health', async (req, res) => {
 router.post('/search', async (req, res) => {
   try {
     const allowSyntheticRequest = req.body.allowSynthetic === true;
-    const allowSyntheticEnv = process.env.ALLOW_SYNTHETIC_LEADS === 'true';
-    if (!allowSyntheticRequest || !allowSyntheticEnv) {
+    const allowSyntheticSetting = Boolean(await getSetting('allow_synthetic_leads'));
+    if (!allowSyntheticRequest || !allowSyntheticSetting) {
       return res.status(410).json({
         error: 'Synthetic lead generation is disabled',
         message: 'Use /api/outbound/leads/import/csv for real lead ingestion.',
@@ -184,8 +185,8 @@ router.post('/search', async (req, res) => {
 router.post('/test-search', async (req, res) => {
   try {
     const allowSyntheticRequest = req.body.allowSynthetic === true;
-    const allowSyntheticEnv = process.env.ALLOW_SYNTHETIC_LEADS === 'true';
-    if (!allowSyntheticRequest || !allowSyntheticEnv) {
+    const allowSyntheticSetting = Boolean(await getSetting('allow_synthetic_leads'));
+    if (!allowSyntheticRequest || !allowSyntheticSetting) {
       return res.status(410).json({
         error: 'Synthetic lead generation is disabled',
         message: 'Use /api/outbound/leads/import/csv for real lead ingestion.',

@@ -4,6 +4,7 @@ const pool = require('../models/db');
 const auth = require('../middleware/auth');
 const { scoreLead } = require('../services/outboundScoring');
 const { logAction } = require('../services/auditLogger');
+const { getSetting } = require('../services/appSettings');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
@@ -12,17 +13,6 @@ const VALID_SOURCE_TYPES = new Set(['csv', 'manual', 'api', 'other']);
 const SEND_EVENT_TYPES = {
   email: ['draft_sent'],
   linkedin: ['linkedin_task_completed'],
-};
-
-function readDailyLimit(envName, fallback) {
-  const parsed = Number(process.env[envName]);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return Math.floor(parsed);
-}
-
-const DAILY_CHANNEL_LIMITS = {
-  email: readDailyLimit('OUTBOUND_DAILY_EMAIL_SEND_LIMIT', 40),
-  linkedin: readDailyLimit('OUTBOUND_DAILY_LINKEDIN_SEND_LIMIT', 50),
 };
 
 const VALID_CAMPAIGN_STATUSES = new Set(['draft', 'active', 'paused', 'completed', 'archived']);
@@ -163,7 +153,13 @@ async function logLeadEvent({ userId, leadId, eventType, channel = null, metadat
 
 async function getDailySendUsage(userId, channel) {
   const eventTypes = SEND_EVENT_TYPES[channel] || [];
-  const limit = DAILY_CHANNEL_LIMITS[channel] || 0;
+  const limitSettingKey =
+    channel === 'email'
+      ? 'outbound_daily_email_send_limit'
+      : channel === 'linkedin'
+      ? 'outbound_daily_linkedin_send_limit'
+      : null;
+  const limit = limitSettingKey ? Number(await getSetting(limitSettingKey)) : 0;
   if (eventTypes.length === 0) {
     return { channel, used: 0, limit, remaining: limit };
   }

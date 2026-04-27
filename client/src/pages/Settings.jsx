@@ -17,7 +17,12 @@ export default function Settings() {
     { id: 'profile', label: 'Profile' },
     { id: 'password', label: 'Password' },
     { id: 'integrations', label: 'Integrations' },
-    ...(user?.role === 'admin' ? [{ id: 'accounts', label: 'Accounts' }] : []),
+    ...(user?.role === 'admin'
+      ? [
+          { id: 'system', label: 'System' },
+          { id: 'accounts', label: 'Accounts' },
+        ]
+      : []),
     { id: 'about', label: 'About' },
   ]
   const [activeTab, setActiveTab] = useState('profile')
@@ -40,6 +45,15 @@ export default function Settings() {
   const [guestForm, setGuestForm] = useState({ name: '', email: '' })
   const [guestSaving, setGuestSaving] = useState(false)
   const [guestMsg, setGuestMsg] = useState('')
+  const [systemLoading, setSystemLoading] = useState(false)
+  const [systemSaving, setSystemSaving] = useState(false)
+  const [systemMsg, setSystemMsg] = useState('')
+  const [systemDefaults, setSystemDefaults] = useState({})
+  const [systemValues, setSystemValues] = useState({
+    allow_synthetic_leads: false,
+    outbound_daily_email_send_limit: 40,
+    outbound_daily_linkedin_send_limit: 50,
+  })
 
   useEffect(() => {
     if (success || error) {
@@ -49,7 +63,8 @@ export default function Settings() {
 
   useEffect(() => {
     if (activeTab === 'accounts' && user?.role === 'admin') loadAccounts()
-  }, [activeTab])
+    if (activeTab === 'system' && user?.role === 'admin') loadSystemSettings()
+  }, [activeTab, user?.role])
 
   const loadAccounts = async () => {
     setAccountsLoading(true)
@@ -132,6 +147,54 @@ export default function Settings() {
       setGuestMsg(err.response?.data?.error || 'Failed to send invitation.')
     } finally {
       setGuestSaving(false)
+    }
+  }
+
+  const loadSystemSettings = async () => {
+    setSystemLoading(true)
+    setSystemMsg('')
+    try {
+      const res = await axios.get('/api/app-settings', headers)
+      const entries = Array.isArray(res.data?.settings) ? res.data.settings : []
+      const defaults = {}
+      const values = { ...systemValues }
+
+      entries.forEach((item) => {
+        defaults[item.key] = item.defaultValue
+        values[item.key] = item.value
+      })
+
+      setSystemDefaults(defaults)
+      setSystemValues(values)
+    } catch (err) {
+      setSystemMsg(err.response?.data?.error || 'Failed to load system settings.')
+    } finally {
+      setSystemLoading(false)
+    }
+  }
+
+  const handleSystemSave = async (e) => {
+    e.preventDefault()
+    setSystemMsg('')
+    setSystemSaving(true)
+    try {
+      await axios.put(
+        '/api/app-settings',
+        {
+          settings: {
+            allow_synthetic_leads: !!systemValues.allow_synthetic_leads,
+            outbound_daily_email_send_limit: Number(systemValues.outbound_daily_email_send_limit),
+            outbound_daily_linkedin_send_limit: Number(systemValues.outbound_daily_linkedin_send_limit),
+          },
+        },
+        headers
+      )
+      setSystemMsg('System settings updated.')
+      await loadSystemSettings()
+    } catch (err) {
+      setSystemMsg(err.response?.data?.error || 'Failed to update system settings.')
+    } finally {
+      setSystemSaving(false)
     }
   }
 
@@ -218,6 +281,92 @@ export default function Settings() {
         )}
 
         {activeTab === 'integrations' && <GmailConnect />}
+
+        {activeTab === 'system' && (
+          <div className="bg-white rounded-xl shadow-sm p-6">
+            {systemMsg && (
+              <p className={`text-sm mb-4 ${systemMsg === 'System settings updated.' ? 'text-green-600' : 'text-red-500'}`}>
+                {systemMsg}
+              </p>
+            )}
+
+            {systemLoading ? (
+              <p className="text-sm text-gray-500">Loading system settings...</p>
+            ) : (
+              <form onSubmit={handleSystemSave} className="space-y-5">
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-xs text-amber-800">
+                    Admin-only runtime settings. Secrets (JWT, encryption key, API keys, OAuth client secrets)
+                    remain server-side in `.env` and are not exposed here.
+                  </p>
+                </div>
+
+                <label className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={!!systemValues.allow_synthetic_leads}
+                    onChange={(e) =>
+                      setSystemValues((prev) => ({ ...prev, allow_synthetic_leads: e.target.checked }))
+                    }
+                    className="mt-0.5 w-4 h-4 rounded border-gray-300"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-navy">Allow Synthetic Leads</p>
+                    <p className="text-xs text-gray-500">
+                      Testing only. Default: {String(systemDefaults.allow_synthetic_leads ?? false)}.
+                    </p>
+                  </div>
+                </label>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Daily Email Send Limit</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={5000}
+                    value={systemValues.outbound_daily_email_send_limit}
+                    onChange={(e) =>
+                      setSystemValues((prev) => ({
+                        ...prev,
+                        outbound_daily_email_send_limit: e.target.value,
+                      }))
+                    }
+                    required
+                    className={inputCls}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Default: {systemDefaults.outbound_daily_email_send_limit ?? 40}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Daily LinkedIn Send Limit</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={5000}
+                    value={systemValues.outbound_daily_linkedin_send_limit}
+                    onChange={(e) =>
+                      setSystemValues((prev) => ({
+                        ...prev,
+                        outbound_daily_linkedin_send_limit: e.target.value,
+                      }))
+                    }
+                    required
+                    className={inputCls}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Default: {systemDefaults.outbound_daily_linkedin_send_limit ?? 50}
+                  </p>
+                </div>
+
+                <button type="submit" disabled={systemSaving} className={btnCls}>
+                  {systemSaving ? 'Saving...' : 'Save System Settings'}
+                </button>
+              </form>
+            )}
+          </div>
+        )}
 
         {activeTab === 'accounts' && (
           <div className="space-y-10">
