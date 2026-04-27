@@ -68,6 +68,11 @@ export default function OutboundAutomation() {
   const [sessionDrafts, setSessionDrafts] = useState([])
   const [campaigns, setCampaigns] = useState([])
   const [loadingCampaigns, setLoadingCampaigns] = useState(false)
+  const [sequences, setSequences] = useState([])
+  const [loadingSequences, setLoadingSequences] = useState(false)
+  const [sequenceEnrollments, setSequenceEnrollments] = useState([])
+  const [loadingSequenceEnrollments, setLoadingSequenceEnrollments] = useState(false)
+  const [selectedSequenceByLead, setSelectedSequenceByLead] = useState({})
   const [filters, setFilters] = useState({
     status: '',
     minScore: 0,
@@ -139,6 +144,32 @@ export default function OutboundAutomation() {
     }
   }, [authHeaders, token])
 
+  const fetchSequences = useCallback(async () => {
+    if (!token) return
+    setLoadingSequences(true)
+    try {
+      const { data } = await axios.get('/api/outbound/sequences', authHeaders)
+      setSequences(Array.isArray(data.sequences) ? data.sequences : [])
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load sequences.')
+    } finally {
+      setLoadingSequences(false)
+    }
+  }, [authHeaders, token])
+
+  const fetchSequenceEnrollments = useCallback(async () => {
+    if (!token) return
+    setLoadingSequenceEnrollments(true)
+    try {
+      const { data } = await axios.get('/api/outbound/sequences/enrollments?limit=200', authHeaders)
+      setSequenceEnrollments(Array.isArray(data.enrollments) ? data.enrollments : [])
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load sequence enrollments.')
+    } finally {
+      setLoadingSequenceEnrollments(false)
+    }
+  }, [authHeaders, token])
+
   useEffect(() => {
     fetchLeads()
   }, [fetchLeads])
@@ -150,6 +181,14 @@ export default function OutboundAutomation() {
   useEffect(() => {
     fetchCampaigns()
   }, [fetchCampaigns])
+
+  useEffect(() => {
+    fetchSequences()
+  }, [fetchSequences])
+
+  useEffect(() => {
+    fetchSequenceEnrollments()
+  }, [fetchSequenceEnrollments])
 
   const runAction = async (key, fn) => {
     setBusyKey(key)
@@ -351,6 +390,39 @@ export default function OutboundAutomation() {
     })
   }
 
+  const handleEnrollLeadInSequence = async (leadId) => {
+    const sequenceId = selectedSequenceByLead[leadId]
+    if (!sequenceId) {
+      setError('Select a sequence before enrolling.')
+      return
+    }
+
+    await runAction(`enroll-sequence-${leadId}`, async () => {
+      await axios.post(
+        `/api/outbound/sequences/${sequenceId}/enroll`,
+        { leadId },
+        authHeaders
+      )
+      setMessage('Lead enrolled in sequence.')
+      await Promise.all([fetchSequenceEnrollments(), fetchLeads(), fetchAnalytics()])
+    })
+  }
+
+  const handleSequenceStateChange = async (enrollment, state) => {
+    await runAction(`sequence-state-${enrollment.id}-${state}`, async () => {
+      await axios.patch(
+        `/api/outbound/sequences/enrollments/${enrollment.id}/state`,
+        {
+          state,
+          reason: state === 'paused' ? 'Paused from outbound automation UI' : undefined,
+        },
+        authHeaders
+      )
+      setMessage(`Sequence enrollment ${state}.`)
+      await Promise.all([fetchSequenceEnrollments(), fetchLeads(), fetchAnalytics()])
+    })
+  }
+
   const handleSuppression = async (lead, suppressed) => {
     await runAction(`suppression-${lead.id}-${suppressed ? 'on' : 'off'}`, async () => {
       const reason = suppressed
@@ -371,7 +443,7 @@ export default function OutboundAutomation() {
       )
 
       setMessage(suppressed ? 'Lead suppressed.' : 'Lead unsuppressed.')
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchCampaigns()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchCampaigns(), fetchSequenceEnrollments()])
     })
   }
 
@@ -379,6 +451,15 @@ export default function OutboundAutomation() {
   const emailLimit = analytics?.dailySendLimits?.email
   const linkedinLimit = analytics?.dailySendLimits?.linkedin
   const campaignStats = analytics?.campaigns || {}
+  const openEnrollmentByLead = useMemo(() => {
+    const map = {}
+    for (const enrollment of sequenceEnrollments) {
+      if (enrollment.status === 'active' || enrollment.status === 'paused') {
+        map[enrollment.lead_id] = enrollment
+      }
+    }
+    return map
+  }, [sequenceEnrollments])
 
   return (
     <div className="p-8 space-y-6">
@@ -408,6 +489,9 @@ export default function OutboundAutomation() {
             onClick={() => {
               fetchLeads()
               fetchAnalytics()
+              fetchCampaigns()
+              fetchSequences()
+              fetchSequenceEnrollments()
             }}
             className="text-sm bg-teal text-white px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
           >
@@ -579,6 +663,95 @@ export default function OutboundAutomation() {
         )}
       </div>
 
+      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">Sequence Control Center</h3>
+            <p className="text-xs text-brand-gray mt-0.5">
+              Enforce one active sequence per lead with pause, resume, and stop controls.
+            </p>
+          </div>
+          <div className="text-xs text-brand-gray">
+            Open enrollments:{' '}
+            {sequenceEnrollments.filter((item) => item.status === 'active' || item.status === 'paused').length}
+          </div>
+        </div>
+
+        {loadingSequences || loadingSequenceEnrollments ? (
+          <p className="text-sm text-brand-gray">Loading sequence control data...</p>
+        ) : sequences.length === 0 ? (
+          <p className="text-sm text-brand-gray">
+            No sequences found. Create one in the Sequences page before enrolling leads.
+          </p>
+        ) : sequenceEnrollments.length === 0 ? (
+          <p className="text-sm text-brand-gray">No sequence enrollments yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
+                  <th className="py-2 pr-3">Lead</th>
+                  <th className="py-2 pr-3">Sequence</th>
+                  <th className="py-2 pr-3">State</th>
+                  <th className="py-2 pr-3">Step</th>
+                  <th className="py-2 pr-3">Updated</th>
+                  <th className="py-2 pr-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {sequenceEnrollments.map((enrollment) => (
+                  <tr key={enrollment.id}>
+                    <td className="py-3 pr-3">
+                      <p className="font-semibold text-navy">{enrollment.lead_name}</p>
+                      <p className="text-xs text-brand-gray">{enrollment.lead_email || 'No email'}</p>
+                    </td>
+                    <td className="py-3 pr-3">{enrollment.sequence_name}</td>
+                    <td className="py-3 pr-3">{renderStatusBadge(enrollment.status)}</td>
+                    <td className="py-3 pr-3 text-xs text-gray-700">
+                      {toInt(enrollment.current_step)} / {toInt(enrollment.total_steps)}
+                    </td>
+                    <td className="py-3 pr-3 text-xs text-brand-gray">
+                      {enrollment.updated_at ? new Date(enrollment.updated_at).toLocaleString() : '-'}
+                    </td>
+                    <td className="py-3 pr-3">
+                      <div className="flex flex-wrap gap-2">
+                        {enrollment.status === 'active' && (
+                          <button
+                            onClick={() => handleSequenceStateChange(enrollment, 'paused')}
+                            disabled={busyKey === `sequence-state-${enrollment.id}-paused`}
+                            className="text-xs border border-amber-200 text-amber-700 rounded px-2 py-1 hover:bg-amber-50 disabled:opacity-60"
+                          >
+                            Pause
+                          </button>
+                        )}
+                        {enrollment.status === 'paused' && (
+                          <button
+                            onClick={() => handleSequenceStateChange(enrollment, 'active')}
+                            disabled={busyKey === `sequence-state-${enrollment.id}-active`}
+                            className="text-xs border border-emerald-200 text-emerald-700 rounded px-2 py-1 hover:bg-emerald-50 disabled:opacity-60"
+                          >
+                            Resume
+                          </button>
+                        )}
+                        {(enrollment.status === 'active' || enrollment.status === 'paused') && (
+                          <button
+                            onClick={() => handleSequenceStateChange(enrollment, 'stopped')}
+                            disabled={busyKey === `sequence-state-${enrollment.id}-stopped`}
+                            className="text-xs border border-rose-200 text-rose-700 rounded px-2 py-1 hover:bg-rose-50 disabled:opacity-60"
+                          >
+                            Stop
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       <div className="bg-white rounded-xl shadow-sm p-6">
         <h3 className="text-sm font-semibold text-navy mb-4">Import CSV</h3>
         <form onSubmit={handleImportCsv} className="grid grid-cols-1 md:grid-cols-5 gap-3">
@@ -710,6 +883,45 @@ export default function OutboundAutomation() {
                         >
                           Rescore
                         </button>
+                        {sequences.length > 0 && (
+                          <>
+                            <select
+                              value={selectedSequenceByLead[lead.id] || ''}
+                              onChange={(event) =>
+                                setSelectedSequenceByLead((prev) => ({
+                                  ...prev,
+                                  [lead.id]: event.target.value,
+                                }))
+                              }
+                              className="text-xs border border-gray-200 rounded px-2 py-1 text-gray-700"
+                            >
+                              <option value="">Select sequence</option>
+                              {sequences
+                                .filter((sequence) => toInt(sequence.step_count) > 0)
+                                .map((sequence) => (
+                                  <option key={sequence.id} value={sequence.id}>
+                                    {sequence.name}
+                                  </option>
+                                ))}
+                            </select>
+                            <button
+                              onClick={() => handleEnrollLeadInSequence(lead.id)}
+                              disabled={
+                                busyKey === `enroll-sequence-${lead.id}` ||
+                                !selectedSequenceByLead[lead.id] ||
+                                Boolean(openEnrollmentByLead[lead.id])
+                              }
+                              className="text-xs border border-indigo-200 text-indigo-700 rounded px-2 py-1 hover:bg-indigo-50 disabled:opacity-60"
+                              title={
+                                openEnrollmentByLead[lead.id]
+                                  ? `Already enrolled in ${openEnrollmentByLead[lead.id].sequence_name}`
+                                  : ''
+                              }
+                            >
+                              {openEnrollmentByLead[lead.id] ? 'Enrolled' : 'Enroll'}
+                            </button>
+                          </>
+                        )}
                         <button
                           onClick={() => handleGenerateDraft(lead, 'email')}
                           disabled={busyKey === `draft-email-${lead.id}`}

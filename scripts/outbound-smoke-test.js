@@ -190,6 +190,78 @@ async function createCampaign(token, payload) {
   return response.data;
 }
 
+async function createSequence(token, payload) {
+  const response = await fetchJson(`${BASE_URL}/api/sequences`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `create sequence failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function updateSequenceSteps(token, sequenceId, steps) {
+  const response = await fetchJson(`${BASE_URL}/api/sequences/${sequenceId}/steps`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ steps }),
+  });
+
+  assert(response.ok, `update sequence steps failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function enrollLeadInSequence(token, sequenceId, leadId) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/sequences/${sequenceId}/enroll`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ leadId }),
+  });
+
+  assert(response.ok, `outbound sequence enroll failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function setSequenceEnrollmentState(token, enrollmentId, state, reason = null) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/sequences/enrollments/${enrollmentId}/state`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      state,
+      reason,
+    }),
+  });
+
+  assert(response.ok, `set enrollment state failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function listSequenceEnrollments(token, status = '') {
+  const qs = status ? `?status=${encodeURIComponent(status)}&limit=200` : '?limit=200';
+  const response = await fetchJson(`${BASE_URL}/api/outbound/sequences/enrollments${qs}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `list sequence enrollments failed: ${JSON.stringify(response.data)}`);
+  assert(Array.isArray(response.data.enrollments), 'sequence enrollments response missing array');
+  return response.data.enrollments;
+}
+
 async function listCampaigns(token) {
   const response = await fetchJson(`${BASE_URL}/api/outbound/campaigns?limit=20`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -361,7 +433,16 @@ async function run() {
 
   const isHealthy = await waitForHealth(60000);
   assert(isHealthy, `server did not become healthy at ${HEALTH_URL}`);
-  const schemaReady = await waitForTables(databaseUrl, ['outbound_campaigns', 'outbound_campaign_members'], 60000);
+  const schemaReady = await waitForTables(
+    databaseUrl,
+    [
+      'outbound_campaigns',
+      'outbound_campaign_members',
+      'outbound_sequence_enrollments',
+      'outbound_sequence_enrollment_transitions',
+    ],
+    60000
+  );
   assert(schemaReady, 'required outbound campaign tables are not ready');
   steps.push({
     step: 'server_start',
@@ -403,9 +484,47 @@ async function run() {
   const leadIds = leads.leads.map((lead) => lead.id);
   const blockedLeadId = leadIds[1];
 
-  await setSuppression(auth.token, blockedLeadId, true, 'Smoke suppression check');
+  const initialSuppression = await setSuppression(auth.token, blockedLeadId, true, 'Smoke suppression check');
   const blockedDraftAttempt = await expectGenerateDraftConflict(auth.token, blockedLeadId, 'email');
   assert(blockedDraftAttempt.status === 409, `expected suppressed draft generation to return 409, got ${blockedDraftAttempt.status}`);
+  await setSuppression(auth.token, blockedLeadId, false, null);
+
+  const sequence = await createSequence(auth.token, {
+    name: `Smoke Sequence ${Date.now()}`,
+    description: 'Phase 21 Slice 2 lifecycle validation',
+  });
+  await updateSequenceSteps(auth.token, sequence.id, [
+    {
+      delay_days: 0,
+      type: 'email',
+      subject: 'Quick intro',
+      body: 'Hi {{first_name}}, this is a test sequence step.',
+    },
+    {
+      delay_days: 1,
+      type: 'email',
+      subject: 'Follow up',
+      body: 'Checking in after yesterday.',
+    },
+  ]);
+
+  const enrolled = await enrollLeadInSequence(auth.token, sequence.id, blockedLeadId);
+  assert(enrolled.status === 'active', `expected enrollment to be active, got ${enrolled.status}`);
+  const paused = await setSequenceEnrollmentState(auth.token, enrolled.id, 'paused', 'Smoke pause');
+  assert(paused.status === 'paused', `expected enrollment to pause, got ${paused.status}`);
+  const resumed = await setSequenceEnrollmentState(auth.token, enrolled.id, 'active', 'Smoke resume');
+  assert(resumed.status === 'active', `expected enrollment to resume, got ${resumed.status}`);
+
+  const suppressionForAutoStop = await setSuppression(auth.token, blockedLeadId, true, 'Smoke auto-stop check');
+  assert(
+    Array.isArray(suppressionForAutoStop.autoStoppedEnrollmentIds) &&
+      suppressionForAutoStop.autoStoppedEnrollmentIds.includes(enrolled.id),
+    'expected suppression update to auto-stop the open enrollment'
+  );
+
+  const stoppedEnrollments = await listSequenceEnrollments(auth.token, 'stopped');
+  const stoppedEnrollment = stoppedEnrollments.find((item) => item.id === enrolled.id);
+  assert(stoppedEnrollment, 'expected enrolled lead to appear in stopped enrollments');
   await setSuppression(auth.token, blockedLeadId, false, null);
 
   const campaign = await createCampaign(auth.token, {
@@ -477,7 +596,21 @@ async function run() {
     step: 'suppression',
     ok: true,
     blockedLeadId,
+    initialSuppressionAutoStopped: Array.isArray(initialSuppression.autoStoppedEnrollmentIds)
+      ? initialSuppression.autoStoppedEnrollmentIds.length
+      : 0,
     blockedDraftStatus: blockedDraftAttempt.status,
+  });
+
+  steps.push({
+    step: 'sequence_lifecycle',
+    ok: true,
+    sequenceId: sequence.id,
+    enrollmentId: enrolled.id,
+    pausedState: paused.status,
+    resumedState: resumed.status,
+    autoStopCount: suppressionForAutoStop.autoStoppedEnrollmentIds.length,
+    stoppedState: stoppedEnrollment.status,
   });
 
   steps.push({

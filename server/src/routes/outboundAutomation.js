@@ -26,6 +26,39 @@ const VALID_CAMPAIGN_MEMBER_STATUSES = new Set([
   'suppressed',
   'dropped',
 ]);
+const VALID_SEQUENCE_ENROLLMENT_STATES = new Set(['active', 'paused', 'stopped', 'completed', 'error']);
+const ALLOWED_MANUAL_SEQUENCE_TRANSITIONS = {
+  active: new Set(['paused', 'stopped']),
+  paused: new Set(['active', 'stopped']),
+  error: new Set(['active', 'stopped']),
+  completed: new Set([]),
+  stopped: new Set([]),
+};
+const CAMPAIGN_MEMBER_TO_LEAD_STATUS = {
+  queued: 'queued',
+  contacted: 'contacted',
+  replied: 'replied',
+  meeting: 'meeting',
+  opportunity: 'opportunity',
+  suppressed: 'suppressed',
+};
+const LEAD_OUTCOME_EVENT_MAP = {
+  replied: {
+    leadStatus: 'replied',
+    eventType: 'lead_replied',
+    stopReason: 'Auto-stopped after reply',
+  },
+  meeting: {
+    leadStatus: 'meeting',
+    eventType: 'meeting_booked',
+    stopReason: 'Auto-stopped after meeting booked',
+  },
+  hard_bounce: {
+    leadStatus: 'disqualified',
+    eventType: 'hard_bounce',
+    stopReason: 'Auto-stopped after hard bounce',
+  },
+};
 
 function parseCSVRow(line) {
   const result = [];
@@ -281,6 +314,93 @@ function sanitizeUuidList(values) {
     .filter((value) => uuidRegex.test(value));
 }
 
+async function recordSequenceTransition({
+  enrollmentId,
+  userId,
+  fromState = null,
+  toState,
+  reason = null,
+  triggerSource = 'manual',
+  metadata = {},
+}) {
+  await pool.query(
+    `INSERT INTO outbound_sequence_enrollment_transitions
+      (enrollment_id, user_id, from_state, to_state, reason, trigger_source, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+    [enrollmentId, userId, fromState, toState, reason, triggerSource, JSON.stringify(metadata || {})]
+  );
+}
+
+async function getEnrollmentRecord(userId, enrollmentId) {
+  const result = await pool.query(
+    `SELECT
+       e.*,
+       s.name AS sequence_name,
+       l.name AS lead_name,
+       l.email AS lead_email,
+       l.company AS lead_company,
+       l.status AS lead_status,
+       l.suppression_reason
+     FROM outbound_sequence_enrollments e
+     JOIN sequences s ON s.id = e.sequence_id
+     JOIN outbound_leads l ON l.id = e.lead_id
+     WHERE e.id = $1
+       AND e.user_id = $2
+     LIMIT 1`,
+    [enrollmentId, userId]
+  );
+  return result.rows[0] || null;
+}
+
+async function autoStopOpenSequenceEnrollments({
+  userId,
+  leadId,
+  reason,
+  triggerSource,
+  metadata = {},
+}) {
+  const openRes = await pool.query(
+    `SELECT id, status
+     FROM outbound_sequence_enrollments
+     WHERE user_id = $1
+       AND lead_id = $2
+       AND status IN ('active', 'paused')
+     ORDER BY created_at DESC`,
+    [userId, leadId]
+  );
+
+  if (!openRes.rows.length) return [];
+
+  const stoppedIds = [];
+  for (const enrollment of openRes.rows) {
+    await pool.query(
+      `UPDATE outbound_sequence_enrollments
+       SET status = 'stopped',
+           stop_reason = $1,
+           stopped_at = NOW(),
+           updated_at = NOW(),
+           last_transition_at = NOW()
+       WHERE id = $2
+         AND user_id = $3`,
+      [reason, enrollment.id, userId]
+    );
+
+    await recordSequenceTransition({
+      enrollmentId: enrollment.id,
+      userId,
+      fromState: enrollment.status,
+      toState: 'stopped',
+      reason,
+      triggerSource,
+      metadata,
+    });
+
+    stoppedIds.push(enrollment.id);
+  }
+
+  return stoppedIds;
+}
+
 router.use(auth);
 
 /**
@@ -501,6 +621,316 @@ router.get('/leads', async (req, res) => {
 
   const result = await pool.query(sql, params);
   return res.json({ total: result.rows.length, leads: result.rows });
+});
+
+/**
+ * GET /api/outbound/sequences
+ */
+router.get('/sequences', async (req, res) => {
+  const result = await pool.query(
+    `SELECT
+       s.id,
+       s.name,
+       s.description,
+       s.created_at,
+       s.updated_at,
+       COUNT(st.id)::int AS step_count
+     FROM sequences s
+     LEFT JOIN sequence_steps st ON st.sequence_id = s.id
+     WHERE s.user_id = $1
+     GROUP BY s.id
+     ORDER BY s.updated_at DESC`,
+    [req.user.id]
+  );
+
+  return res.json({
+    total: result.rows.length,
+    sequences: result.rows,
+  });
+});
+
+/**
+ * GET /api/outbound/sequences/enrollments
+ * Query: status, limit
+ */
+router.get('/sequences/enrollments', async (req, res) => {
+  const status = String(req.query.status || '').trim().toLowerCase();
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
+
+  if (status && !VALID_SEQUENCE_ENROLLMENT_STATES.has(status)) {
+    return res.status(400).json({ error: 'Invalid enrollment status filter.' });
+  }
+
+  const params = [req.user.id];
+  const filters = ['e.user_id = $1'];
+  if (status) {
+    params.push(status);
+    filters.push(`e.status = $${params.length}`);
+  }
+  params.push(limit);
+
+  const result = await pool.query(
+    `SELECT
+       e.*,
+       s.name AS sequence_name,
+       l.name AS lead_name,
+       l.email AS lead_email,
+       l.company AS lead_company,
+       l.status AS lead_status,
+       COALESCE(step_counts.total_steps, 0) AS total_steps
+     FROM outbound_sequence_enrollments e
+     JOIN sequences s ON s.id = e.sequence_id
+     JOIN outbound_leads l ON l.id = e.lead_id
+     LEFT JOIN (
+       SELECT sequence_id, COUNT(*)::int AS total_steps
+       FROM sequence_steps
+       GROUP BY sequence_id
+     ) step_counts ON step_counts.sequence_id = e.sequence_id
+     WHERE ${filters.join(' AND ')}
+     ORDER BY e.updated_at DESC
+     LIMIT $${params.length}`,
+    params
+  );
+
+  return res.json({
+    total: result.rows.length,
+    enrollments: result.rows,
+  });
+});
+
+/**
+ * POST /api/outbound/sequences/:id/enroll
+ * Body: { leadId }
+ */
+router.post('/sequences/:id/enroll', async (req, res) => {
+  const sequenceId = req.params.id;
+  const leadId = String(req.body.leadId || '').trim();
+
+  if (!leadId) {
+    return res.status(400).json({ error: 'leadId is required.' });
+  }
+
+  const sequenceRes = await pool.query(
+    `SELECT id, name
+     FROM sequences
+     WHERE id = $1
+       AND user_id = $2`,
+    [sequenceId, req.user.id]
+  );
+  if (!sequenceRes.rows.length) {
+    return res.status(404).json({ error: 'Sequence not found.' });
+  }
+
+  const stepsRes = await pool.query(
+    `SELECT COUNT(*)::int AS total_steps
+     FROM sequence_steps
+     WHERE sequence_id = $1`,
+    [sequenceId]
+  );
+  const totalSteps = Number(stepsRes.rows[0]?.total_steps || 0);
+  if (totalSteps === 0) {
+    return res.status(409).json({ error: 'Sequence has no steps yet.' });
+  }
+
+  const leadRes = await pool.query(
+    `SELECT id, name, status, suppression_reason
+     FROM outbound_leads
+     WHERE id = $1
+       AND user_id = $2`,
+    [leadId, req.user.id]
+  );
+  if (!leadRes.rows.length) {
+    return res.status(404).json({ error: 'Lead not found.' });
+  }
+
+  const lead = leadRes.rows[0];
+  if (lead.status === 'suppressed' || lead.suppression_reason) {
+    return res.status(409).json({ error: 'Suppressed leads cannot be enrolled in sequences.' });
+  }
+
+  const openRes = await pool.query(
+    `SELECT e.id, e.sequence_id, e.status, s.name AS sequence_name
+     FROM outbound_sequence_enrollments e
+     JOIN sequences s ON s.id = e.sequence_id
+     WHERE e.user_id = $1
+       AND e.lead_id = $2
+       AND e.status IN ('active', 'paused')
+     LIMIT 1`,
+    [req.user.id, leadId]
+  );
+  if (openRes.rows.length) {
+    const open = openRes.rows[0];
+    return res.status(409).json({
+      error: `Lead already has an ${open.status} sequence enrollment.`,
+      enrollmentId: open.id,
+      sequenceId: open.sequence_id,
+      sequenceName: open.sequence_name,
+    });
+  }
+
+  try {
+    const insertedRes = await pool.query(
+      `INSERT INTO outbound_sequence_enrollments
+        (user_id, sequence_id, lead_id, status, current_step, next_step_due_at)
+       VALUES ($1, $2, $3, 'active', 1, NOW())
+       RETURNING id`,
+      [req.user.id, sequenceId, leadId]
+    );
+
+    const enrollmentId = insertedRes.rows[0].id;
+
+    await recordSequenceTransition({
+      enrollmentId,
+      userId: req.user.id,
+      fromState: null,
+      toState: 'active',
+      reason: 'Manual enroll',
+      triggerSource: 'manual',
+      metadata: { sequenceId, leadId },
+    });
+
+    await pool.query(
+      `UPDATE outbound_leads
+       SET status = CASE
+            WHEN status IN ('new', 'qualified') THEN 'queued'
+            ELSE status
+          END,
+          updated_at = NOW()
+       WHERE id = $1
+         AND user_id = $2`,
+      [leadId, req.user.id]
+    );
+
+    await logLeadEvent({
+      userId: req.user.id,
+      leadId,
+      eventType: 'sequence_enrolled',
+      metadata: { sequenceId, enrollmentId },
+    });
+
+    logAction(
+      req.user.id,
+      req.user.email,
+      'outbound_sequence_enrolled',
+      'outbound_sequence_enrollment',
+      enrollmentId,
+      sequenceRes.rows[0].name,
+      { leadId }
+    );
+
+    const enrollment = await getEnrollmentRecord(req.user.id, enrollmentId);
+    return res.status(201).json(enrollment);
+  } catch (err) {
+    if (err?.code === '23505') {
+      return res.status(409).json({ error: 'Lead already has an open sequence enrollment.' });
+    }
+    return res.status(500).json({ error: 'Failed to enroll lead into sequence.' });
+  }
+});
+
+/**
+ * PATCH /api/outbound/sequences/enrollments/:id/state
+ * Body: { state, reason? }
+ */
+router.patch('/sequences/enrollments/:id/state', async (req, res) => {
+  const enrollmentId = req.params.id;
+  const nextState = String(req.body.state || '').trim().toLowerCase();
+  const reason = req.body.reason ? String(req.body.reason).trim() : '';
+
+  if (!VALID_SEQUENCE_ENROLLMENT_STATES.has(nextState)) {
+    return res.status(400).json({ error: 'Invalid state.' });
+  }
+
+  const existing = await getEnrollmentRecord(req.user.id, enrollmentId);
+  if (!existing) {
+    return res.status(404).json({ error: 'Sequence enrollment not found.' });
+  }
+
+  const currentState = String(existing.status || '').toLowerCase();
+  if (currentState === nextState) {
+    return res.json(existing);
+  }
+
+  const allowedTargets = ALLOWED_MANUAL_SEQUENCE_TRANSITIONS[currentState] || new Set();
+  if (!allowedTargets.has(nextState)) {
+    return res.status(409).json({
+      error: `Cannot transition enrollment from ${currentState} to ${nextState}.`,
+    });
+  }
+
+  if (nextState === 'active' && (existing.lead_status === 'suppressed' || existing.suppression_reason)) {
+    return res.status(409).json({
+      error: 'Cannot resume sequence while lead is suppressed.',
+    });
+  }
+
+  const defaultReason =
+    nextState === 'paused' ? 'Manual pause' : nextState === 'stopped' ? 'Manual stop' : 'Manual state update';
+  const finalReason = reason || defaultReason;
+
+  await pool.query(
+    `UPDATE outbound_sequence_enrollments
+     SET status = $1,
+         pause_reason = CASE
+           WHEN $1 = 'paused' THEN $2
+           WHEN $1 = 'active' THEN NULL
+           ELSE pause_reason
+         END,
+         stop_reason = CASE
+           WHEN $1 = 'stopped' THEN $2
+           ELSE stop_reason
+         END,
+         paused_at = CASE WHEN $1 = 'paused' THEN NOW() ELSE paused_at END,
+         resumed_at = CASE WHEN $1 = 'active' THEN NOW() ELSE resumed_at END,
+         stopped_at = CASE WHEN $1 = 'stopped' THEN NOW() ELSE stopped_at END,
+         completed_at = CASE WHEN $1 = 'completed' THEN NOW() ELSE completed_at END,
+         updated_at = NOW(),
+         last_transition_at = NOW()
+     WHERE id = $3
+       AND user_id = $4`,
+    [nextState, finalReason, enrollmentId, req.user.id]
+  );
+
+  await recordSequenceTransition({
+    enrollmentId,
+    userId: req.user.id,
+    fromState: currentState,
+    toState: nextState,
+    reason: finalReason,
+    triggerSource: 'manual',
+    metadata: { leadId: existing.lead_id, sequenceId: existing.sequence_id },
+  });
+
+  await logLeadEvent({
+    userId: req.user.id,
+    leadId: existing.lead_id,
+    eventType: 'sequence_state_changed',
+    metadata: {
+      enrollmentId,
+      sequenceId: existing.sequence_id,
+      fromState: currentState,
+      toState: nextState,
+      reason: finalReason,
+    },
+  });
+
+  logAction(
+    req.user.id,
+    req.user.email,
+    'outbound_sequence_state_changed',
+    'outbound_sequence_enrollment',
+    enrollmentId,
+    existing.sequence_name,
+    {
+      leadId: existing.lead_id,
+      fromState: currentState,
+      toState: nextState,
+      reason: finalReason,
+    }
+  );
+
+  const updated = await getEnrollmentRecord(req.user.id, enrollmentId);
+  return res.json(updated);
 });
 
 /**
@@ -747,6 +1177,7 @@ router.patch('/campaigns/:id/status', async (req, res) => {
 router.patch('/campaigns/:campaignId/members/:memberId/status', async (req, res) => {
   const memberStatus = String(req.body.memberStatus || '').trim();
   const lastChannel = req.body.lastChannel == null ? null : String(req.body.lastChannel).trim().toLowerCase();
+  const statusReason = req.body.reason == null ? '' : String(req.body.reason).trim();
 
   if (!VALID_CAMPAIGN_MEMBER_STATUSES.has(memberStatus)) {
     return res.status(400).json({ error: 'Invalid memberStatus.' });
@@ -780,8 +1211,97 @@ router.patch('/campaigns/:campaignId/members/:memberId/status', async (req, res)
      WHERE id = $1 AND user_id = $2`,
     [req.params.campaignId, req.user.id]
   );
+  const updatedMember = updatedRes.rows[0];
+  const mappedLeadStatus = CAMPAIGN_MEMBER_TO_LEAD_STATUS[memberStatus];
+  const leadId = updatedMember.lead_id;
+  let autoStoppedEnrollmentIds = [];
 
-  return res.json(updatedRes.rows[0]);
+  if (mappedLeadStatus && leadId) {
+    await pool.query(
+      `UPDATE outbound_leads
+       SET status = $1,
+           suppression_reason = CASE
+             WHEN $1 = 'suppressed' THEN COALESCE(NULLIF($2, ''), suppression_reason, 'Campaign suppression update')
+             WHEN status = 'suppressed' THEN NULL
+             ELSE suppression_reason
+           END,
+           updated_at = NOW()
+       WHERE id = $3
+         AND user_id = $4`,
+      [mappedLeadStatus, statusReason, leadId, req.user.id]
+    );
+  }
+
+  if (leadId && memberStatus === 'replied') {
+    await logLeadEvent({
+      userId: req.user.id,
+      leadId,
+      eventType: 'lead_replied',
+      metadata: {
+        campaignId: req.params.campaignId,
+        memberId: req.params.memberId,
+      },
+    });
+    autoStoppedEnrollmentIds = await autoStopOpenSequenceEnrollments({
+      userId: req.user.id,
+      leadId,
+      reason: 'Auto-stopped after reply',
+      triggerSource: 'campaign_member_status',
+      metadata: {
+        campaignId: req.params.campaignId,
+        memberId: req.params.memberId,
+        memberStatus,
+      },
+    });
+  } else if (leadId && memberStatus === 'meeting') {
+    await logLeadEvent({
+      userId: req.user.id,
+      leadId,
+      eventType: 'meeting_booked',
+      metadata: {
+        campaignId: req.params.campaignId,
+        memberId: req.params.memberId,
+      },
+    });
+    autoStoppedEnrollmentIds = await autoStopOpenSequenceEnrollments({
+      userId: req.user.id,
+      leadId,
+      reason: 'Auto-stopped after meeting booked',
+      triggerSource: 'campaign_member_status',
+      metadata: {
+        campaignId: req.params.campaignId,
+        memberId: req.params.memberId,
+        memberStatus,
+      },
+    });
+  } else if (leadId && memberStatus === 'suppressed') {
+    await logLeadEvent({
+      userId: req.user.id,
+      leadId,
+      eventType: 'lead_suppressed',
+      metadata: {
+        campaignId: req.params.campaignId,
+        memberId: req.params.memberId,
+        reason: statusReason || null,
+      },
+    });
+    autoStoppedEnrollmentIds = await autoStopOpenSequenceEnrollments({
+      userId: req.user.id,
+      leadId,
+      reason: 'Auto-stopped after suppression update',
+      triggerSource: 'campaign_member_status',
+      metadata: {
+        campaignId: req.params.campaignId,
+        memberId: req.params.memberId,
+        memberStatus,
+      },
+    });
+  }
+
+  return res.json({
+    ...updatedMember,
+    autoStoppedEnrollmentIds,
+  });
 });
 
 /**
@@ -930,6 +1450,15 @@ router.patch('/leads/:id/suppression', async (req, res) => {
     eventType: suppressed ? 'lead_suppressed' : 'lead_unsuppressed',
     metadata: { reason: suppressed ? reason : null },
   });
+  const autoStoppedEnrollmentIds = suppressed
+    ? await autoStopOpenSequenceEnrollments({
+        userId: req.user.id,
+        leadId: updatedLead.id,
+        reason: 'Auto-stopped after suppression update',
+        triggerSource: 'suppression_update',
+        metadata: { reason },
+      })
+    : [];
 
   logAction(
     req.user.id,
@@ -941,7 +1470,85 @@ router.patch('/leads/:id/suppression', async (req, res) => {
     { reason: suppressed ? reason : null }
   );
 
-  return res.json(updatedLead);
+  return res.json({
+    ...updatedLead,
+    autoStoppedEnrollmentIds,
+  });
+});
+
+/**
+ * POST /api/outbound/leads/:id/outcome
+ * Body: { outcome: 'replied'|'meeting'|'hard_bounce', note?: string }
+ */
+router.post('/leads/:id/outcome', async (req, res) => {
+  const outcome = String(req.body.outcome || '').trim().toLowerCase();
+  const note = req.body.note ? String(req.body.note).trim() : null;
+  const config = LEAD_OUTCOME_EVENT_MAP[outcome];
+
+  if (!config) {
+    return res.status(400).json({
+      error: 'Invalid outcome. Use replied, meeting, or hard_bounce.',
+    });
+  }
+
+  const leadRes = await pool.query(
+    `SELECT id, name
+     FROM outbound_leads
+     WHERE id = $1
+       AND user_id = $2`,
+    [req.params.id, req.user.id]
+  );
+  if (!leadRes.rows.length) {
+    return res.status(404).json({ error: 'Lead not found.' });
+  }
+
+  const updatedRes = await pool.query(
+    `UPDATE outbound_leads
+     SET status = $1,
+         suppression_reason = CASE
+           WHEN $1 = 'disqualified' THEN COALESCE($2, suppression_reason, 'Hard bounce')
+           WHEN status = 'suppressed' THEN NULL
+           ELSE suppression_reason
+         END,
+         updated_at = NOW()
+     WHERE id = $3
+       AND user_id = $4
+     RETURNING *`,
+    [config.leadStatus, note, req.params.id, req.user.id]
+  );
+  const updatedLead = updatedRes.rows[0];
+
+  await logLeadEvent({
+    userId: req.user.id,
+    leadId: req.params.id,
+    eventType: config.eventType,
+    metadata: {
+      outcome,
+      note,
+    },
+  });
+
+  const autoStoppedEnrollmentIds = await autoStopOpenSequenceEnrollments({
+    userId: req.user.id,
+    leadId: req.params.id,
+    reason: config.stopReason,
+    triggerSource: 'lead_outcome',
+    metadata: {
+      outcome,
+      note,
+    },
+  });
+
+  logAction(req.user.id, req.user.email, 'outbound_lead_outcome', 'outbound_lead', req.params.id, updatedLead.name, {
+    outcome,
+    note,
+    autoStoppedEnrollments: autoStoppedEnrollmentIds.length,
+  });
+
+  return res.json({
+    lead: updatedLead,
+    autoStoppedEnrollmentIds,
+  });
 });
 
 /**

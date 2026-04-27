@@ -237,9 +237,9 @@ Current lead generation logic creates synthetic Reddit/LinkedIn outputs, which i
 
 ### Progress status (as of April 27, 2026)
 
-- Phase 21 completion: 12%
+- Phase 21 completion: 22%
 - Measurement basis (weighted by planned capabilities):
-  - Sequence state machine v2: 0%
+  - Sequence state machine v2: 35%
   - Workflow rules engine: 0%
   - Scoring v2 + explainability: 45%
   - Forecast + goals: 0%
@@ -256,6 +256,32 @@ Phase 21 slice delivered now:
 - Added endpoint:
   - `GET /api/outbound/scoring/:leadId/explain`
   - returns current explanation + recent scoring history
+
+Additional Phase 21 slice delivered now (Slice 2):
+
+- Added outbound sequence state machine tables:
+  - `outbound_sequence_enrollments`
+  - `outbound_sequence_enrollment_transitions`
+- Added one-open-sequence-per-lead guardrail:
+  - unique open enrollment constraint for `active`/`paused` states
+- Added sequence lifecycle endpoints:
+  - `GET /api/outbound/sequences`
+  - `GET /api/outbound/sequences/enrollments`
+  - `POST /api/outbound/sequences/:id/enroll`
+  - `PATCH /api/outbound/sequences/enrollments/:id/state`
+- Added automatic stop triggers for active/paused enrollments on:
+  - suppression updates
+  - reply outcomes
+  - meeting outcomes
+  - hard-bounce outcomes
+- Added outcome endpoint for lifecycle-triggered state automation:
+  - `POST /api/outbound/leads/:id/outcome`
+- Added Sequence Control Center UI in `/outbound-automation`:
+  - enroll lead into sequence
+  - view enrollment status and step progress
+  - pause/resume/stop controls
+- Expanded smoke test coverage to include:
+  - enroll -> pause -> resume -> auto-stop flow
 
 ## 7. Data Model Additions
 
