@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react'
+import axios from 'axios'
 
 const AuthContext = createContext(null)
 
@@ -22,6 +23,34 @@ export function AuthProvider({ children }) {
     setToken(null)
     setUser(null)
   }
+
+  useEffect(() => {
+    let mounted = true
+
+    const syncCurrentUser = async () => {
+      if (!token) return
+
+      try {
+        const { data } = await axios.get('/api/users/me', {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        if (!mounted) return
+
+        setUser(data)
+        localStorage.setItem('resiq_user', JSON.stringify(data))
+      } catch {
+        if (!mounted) return
+        logout()
+      }
+    }
+
+    syncCurrentUser()
+
+    return () => {
+      mounted = false
+    }
+  }, [token])
 
   return (
     <AuthContext.Provider value={{ token, user, login, logout, isAuthenticated: !!token }}>
