@@ -59,6 +59,43 @@ const LEAD_OUTCOME_EVENT_MAP = {
     stopReason: 'Auto-stopped after hard bounce',
   },
 };
+const VALID_OUTBOUND_LEAD_STATUSES = new Set([
+  'new',
+  'qualified',
+  'queued',
+  'contacted',
+  'replied',
+  'meeting',
+  'opportunity',
+  'disqualified',
+  'suppressed',
+]);
+const VALID_RULE_TRIGGER_EVENTS = new Set([
+  'lead_imported',
+  'draft_generated',
+  'draft_approved',
+  'draft_sent',
+  'linkedin_task_completed',
+  'lead_suppressed',
+  'lead_unsuppressed',
+  'lead_replied',
+  'meeting_booked',
+  'hard_bounce',
+  'sequence_enrolled',
+  'sequence_state_changed',
+  'campaign_created',
+  'campaign_member_status_changed',
+  'manual_test',
+]);
+const VALID_RULE_ACTION_TYPES = new Set([
+  'update_lead_status',
+  'set_next_recommended_action',
+  'create_reminder',
+  'suppress_lead',
+  'log_event',
+  'enroll_sequence',
+]);
+const VALID_RULE_RUN_STATUSES = new Set(['success', 'failed', 'skipped']);
 
 function parseCSVRow(line) {
   const result = [];
@@ -176,12 +213,29 @@ function buildLinkedInDraft(lead) {
   return `Hi ${firstName} - I work with multifamily operators to improve property tech execution and operational efficiency. Would love to connect and share a quick idea for ${companyName}.`;
 }
 
-async function logLeadEvent({ userId, leadId, eventType, channel = null, metadata = {} }) {
+async function logLeadEvent({
+  userId,
+  leadId,
+  eventType,
+  channel = null,
+  metadata = {},
+  runRules = true,
+}) {
   await pool.query(
     `INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
      VALUES ($1, $2, $3, $4, $5)`,
     [userId, leadId, eventType, channel, JSON.stringify(metadata)]
   );
+
+  if (runRules) {
+    await runWorkflowRulesForEvent({
+      userId,
+      leadId,
+      triggerEvent: eventType,
+      eventData: metadata || {},
+      triggerSource: 'lead_event',
+    });
+  }
 }
 
 async function computeEngagementSignals(userId, leadId) {
@@ -399,6 +453,452 @@ async function autoStopOpenSequenceEnrollments({
   }
 
   return stoppedIds;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getByPath(source, path) {
+  const segments = String(path || '')
+    .split('.')
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (!segments.length) return undefined;
+
+  let current = source;
+  for (const segment of segments) {
+    if (!isPlainObject(current) && !Array.isArray(current)) return undefined;
+    current = current[segment];
+    if (current === undefined) return undefined;
+  }
+  return current;
+}
+
+function compareConditionValues(op, actual, expected) {
+  const normalized = String(op || 'equals').toLowerCase();
+  switch (normalized) {
+    case 'equals':
+    case 'eq':
+      return actual === expected;
+    case 'not_equals':
+    case 'ne':
+      return actual !== expected;
+    case 'gt':
+      return Number(actual) > Number(expected);
+    case 'gte':
+      return Number(actual) >= Number(expected);
+    case 'lt':
+      return Number(actual) < Number(expected);
+    case 'lte':
+      return Number(actual) <= Number(expected);
+    case 'contains':
+      return String(actual ?? '').toLowerCase().includes(String(expected ?? '').toLowerCase());
+    case 'in':
+      return Array.isArray(expected) && expected.includes(actual);
+    case 'exists':
+      return actual !== undefined && actual !== null && actual !== '';
+    default:
+      return false;
+  }
+}
+
+function evaluateRuleConditions(conditions, context) {
+  if (!isPlainObject(conditions)) {
+    return true;
+  }
+
+  const operator = String(conditions.operator || 'AND').toUpperCase();
+  const rules = Array.isArray(conditions.rules) ? conditions.rules : [];
+
+  if (!rules.length) {
+    return true;
+  }
+
+  const evaluations = rules.map((rule) => {
+    if (!isPlainObject(rule)) return false;
+    const field = String(rule.field || '').trim();
+    const op = String(rule.op || 'equals').trim();
+    if (!field) return false;
+    const actual = getByPath(context, field);
+    return compareConditionValues(op, actual, rule.value);
+  });
+
+  if (operator === 'OR') {
+    return evaluations.some(Boolean);
+  }
+  return evaluations.every(Boolean);
+}
+
+function normalizeRuleActions(actions) {
+  const normalized = (Array.isArray(actions) ? actions : [])
+    .map((action) => (isPlainObject(action) ? action : null))
+    .filter(Boolean)
+    .map((action) => {
+      const type = String(action.type || '').trim().toLowerCase();
+      if (!VALID_RULE_ACTION_TYPES.has(type)) return null;
+      const config = isPlainObject(action.config) ? action.config : {};
+      return { type, config };
+    })
+    .filter(Boolean);
+  return normalized;
+}
+
+async function upsertSequenceEnrollmentForRule({ userId, sequenceId, leadId }) {
+  const sequenceRes = await pool.query(
+    `SELECT id, name
+     FROM sequences
+     WHERE id = $1
+       AND user_id = $2`,
+    [sequenceId, userId]
+  );
+  if (!sequenceRes.rows.length) {
+    throw new Error('Sequence not found for enroll_sequence action');
+  }
+
+  const stepsRes = await pool.query(
+    `SELECT COUNT(*)::int AS total_steps
+     FROM sequence_steps
+     WHERE sequence_id = $1`,
+    [sequenceId]
+  );
+  const totalSteps = Number(stepsRes.rows[0]?.total_steps || 0);
+  if (totalSteps === 0) {
+    throw new Error('Sequence has no steps for enroll_sequence action');
+  }
+
+  const openRes = await pool.query(
+    `SELECT id
+     FROM outbound_sequence_enrollments
+     WHERE user_id = $1
+       AND lead_id = $2
+       AND status IN ('active', 'paused')
+     LIMIT 1`,
+    [userId, leadId]
+  );
+  if (openRes.rows.length) {
+    return {
+      skipped: true,
+      message: 'Lead already has an open sequence enrollment',
+      enrollmentId: openRes.rows[0].id,
+    };
+  }
+
+  const insertedRes = await pool.query(
+    `INSERT INTO outbound_sequence_enrollments
+      (user_id, sequence_id, lead_id, status, current_step, next_step_due_at)
+     VALUES ($1, $2, $3, 'active', 1, NOW())
+     RETURNING id`,
+    [userId, sequenceId, leadId]
+  );
+  const enrollmentId = insertedRes.rows[0].id;
+
+  await recordSequenceTransition({
+    enrollmentId,
+    userId,
+    fromState: null,
+    toState: 'active',
+    reason: 'Workflow rule enrollment',
+    triggerSource: 'workflow_rule',
+    metadata: { sequenceId, leadId },
+  });
+
+  return {
+    skipped: false,
+    enrollmentId,
+    sequenceName: sequenceRes.rows[0].name,
+  };
+}
+
+async function executeWorkflowRuleActions({
+  userId,
+  lead,
+  actions,
+  triggerEvent,
+  dryRun = true,
+}) {
+  const executed = [];
+
+  for (const action of actions) {
+    const result = {
+      type: action.type,
+      status: 'success',
+      dryRun,
+      config: action.config,
+    };
+
+    try {
+      if (action.type === 'update_lead_status') {
+        if (!lead?.id) throw new Error('update_lead_status requires lead context');
+        const nextStatus = String(action.config.status || '').trim().toLowerCase();
+        if (!VALID_OUTBOUND_LEAD_STATUSES.has(nextStatus)) {
+          throw new Error('Invalid lead status in update_lead_status action');
+        }
+        if (!dryRun) {
+          await pool.query(
+            `UPDATE outbound_leads
+             SET status = $1,
+                 updated_at = NOW()
+             WHERE id = $2
+               AND user_id = $3`,
+            [nextStatus, lead.id, userId]
+          );
+        }
+        result.nextStatus = nextStatus;
+      } else if (action.type === 'set_next_recommended_action') {
+        if (!lead?.id) throw new Error('set_next_recommended_action requires lead context');
+        const nextAction = String(action.config.value || action.config.nextRecommendedAction || '').trim();
+        if (!nextAction) throw new Error('set_next_recommended_action requires a value');
+        if (!dryRun) {
+          await pool.query(
+            `UPDATE outbound_leads
+             SET next_recommended_action = $1,
+                 updated_at = NOW()
+             WHERE id = $2
+               AND user_id = $3`,
+            [nextAction, lead.id, userId]
+          );
+        }
+        result.value = nextAction;
+      } else if (action.type === 'create_reminder') {
+        const message = String(action.config.message || action.config.title || '').trim();
+        const dueDays = Math.max(0, Number(action.config.dueDays ?? action.config.due_days ?? 1));
+        if (!message) throw new Error('create_reminder requires message');
+        if (!dryRun) {
+          await pool.query(
+            `INSERT INTO reminders (user_id, message, remind_at)
+             VALUES ($1, $2, NOW() + ($3 || ' days')::interval)`,
+            [userId, message, String(dueDays)]
+          );
+        }
+        result.message = message;
+        result.dueDays = dueDays;
+      } else if (action.type === 'suppress_lead') {
+        if (!lead?.id) throw new Error('suppress_lead requires lead context');
+        const reason = String(action.config.reason || 'Suppressed by workflow rule').trim();
+        if (!dryRun) {
+          await pool.query(
+            `UPDATE outbound_leads
+             SET status = 'suppressed',
+                 suppression_reason = $1,
+                 updated_at = NOW()
+             WHERE id = $2
+               AND user_id = $3`,
+            [reason, lead.id, userId]
+          );
+          await autoStopOpenSequenceEnrollments({
+            userId,
+            leadId: lead.id,
+            reason: 'Auto-stopped after suppression update',
+            triggerSource: 'workflow_rule',
+            metadata: { triggerEvent, reason },
+          });
+          await logLeadEvent({
+            userId,
+            leadId: lead.id,
+            eventType: 'lead_suppressed',
+            metadata: { reason, source: 'workflow_rule' },
+            runRules: false,
+          });
+        }
+        result.reason = reason;
+      } else if (action.type === 'log_event') {
+        const eventType = String(action.config.eventType || 'workflow_rule_event').trim();
+        if (!eventType) throw new Error('log_event requires eventType');
+        if (!dryRun) {
+          await logLeadEvent({
+            userId,
+            leadId: lead?.id || null,
+            eventType,
+            metadata: {
+              ...(isPlainObject(action.config.metadata) ? action.config.metadata : {}),
+              source: 'workflow_rule',
+            },
+            runRules: false,
+          });
+        }
+        result.eventType = eventType;
+      } else if (action.type === 'enroll_sequence') {
+        if (!lead?.id) throw new Error('enroll_sequence requires lead context');
+        const sequenceId = String(action.config.sequenceId || '').trim();
+        if (!sequenceId) throw new Error('enroll_sequence requires sequenceId');
+        if (!dryRun) {
+          const enrollment = await upsertSequenceEnrollmentForRule({
+            userId,
+            sequenceId,
+            leadId: lead.id,
+          });
+          result.enrollment = enrollment;
+        } else {
+          result.sequenceId = sequenceId;
+        }
+      } else {
+        result.status = 'skipped';
+        result.message = 'Unsupported action type';
+      }
+    } catch (error) {
+      result.status = 'failed';
+      result.error = error.message;
+    }
+
+    executed.push(result);
+  }
+
+  return executed;
+}
+
+async function insertWorkflowRuleRun({
+  ruleId,
+  userId,
+  triggerSource,
+  inputContext,
+  matched,
+  status,
+  actionsExecuted,
+  errorMessage = null,
+}) {
+  const normalizedStatus = VALID_RULE_RUN_STATUSES.has(status) ? status : 'failed';
+  await pool.query(
+    `INSERT INTO workflow_rule_runs
+      (rule_id, user_id, trigger_source, input_context, matched, status, actions_executed, error_message)
+     VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8)`,
+    [
+      ruleId,
+      userId,
+      triggerSource,
+      JSON.stringify(inputContext || {}),
+      matched,
+      normalizedStatus,
+      JSON.stringify(actionsExecuted || []),
+      errorMessage,
+    ]
+  );
+}
+
+async function runWorkflowRulesForEvent({
+  userId,
+  leadId = null,
+  triggerEvent,
+  eventData = {},
+  triggerSource = 'lead_event',
+  dryRun = false,
+  limitToRuleId = null,
+  includeDisabled = false,
+}) {
+  const eventName = String(triggerEvent || '').trim();
+  if (!eventName) return [];
+
+  const params = [userId];
+  const filters = ['user_id = $1'];
+  if (!includeDisabled) {
+    filters.push('enabled = TRUE');
+  }
+
+  if (limitToRuleId) {
+    params.push(limitToRuleId);
+    filters.push(`id = $${params.length}`);
+  } else {
+    params.push(eventName);
+    filters.push(`trigger_event = $${params.length}`);
+  }
+
+  const rulesRes = await pool.query(
+    `SELECT *
+     FROM workflow_rules
+     WHERE ${filters.join(' AND ')}
+     ORDER BY priority ASC, created_at ASC`,
+    params
+  );
+
+  if (!rulesRes.rows.length) return [];
+
+  const lead = leadId
+    ? (
+        await pool.query(
+          `SELECT *
+           FROM outbound_leads
+           WHERE id = $1
+             AND user_id = $2
+           LIMIT 1`,
+          [leadId, userId]
+        )
+      ).rows[0] || null
+    : null;
+
+  const context = {
+    lead,
+    event: {
+      type: eventName,
+      data: isPlainObject(eventData) ? eventData : {},
+    },
+    now: new Date().toISOString(),
+  };
+
+  const outputs = [];
+  for (const rule of rulesRes.rows) {
+    const matched = evaluateRuleConditions(rule.conditions || {}, context);
+    const trueActions = normalizeRuleActions(rule.true_actions);
+    const falseActions = normalizeRuleActions(rule.false_actions);
+    const targetActions = matched ? trueActions : falseActions;
+
+    try {
+      const actionsExecuted = await executeWorkflowRuleActions({
+        userId,
+        lead,
+        actions: targetActions,
+        triggerEvent: eventName,
+        dryRun,
+      });
+
+      const actionFailures = actionsExecuted.filter((entry) => entry.status === 'failed');
+      const status = actionFailures.length ? 'failed' : targetActions.length ? 'success' : 'skipped';
+
+      if (!dryRun) {
+        await insertWorkflowRuleRun({
+          ruleId: rule.id,
+          userId,
+          triggerSource,
+          inputContext: context,
+          matched,
+          status,
+          actionsExecuted,
+          errorMessage: actionFailures.length ? actionFailures.map((item) => item.error).join('; ') : null,
+        });
+      }
+
+      outputs.push({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        matched,
+        status,
+        actionsExecuted,
+      });
+    } catch (error) {
+      if (!dryRun) {
+        await insertWorkflowRuleRun({
+          ruleId: rule.id,
+          userId,
+          triggerSource,
+          inputContext: context,
+          matched,
+          status: 'failed',
+          actionsExecuted: [],
+          errorMessage: error.message,
+        });
+      }
+
+      outputs.push({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        matched,
+        status: 'failed',
+        actionsExecuted: [],
+        error: error.message,
+      });
+    }
+  }
+
+  return outputs;
 }
 
 router.use(auth);
@@ -934,6 +1434,269 @@ router.patch('/sequences/enrollments/:id/state', async (req, res) => {
 });
 
 /**
+ * GET /api/outbound/workflows/rules
+ */
+router.get('/workflows/rules', async (req, res) => {
+  const includeDisabled = String(req.query.includeDisabled || '').trim().toLowerCase() === 'true';
+  const params = [req.user.id];
+  const filters = ['user_id = $1'];
+  if (!includeDisabled) {
+    filters.push('enabled = TRUE');
+  }
+
+  const result = await pool.query(
+    `SELECT id, user_id, name, description, enabled, trigger_event, priority, conditions, true_actions, false_actions,
+            last_tested_at, created_at, updated_at
+     FROM workflow_rules
+     WHERE ${filters.join(' AND ')}
+     ORDER BY priority ASC, created_at DESC`,
+    params
+  );
+
+  return res.json({
+    total: result.rows.length,
+    rules: result.rows,
+  });
+});
+
+/**
+ * POST /api/outbound/workflows/rules
+ */
+router.post('/workflows/rules', async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  const description = req.body.description ? String(req.body.description).trim() : null;
+  const triggerEvent = String(req.body.triggerEvent || '').trim();
+  const priority = Math.max(0, Math.min(1000, Number(req.body.priority || 100)));
+  const enabled = req.body.enabled == null ? true : Boolean(req.body.enabled);
+  const conditions = isPlainObject(req.body.conditions) ? req.body.conditions : {};
+
+  const rawTrueActions = Array.isArray(req.body.trueActions) ? req.body.trueActions : [];
+  const rawFalseActions = Array.isArray(req.body.falseActions) ? req.body.falseActions : [];
+  const trueActions = normalizeRuleActions(rawTrueActions);
+  const falseActions = normalizeRuleActions(rawFalseActions);
+
+  if (!name) {
+    return res.status(400).json({ error: 'Rule name is required.' });
+  }
+  if (!VALID_RULE_TRIGGER_EVENTS.has(triggerEvent)) {
+    return res.status(400).json({ error: 'Invalid triggerEvent for outbound workflow rule.' });
+  }
+  if (rawTrueActions.length !== trueActions.length || rawFalseActions.length !== falseActions.length) {
+    return res.status(400).json({ error: 'One or more actions are invalid.' });
+  }
+
+  const result = await pool.query(
+    `INSERT INTO workflow_rules
+      (user_id, name, description, enabled, trigger_event, priority, conditions, true_actions, false_actions)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb)
+     RETURNING *`,
+    [
+      req.user.id,
+      name,
+      description,
+      enabled,
+      triggerEvent,
+      priority,
+      JSON.stringify(conditions),
+      JSON.stringify(trueActions),
+      JSON.stringify(falseActions),
+    ]
+  );
+
+  const rule = result.rows[0];
+  logAction(req.user.id, req.user.email, 'outbound_workflow_rule_created', 'workflow_rule', rule.id, rule.name, {
+    triggerEvent: rule.trigger_event,
+    priority: rule.priority,
+    enabled: rule.enabled,
+  });
+
+  return res.status(201).json(rule);
+});
+
+/**
+ * PATCH /api/outbound/workflows/rules/:id
+ */
+router.patch('/workflows/rules/:id', async (req, res) => {
+  const existingRes = await pool.query(
+    `SELECT *
+     FROM workflow_rules
+     WHERE id = $1
+       AND user_id = $2`,
+    [req.params.id, req.user.id]
+  );
+  if (!existingRes.rows.length) {
+    return res.status(404).json({ error: 'Workflow rule not found.' });
+  }
+  const current = existingRes.rows[0];
+
+  const name = req.body.name == null ? current.name : String(req.body.name).trim();
+  const description = req.body.description == null ? current.description : String(req.body.description).trim();
+  const triggerEvent =
+    req.body.triggerEvent == null ? current.trigger_event : String(req.body.triggerEvent || '').trim();
+  const priority =
+    req.body.priority == null ? Number(current.priority) : Math.max(0, Math.min(1000, Number(req.body.priority)));
+  const enabled = req.body.enabled == null ? Boolean(current.enabled) : Boolean(req.body.enabled);
+  const conditions = req.body.conditions == null ? current.conditions : isPlainObject(req.body.conditions) ? req.body.conditions : {};
+
+  if (!name) {
+    return res.status(400).json({ error: 'Rule name is required.' });
+  }
+  if (!VALID_RULE_TRIGGER_EVENTS.has(triggerEvent)) {
+    return res.status(400).json({ error: 'Invalid triggerEvent for outbound workflow rule.' });
+  }
+
+  const rawTrueActions = req.body.trueActions == null ? current.true_actions : req.body.trueActions;
+  const rawFalseActions = req.body.falseActions == null ? current.false_actions : req.body.falseActions;
+  const trueActions = normalizeRuleActions(rawTrueActions);
+  const falseActions = normalizeRuleActions(rawFalseActions);
+
+  if (
+    (Array.isArray(rawTrueActions) && rawTrueActions.length !== trueActions.length) ||
+    (Array.isArray(rawFalseActions) && rawFalseActions.length !== falseActions.length)
+  ) {
+    return res.status(400).json({ error: 'One or more actions are invalid.' });
+  }
+
+  const updatedRes = await pool.query(
+    `UPDATE workflow_rules
+     SET name = $1,
+         description = $2,
+         enabled = $3,
+         trigger_event = $4,
+         priority = $5,
+         conditions = $6::jsonb,
+         true_actions = $7::jsonb,
+         false_actions = $8::jsonb,
+         updated_at = NOW()
+     WHERE id = $9
+       AND user_id = $10
+     RETURNING *`,
+    [
+      name,
+      description || null,
+      enabled,
+      triggerEvent,
+      priority,
+      JSON.stringify(conditions),
+      JSON.stringify(trueActions),
+      JSON.stringify(falseActions),
+      req.params.id,
+      req.user.id,
+    ]
+  );
+
+  const updated = updatedRes.rows[0];
+  logAction(req.user.id, req.user.email, 'outbound_workflow_rule_updated', 'workflow_rule', updated.id, updated.name, {
+    triggerEvent: updated.trigger_event,
+    priority: updated.priority,
+    enabled: updated.enabled,
+  });
+
+  return res.json(updated);
+});
+
+/**
+ * GET /api/outbound/workflows/rules/:id/runs
+ */
+router.get('/workflows/rules/:id/runs', async (req, res) => {
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit || 20)));
+  const existingRes = await pool.query(
+    `SELECT id
+     FROM workflow_rules
+     WHERE id = $1
+       AND user_id = $2`,
+    [req.params.id, req.user.id]
+  );
+  if (!existingRes.rows.length) {
+    return res.status(404).json({ error: 'Workflow rule not found.' });
+  }
+
+  const runsRes = await pool.query(
+    `SELECT *
+     FROM workflow_rule_runs
+     WHERE rule_id = $1
+       AND user_id = $2
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [req.params.id, req.user.id, limit]
+  );
+
+  return res.json({
+    total: runsRes.rows.length,
+    runs: runsRes.rows,
+  });
+});
+
+/**
+ * POST /api/outbound/workflows/rules/:id/test
+ * Body: { leadId?, eventData?, triggerEvent?, applyActions?: boolean }
+ */
+router.post('/workflows/rules/:id/test', async (req, res) => {
+  const ruleRes = await pool.query(
+    `SELECT *
+     FROM workflow_rules
+     WHERE id = $1
+       AND user_id = $2`,
+    [req.params.id, req.user.id]
+  );
+  if (!ruleRes.rows.length) {
+    return res.status(404).json({ error: 'Workflow rule not found.' });
+  }
+
+  const rule = ruleRes.rows[0];
+  const triggerEvent = req.body.triggerEvent
+    ? String(req.body.triggerEvent).trim()
+    : String(rule.trigger_event || '').trim();
+  if (!VALID_RULE_TRIGGER_EVENTS.has(triggerEvent)) {
+    return res.status(400).json({ error: 'Invalid triggerEvent for test run.' });
+  }
+
+  const leadId = req.body.leadId ? String(req.body.leadId).trim() : null;
+  const applyActions = Boolean(req.body.applyActions);
+  const eventData = isPlainObject(req.body.eventData) ? req.body.eventData : {};
+
+  const ruleRuns = await runWorkflowRulesForEvent({
+    userId: req.user.id,
+    leadId,
+    triggerEvent,
+    eventData,
+    triggerSource: 'manual_test',
+    dryRun: !applyActions,
+    limitToRuleId: rule.id,
+    includeDisabled: true,
+  });
+
+  await pool.query(
+    `UPDATE workflow_rules
+     SET last_tested_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $1
+       AND user_id = $2`,
+    [rule.id, req.user.id]
+  );
+
+  const summary = ruleRuns[0] || {
+    ruleId: rule.id,
+    matched: false,
+    status: 'skipped',
+    actionsExecuted: [],
+  };
+
+  logAction(req.user.id, req.user.email, 'outbound_workflow_rule_tested', 'workflow_rule', rule.id, rule.name, {
+    triggerEvent,
+    applyActions,
+    status: summary.status,
+  });
+
+  return res.json({
+    applyActions,
+    triggerEvent,
+    leadId,
+    result: summary,
+  });
+});
+
+/**
  * POST /api/outbound/campaigns
  * Body: { name, channels, audienceFilter, notes, leadIds }
  */
@@ -1230,6 +1993,20 @@ router.patch('/campaigns/:campaignId/members/:memberId/status', async (req, res)
          AND user_id = $4`,
       [mappedLeadStatus, statusReason, leadId, req.user.id]
     );
+  }
+
+  if (leadId) {
+    await logLeadEvent({
+      userId: req.user.id,
+      leadId,
+      eventType: 'campaign_member_status_changed',
+      metadata: {
+        campaignId: req.params.campaignId,
+        memberId: req.params.memberId,
+        memberStatus,
+        lastChannel,
+      },
+    });
   }
 
   if (leadId && memberStatus === 'replied') {

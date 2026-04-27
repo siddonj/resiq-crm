@@ -237,10 +237,10 @@ Current lead generation logic creates synthetic Reddit/LinkedIn outputs, which i
 
 ### Progress status (as of April 27, 2026)
 
-- Phase 21 completion: 22%
+- Phase 21 completion: 33%
 - Measurement basis (weighted by planned capabilities):
   - Sequence state machine v2: 35%
-  - Workflow rules engine: 0%
+  - Workflow rules engine: 30%
   - Scoring v2 + explainability: 45%
   - Forecast + goals: 0%
   - Attribution + source ROI: 0%
@@ -282,6 +282,37 @@ Additional Phase 21 slice delivered now (Slice 2):
   - pause/resume/stop controls
 - Expanded smoke test coverage to include:
   - enroll -> pause -> resume -> auto-stop flow
+
+Additional Phase 21 slice delivered now (Slice 3):
+
+- Added workflow rules engine schema:
+  - `workflow_rules`
+  - `workflow_rule_runs`
+- Added outbound workflow rule APIs:
+  - `GET /api/outbound/workflows/rules`
+  - `POST /api/outbound/workflows/rules`
+  - `PATCH /api/outbound/workflows/rules/:id`
+  - `GET /api/outbound/workflows/rules/:id/runs`
+  - `POST /api/outbound/workflows/rules/:id/test`
+- Added rule condition evaluation support:
+  - `AND`/`OR` rule groups
+  - field-path operators (`equals`, `not_equals`, `gt`, `gte`, `lt`, `lte`, `contains`, `in`, `exists`)
+- Added if/else action branching:
+  - `true_actions` and `false_actions`
+- Added initial action handlers:
+  - `update_lead_status`
+  - `set_next_recommended_action`
+  - `create_reminder`
+  - `suppress_lead`
+  - `log_event`
+  - `enroll_sequence`
+- Added automatic runtime integration:
+  - enabled rules execute on outbound event log writes
+  - run history recorded in `workflow_rule_runs`
+- Added Workflow Rules UI in `/outbound-automation`:
+  - create rule
+  - enable/disable rule
+  - dry-run and live test against selected lead
 
 ## 7. Data Model Additions
 
@@ -425,5 +456,5 @@ Recommended next build steps:
 - Add persistent Draft Inbox and LinkedIn Task Board endpoints/UI
 - Add outbound workflow tests in CI
 - Add tenant branding/profile screens for white-label packaging
-- Continue Phase 21 with slice 2:
-  - sequence enrollment state table + transition guards (one-active-sequence-per-lead)
+- Continue Phase 21 with slice 4:
+  - forecast + goals data model and summary API

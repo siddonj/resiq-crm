@@ -262,6 +262,46 @@ async function listSequenceEnrollments(token, status = '') {
   return response.data.enrollments;
 }
 
+async function createWorkflowRule(token, payload) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/workflows/rules`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `create workflow rule failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function testWorkflowRule(token, ruleId, payload) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/workflows/rules/${ruleId}/test`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `test workflow rule failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function listWorkflowRules(token) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/workflows/rules?includeDisabled=true`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `list workflow rules failed: ${JSON.stringify(response.data)}`);
+  assert(Array.isArray(response.data.rules), 'workflow rules response missing rules array');
+  return response.data.rules;
+}
+
 async function listCampaigns(token) {
   const response = await fetchJson(`${BASE_URL}/api/outbound/campaigns?limit=20`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -440,6 +480,8 @@ async function run() {
       'outbound_campaign_members',
       'outbound_sequence_enrollments',
       'outbound_sequence_enrollment_transitions',
+      'workflow_rules',
+      'workflow_rule_runs',
     ],
     60000
   );
@@ -543,6 +585,66 @@ async function run() {
   const leadId = leads.leads[0].id;
   const scored = await scoreLead(auth.token, leadId);
 
+  const workflowRule = await createWorkflowRule(auth.token, {
+    name: `Smoke Rule ${Date.now()}`,
+    triggerEvent: 'manual_test',
+    conditions: {
+      operator: 'AND',
+      rules: [
+        {
+          field: 'lead.total_score',
+          op: 'gte',
+          value: 0,
+        },
+      ],
+    },
+    trueActions: [
+      {
+        type: 'set_next_recommended_action',
+        config: { value: 'Workflow rule tested' },
+      },
+    ],
+    falseActions: [],
+    enabled: true,
+    priority: 100,
+  });
+
+  const workflowRules = await listWorkflowRules(auth.token);
+  assert(
+    workflowRules.some((rule) => rule.id === workflowRule.id),
+    'expected created workflow rule in workflow rules list'
+  );
+
+  const workflowDryRun = await testWorkflowRule(auth.token, workflowRule.id, {
+    leadId,
+    triggerEvent: 'manual_test',
+    applyActions: false,
+    eventData: { source: 'smoke_test' },
+  });
+  assert(
+    workflowDryRun?.result?.status === 'success' || workflowDryRun?.result?.status === 'skipped',
+    `unexpected workflow dry-run status: ${workflowDryRun?.result?.status}`
+  );
+
+  const workflowLiveRun = await testWorkflowRule(auth.token, workflowRule.id, {
+    leadId,
+    triggerEvent: 'manual_test',
+    applyActions: true,
+    eventData: { source: 'smoke_test' },
+  });
+  assert(
+    workflowLiveRun?.result?.status === 'success' || workflowLiveRun?.result?.status === 'skipped',
+    `unexpected workflow live-run status: ${workflowLiveRun?.result?.status}`
+  );
+
+  const leadsAfterRuleRun = await listLeads(auth.token);
+  const updatedLeadAfterRule = leadsAfterRuleRun.leads.find((lead) => lead.id === leadId);
+  assert(updatedLeadAfterRule, 'expected lead to exist after workflow live run');
+  assert(
+    updatedLeadAfterRule.next_recommended_action === 'Workflow rule tested',
+    `expected workflow rule to update next_recommended_action, got ${updatedLeadAfterRule.next_recommended_action}`
+  );
+
   const emailDraft = await generateDraft(auth.token, leadId, 'email');
   const linkedinDraft = await generateDraft(auth.token, leadId, 'linkedin');
   const sendBlockedBeforeApproval = await sendEmailDraft(auth.token, emailDraft.id);
@@ -568,6 +670,15 @@ async function run() {
   assert(auditExport.contentType.includes('text/csv'), 'audit export did not return csv');
   assert(eventsExport.body.includes('event_type'), 'events export missing expected header');
   assert(auditExport.body.includes('action'), 'audit export missing expected header');
+
+  steps.push({
+    step: 'workflow_rules',
+    ok: true,
+    ruleId: workflowRule.id,
+    dryRunStatus: workflowDryRun?.result?.status,
+    liveRunStatus: workflowLiveRun?.result?.status,
+    nextRecommendedAction: updatedLeadAfterRule.next_recommended_action,
+  });
 
   steps.push({
     step: 'outbound_flow',
