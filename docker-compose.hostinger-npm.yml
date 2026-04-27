@@ -1,5 +1,4 @@
 services:
-  # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
     container_name: resiq-postgres
@@ -8,8 +7,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-resiq}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-resiq_dev}
       POSTGRES_DB: ${POSTGRES_DB:-resiq_crm}
-    ports:
-      - "127.0.0.1:5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/migrations:/docker-entrypoint-initdb.d:ro
@@ -21,13 +18,10 @@ services:
     networks:
       - resiq-network
 
-  # Redis Cache & Message Queue
   redis:
     image: redis:7-alpine
     container_name: resiq-redis
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -38,7 +32,6 @@ services:
     networks:
       - resiq-network
 
-  # ResiQ Application
   app:
     build:
       context: .
@@ -75,6 +68,5 @@ volumes:
 networks:
   resiq-network:
     driver: bridge
-  # Connect to Nginx Proxy Manager shared network.
   npm_proxy:
     external: true

@@ -96,5 +96,6 @@ This validates import, dedupe, draft generation, approval gates, send/completion
 
 - Setup guide: [SETUP.md](./SETUP.md)
 - Deployment runbook: [DEPLOYMENT.md](./DEPLOYMENT.md)
+- Hostinger + Nginx Proxy Manager: [HOSTINGER_NGINX_PROXY_MANAGER_SETUP.md](./HOSTINGER_NGINX_PROXY_MANAGER_SETUP.md)
 - Release checklist: [PRODUCTION_READINESS_CHECKLIST.md](./PRODUCTION_READINESS_CHECKLIST.md)
 - Outbound implementation plan/status: [OUTBOUND_AUTOMATION_DEVELOPMENT_DOC.md](./OUTBOUND_AUTOMATION_DEVELOPMENT_DOC.md)

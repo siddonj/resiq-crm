@@ -162,6 +162,79 @@ Current lead generation logic creates synthetic Reddit/LinkedIn outputs, which i
 - Multi-tenant boundaries validated
 - No cross-tenant data leakage in API and reporting
 
+## Phase 21: HubSpot-Class Optimization Layer (Future)
+
+### Goals
+
+- Add high-leverage CRM automation and intelligence patterns used by mature revenue teams
+- Keep execution lean for solo-operator workflows while remaining white-label compatible
+
+### Tasks
+
+- Sequence state machine v2
+  - enforce one-active-sequence-per-lead
+  - auto-unenroll on reply, hard bounce, or suppression update
+  - add pause/resume and per-minute/per-day throughput throttles
+- Workflow rules engine
+  - trigger/action automation builder with `if/else` branching
+  - route leads, assign tasks, and update fields based on behavioral events
+- Scoring v2 + explainability
+  - split score into `fit_score`, `engagement_score`, and `intent_score`
+  - add time decay and score history timeline
+  - store top score reasons and expose "why this lead is prioritized"
+- Forecast + goals
+  - weighted pipeline forecast with `commit`, `best_case`, and `closed` buckets
+  - weekly gap-to-goal panel for solo execution planning
+- Attribution + source ROI
+  - track source -> sequence -> meeting -> opportunity -> revenue lineage
+  - report conversion and value by source, persona, and sequence
+- Data quality command center
+  - duplicate merge queue and field normalization
+  - stale-record flags and enrichment freshness checks
+  - required-field guardrails before enrollment
+- Multifamily custom objects
+  - add `portfolio`, `property`, `tech_stack`, and `initiative` objects
+  - associate objects with contacts, companies, and deals for segmentation
+
+### Data model additions (Phase 21)
+
+- `sequence_enrollments` (state machine and transitions)
+- `workflow_rules` and `workflow_rule_runs`
+- `lead_score_history`
+- `pipeline_forecasts` and `sales_goals`
+- `attribution_touchpoints`
+- `data_quality_issues`
+- `portfolio`, `property`, `tech_stack`, `initiative` + association tables
+
+### API backlog (Phase 21)
+
+- `POST /api/outbound/sequences/:id/enroll`
+- `PATCH /api/outbound/sequences/enrollments/:id/state`
+- `POST /api/outbound/workflows/rules`
+- `POST /api/outbound/workflows/rules/:id/test`
+- `GET /api/outbound/scoring/:leadId/explain`
+- `GET /api/outbound/forecast/summary`
+- `GET /api/outbound/attribution/summary`
+- `GET /api/outbound/data-quality/issues`
+
+### UI backlog (Phase 21)
+
+- Sequence Control Center
+- Workflow Builder
+- Lead Score Explain panel
+- Forecast + Goals dashboard
+- Attribution dashboard
+- Data Quality queue
+- Multifamily object explorer
+
+### Exit criteria
+
+- Sequence automation safely self-governs via lifecycle rules and throttles
+- Lead prioritization is transparent and explainable in-app
+- Forecast and attribution are accurate enough for weekly operating decisions
+- Data hygiene is enforced before leads enter outbound flow
+- Multifamily object model supports deeper segmentation without re-architecture
+
 ## 7. Data Model Additions
 
 Recommended new tables:

@@ -10,12 +10,13 @@ Recommended:
 - `app` container (Node API + built client assets)
 - `postgres` container
 - `redis` container
-- Traefik (external network) for TLS + routing
+- Nginx Proxy Manager for TLS + routing
 
 Primary files:
 
 - `docker-compose.prod.yml`
 - `deploy.sh`
+- `HOSTINGER_NGINX_PROXY_MANAGER_SETUP.md`
 
 ## 2. Pre-Deploy Checklist
 
@@ -78,7 +79,7 @@ chmod +x deploy.sh
 What the script does:
 
 - validates `.env`
-- ensures `traefik` network exists
+- ensures `npm_proxy` network exists
 - builds image with `docker-compose.prod.yml`
 - starts services
 - waits for app health response
@@ -151,3 +152,4 @@ Watch for:
 - Restrict CORS to known frontend origins.
 - Schedule daily PostgreSQL backups.
 - Add uptime checks for both `/api/health` and `/api/webhooks/health`.
+- Ensure Nginx Proxy Manager has WebSocket support enabled for `/ws/tickets`.
