@@ -84,12 +84,12 @@ Notes:
 Create the external network used by both stacks:
 
 ```bash
-docker network create npm_proxy
+docker network create nginx_proxy_manager_default
 ```
 
 If it already exists, Docker will return an "already exists" message.
 
-## 6. Connect NPM Container to `npm_proxy`
+## 6. Connect NPM Container to `nginx_proxy_manager_default`
 
 Find your NPM container name:
 
@@ -100,13 +100,13 @@ docker ps --format "table {{.Names}}\t{{.Image}}"
 Connect it to the shared network:
 
 ```bash
-docker network connect npm_proxy <npm_container_name>
+docker network connect nginx_proxy_manager_default <npm_container_name>
 ```
 
 Example:
 
 ```bash
-docker network connect npm_proxy nginx-proxy-manager
+docker network connect nginx_proxy_manager_default nginx-proxy-manager
 ```
 
 ## 7. Deploy ResiQ CRM Stack
@@ -189,8 +189,8 @@ cat backup_file.sql | docker compose -f docker-compose.hostinger-npm.yml exec -T
 ## 12. Troubleshooting
 
 - 502 in NPM:
-  - confirm `resiq-app` is healthy and on `npm_proxy` network
-  - confirm NPM container is also on `npm_proxy`
+  - confirm `resiq-app` is healthy and on `nginx_proxy_manager_default` network
+  - confirm NPM container is also on `nginx_proxy_manager_default`
 - TLS certificate fails:
   - confirm DNS `A` record points to VPS
   - confirm ports `80/443` are open

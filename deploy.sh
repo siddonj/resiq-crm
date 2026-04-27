@@ -6,6 +6,7 @@ set -e
 
 DOMAIN="${DOMAIN:-crm.resiq.co}"
 COMPOSE_FILE="docker-compose.prod.yml"
+PROXY_NETWORK="nginx_proxy_manager_default"
 
 echo "============================================================"
 echo "ResiQ CRM - Hostinger VPS Deployment"
@@ -35,7 +36,7 @@ fi
 echo "OK: .env is configured"
 
 # Ensure shared network for Nginx Proxy Manager exists
-docker network create npm_proxy 2>/dev/null || echo "OK: npm_proxy network already exists"
+docker network create "$PROXY_NETWORK" 2>/dev/null || echo "OK: $PROXY_NETWORK network already exists"
 
 echo ""
 echo "Building Docker images..."

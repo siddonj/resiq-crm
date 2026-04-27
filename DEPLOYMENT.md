@@ -79,7 +79,7 @@ chmod +x deploy.sh
 What the script does:
 
 - validates `.env`
-- ensures `npm_proxy` network exists
+- ensures `nginx_proxy_manager_default` network exists
 - builds image with `docker-compose.prod.yml`
 - starts services
 - waits for app health response
