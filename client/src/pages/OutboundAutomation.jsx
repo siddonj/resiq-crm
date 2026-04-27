@@ -122,6 +122,8 @@ export default function OutboundAutomation() {
   const [forecastPeriod, setForecastPeriod] = useState('monthly')
   const [forecastSummary, setForecastSummary] = useState(null)
   const [loadingForecast, setLoadingForecast] = useState(false)
+  const [attributionSummary, setAttributionSummary] = useState(null)
+  const [loadingAttribution, setLoadingAttribution] = useState(false)
   const [goalForm, setGoalForm] = useState({
     targetMeetings: 10,
     targetOpportunities: 3,
@@ -271,6 +273,19 @@ export default function OutboundAutomation() {
     }
   }, [authHeaders, token, forecastPeriod])
 
+  const fetchAttributionSummary = useCallback(async () => {
+    if (!token) return
+    setLoadingAttribution(true)
+    try {
+      const { data } = await axios.get(`/api/outbound/attribution/summary?period=${forecastPeriod}`, authHeaders)
+      setAttributionSummary(data)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load attribution summary.')
+    } finally {
+      setLoadingAttribution(false)
+    }
+  }, [authHeaders, token, forecastPeriod])
+
   useEffect(() => {
     fetchLeads()
   }, [fetchLeads])
@@ -298,6 +313,10 @@ export default function OutboundAutomation() {
   useEffect(() => {
     fetchForecastSummary()
   }, [fetchForecastSummary])
+
+  useEffect(() => {
+    fetchAttributionSummary()
+  }, [fetchAttributionSummary])
 
   useEffect(() => {
     if (!ruleTestLeadId && leads.length > 0) {
@@ -335,7 +354,7 @@ export default function OutboundAutomation() {
       const { data } = await axios.post('/api/outbound/leads/import/csv', form, authHeaders)
       setImportResult(data)
       setMessage(`Import complete: ${data.importedRows} imported, ${data.duplicateRows} duplicate, ${data.failedRows} failed.`)
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
     })
   }
 
@@ -343,7 +362,7 @@ export default function OutboundAutomation() {
     await runAction(`score-${leadId}`, async () => {
       await axios.post(`/api/outbound/leads/${leadId}/score`, {}, authHeaders)
       setMessage('Lead rescored.')
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
     })
   }
 
@@ -369,7 +388,7 @@ export default function OutboundAutomation() {
 
       setSessionDrafts((prev) => [nextDraft, ...prev.filter((item) => item.id !== nextDraft.id)])
       setMessage(`${channel === 'email' ? 'Email' : 'LinkedIn'} draft generated.`)
-      await Promise.all([fetchAnalytics(), fetchForecastSummary()])
+      await Promise.all([fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
     })
   }
 
@@ -390,7 +409,7 @@ export default function OutboundAutomation() {
       )
 
       setMessage('Draft approved.')
-      await Promise.all([fetchAnalytics(), fetchForecastSummary()])
+      await Promise.all([fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
     })
   }
 
@@ -419,7 +438,7 @@ export default function OutboundAutomation() {
       )
 
       setMessage('LinkedIn task marked complete.')
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
     })
   }
 
@@ -439,7 +458,7 @@ export default function OutboundAutomation() {
       )
 
       setMessage('Email draft marked as sent.')
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
     })
   }
 
@@ -493,7 +512,7 @@ export default function OutboundAutomation() {
       const { data } = await axios.post('/api/outbound/campaigns', payload, authHeaders)
       setCampaignForm((prev) => ({ ...prev, name: '' }))
       setMessage(`Campaign created: ${data.name} (${data.addedMembers} members).`)
-      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary()])
+      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
     })
   }
 
@@ -501,7 +520,7 @@ export default function OutboundAutomation() {
     await runAction(`campaign-status-${campaignId}-${status}`, async () => {
       await axios.patch(`/api/outbound/campaigns/${campaignId}/status`, { status }, authHeaders)
       setMessage(`Campaign status updated to ${status}.`)
-      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary()])
+      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
     })
   }
 
@@ -519,7 +538,13 @@ export default function OutboundAutomation() {
         authHeaders
       )
       setMessage('Lead enrolled in sequence.')
-      await Promise.all([fetchSequenceEnrollments(), fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
+      await Promise.all([
+        fetchSequenceEnrollments(),
+        fetchLeads(),
+        fetchAnalytics(),
+        fetchForecastSummary(),
+        fetchAttributionSummary(),
+      ])
     })
   }
 
@@ -534,7 +559,13 @@ export default function OutboundAutomation() {
         authHeaders
       )
       setMessage(`Sequence enrollment ${state}.`)
-      await Promise.all([fetchSequenceEnrollments(), fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
+      await Promise.all([
+        fetchSequenceEnrollments(),
+        fetchLeads(),
+        fetchAnalytics(),
+        fetchForecastSummary(),
+        fetchAttributionSummary(),
+      ])
     })
   }
 
@@ -650,6 +681,7 @@ export default function OutboundAutomation() {
         fetchAnalytics(),
         fetchSequenceEnrollments(),
         fetchForecastSummary(),
+        fetchAttributionSummary(),
       ])
     })
   }
@@ -670,7 +702,7 @@ export default function OutboundAutomation() {
         authHeaders
       )
       setMessage('Forecast goals saved.')
-      await fetchForecastSummary()
+      await Promise.all([fetchForecastSummary(), fetchAttributionSummary()])
     })
   }
 
@@ -700,6 +732,7 @@ export default function OutboundAutomation() {
         fetchCampaigns(),
         fetchSequenceEnrollments(),
         fetchForecastSummary(),
+        fetchAttributionSummary(),
       ])
     })
   }
@@ -712,6 +745,10 @@ export default function OutboundAutomation() {
   const forecastGoals = forecastSummary?.goals || null
   const forecastGap = forecastSummary?.gapToGoal || null
   const forecastProgress = forecastSummary?.progress || null
+  const attributionOverview = attributionSummary?.overview || {}
+  const attributionSources = Array.isArray(attributionSummary?.bySource) ? attributionSummary.bySource : []
+  const attributionSequences = Array.isArray(attributionSummary?.bySequence) ? attributionSummary.bySequence : []
+  const attributionPersonas = Array.isArray(attributionSummary?.byPersona) ? attributionSummary.byPersona : []
   const openEnrollmentByLead = useMemo(() => {
     const map = {}
     for (const enrollment of sequenceEnrollments) {
@@ -755,6 +792,7 @@ export default function OutboundAutomation() {
               fetchSequenceEnrollments()
               fetchWorkflowRules()
               fetchForecastSummary()
+              fetchAttributionSummary()
             }}
             className="text-sm bg-teal text-white px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
           >
@@ -971,6 +1009,124 @@ export default function OutboundAutomation() {
             ) : (
               <p className="text-xs text-brand-gray">Set goals for this period to unlock gap-to-goal tracking.</p>
             )}
+          </>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">Attribution + Source ROI</h3>
+            <p className="text-xs text-brand-gray mt-0.5">
+              Source to sequence to meeting to opportunity lineage for the {forecastPeriod} window.
+            </p>
+          </div>
+          {attributionSummary?.period ? (
+            <p className="text-xs text-brand-gray">
+              {attributionSummary.period.start} to {attributionSummary.period.end}
+            </p>
+          ) : null}
+        </div>
+
+        {loadingAttribution ? (
+          <p className="text-sm text-brand-gray">Loading attribution summary...</p>
+        ) : attributionSources.length === 0 ? (
+          <p className="text-sm text-brand-gray">No attribution events yet for this period.</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-xs text-brand-gray">Imported</p>
+                <p className="text-lg font-bold text-navy">{toInt(attributionOverview.importedLeads)}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-xs text-brand-gray">Contacted</p>
+                <p className="text-lg font-bold text-navy">{toInt(attributionOverview.contactedLeads)}</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-xs text-brand-gray">Meetings</p>
+                <p className="text-lg font-bold text-navy">{toInt(attributionOverview.meetingLeads)}</p>
+                <p className="text-xs text-brand-gray">{toInt(attributionOverview.meetingRateFromImported)}% from imported</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-xs text-brand-gray">Opportunities</p>
+                <p className="text-lg font-bold text-navy">{toInt(attributionOverview.opportunityLeads)}</p>
+                <p className="text-xs text-brand-gray">
+                  {toInt(attributionOverview.opportunityRateFromImported)}% from imported
+                </p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-xs text-brand-gray">Attributed Revenue</p>
+                <p className="text-lg font-bold text-navy">{formatCurrency(attributionOverview.attributedRevenue)}</p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
+                    <th className="py-2 pr-3">Source</th>
+                    <th className="py-2 pr-3">Imported</th>
+                    <th className="py-2 pr-3">Meetings</th>
+                    <th className="py-2 pr-3">Opportunities</th>
+                    <th className="py-2 pr-3">Revenue</th>
+                    <th className="py-2 pr-3">Opp %</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {attributionSources.slice(0, 8).map((source) => (
+                    <tr key={`${source.sourceType}-${source.sourceReference}`}>
+                      <td className="py-2 pr-3">
+                        <p className="font-semibold text-navy">{source.sourceType}</p>
+                        <p className="text-xs text-brand-gray truncate max-w-[240px]">{source.sourceReference}</p>
+                      </td>
+                      <td className="py-2 pr-3">{toInt(source.importedLeads)}</td>
+                      <td className="py-2 pr-3">{toInt(source.meetingLeads)}</td>
+                      <td className="py-2 pr-3">{toInt(source.opportunityLeads)}</td>
+                      <td className="py-2 pr-3">{formatCurrency(source.attributedRevenue)}</td>
+                      <td className="py-2 pr-3">{toInt(source.opportunityRateFromImported)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="border border-gray-100 rounded-lg p-3">
+                <p className="text-xs font-semibold text-navy mb-2">Top Sequences</p>
+                {attributionSequences.length === 0 ? (
+                  <p className="text-xs text-brand-gray">No sequence-attributed events yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {attributionSequences.slice(0, 5).map((sequence) => (
+                      <div key={sequence.sequenceId} className="flex items-center justify-between gap-3 text-xs">
+                        <p className="text-navy truncate">{sequence.sequenceName}</p>
+                        <p className="text-brand-gray">
+                          Opp {toInt(sequence.opportunityLeads)} | {formatCurrency(sequence.attributedRevenue)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="border border-gray-100 rounded-lg p-3">
+                <p className="text-xs font-semibold text-navy mb-2">Top Personas</p>
+                {attributionPersonas.length === 0 ? (
+                  <p className="text-xs text-brand-gray">No persona attribution yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {attributionPersonas.slice(0, 5).map((persona) => (
+                      <div key={persona.persona} className="flex items-center justify-between gap-3 text-xs">
+                        <p className="text-navy">{persona.persona}</p>
+                        <p className="text-brand-gray">
+                          Opp {toInt(persona.opportunityLeads)} | {formatCurrency(persona.attributedRevenue)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </>
         )}
       </div>

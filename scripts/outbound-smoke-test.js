@@ -327,6 +327,17 @@ async function getForecastSummary(token, period = 'monthly') {
   return response.data;
 }
 
+async function getAttributionSummary(token, period = 'monthly') {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/attribution/summary?period=${encodeURIComponent(period)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `get attribution summary failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
 async function listCampaigns(token) {
   const response = await fetchJson(`${BASE_URL}/api/outbound/campaigns?limit=20`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -416,6 +427,20 @@ async function completeLinkedInTask(token, taskId) {
   });
 
   assert(response.ok, `complete linkedin task failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function setLeadOutcome(token, leadId, outcome, note = null) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/leads/${leadId}/outcome`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ outcome, note }),
+  });
+
+  assert(response.ok, `set lead outcome failed: ${JSON.stringify(response.data)}`);
   return response.data;
 }
 
@@ -509,6 +534,7 @@ async function run() {
       'workflow_rule_runs',
       'sales_goals',
       'pipeline_forecasts',
+      'attribution_touchpoints',
     ],
     60000
   );
@@ -710,6 +736,22 @@ async function run() {
 
   const taskId = await findLinkedInTaskId(databaseUrl, auth.userId, linkedinDraft.id);
   const completedTask = await completeLinkedInTask(auth.token, taskId);
+  const leadOutcome = await setLeadOutcome(auth.token, leadId, 'opportunity', 'Smoke attribution summary validation');
+  assert(leadOutcome.lead.status === 'opportunity', `expected lead status opportunity, got ${leadOutcome.lead.status}`);
+  const attributionSummary = await getAttributionSummary(auth.token, 'monthly');
+  assert(attributionSummary.period?.type === 'monthly', 'expected monthly attribution summary period');
+  assert(attributionSummary.overview, 'expected attribution summary overview');
+  assert(Array.isArray(attributionSummary.bySource), 'expected bySource array in attribution summary');
+  assert(Array.isArray(attributionSummary.bySequence), 'expected bySequence array in attribution summary');
+  assert(Array.isArray(attributionSummary.byPersona), 'expected byPersona array in attribution summary');
+  assert(
+    Number(attributionSummary.overview.opportunityLeads || 0) >= 1,
+    `expected at least one opportunity in attribution summary, got ${attributionSummary.overview.opportunityLeads}`
+  );
+  assert(
+    attributionSummary.bySource.some((source) => source.sourceType === 'csv'),
+    'expected csv source entry in attribution summary'
+  );
 
   const analytics = await analyticsSummary(auth.token);
   const eventsExport = await exportCsv(auth.token, '/api/outbound/events/export?format=csv&days=30&limit=500');
@@ -737,6 +779,16 @@ async function run() {
     totalForecastValue: forecastSummary.buckets?.totalForecastValue,
     targetRevenue: forecastSummary.goals?.targetRevenue,
     projectedRevenue: forecastSummary.projected?.revenue,
+  });
+
+  steps.push({
+    step: 'attribution_summary',
+    ok: true,
+    opportunityLeads: attributionSummary.overview?.opportunityLeads,
+    attributedRevenue: attributionSummary.overview?.attributedRevenue,
+    sourceRows: attributionSummary.bySource.length,
+    sequenceRows: attributionSummary.bySequence.length,
+    personaRows: attributionSummary.byPersona.length,
   });
 
   steps.push({

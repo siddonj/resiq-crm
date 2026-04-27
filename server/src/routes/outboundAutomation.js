@@ -107,6 +107,16 @@ const FORECAST_BUCKET_WEIGHTS = {
   commitOnly: 0.7,
   bestCaseOnly: 0.4,
 };
+const ATTRIBUTION_STAGE_BY_EVENT = {
+  lead_imported: 'imported',
+  sequence_enrolled: 'sequence',
+  draft_sent: 'contacted',
+  linkedin_task_completed: 'contacted',
+  lead_replied: 'replied',
+  meeting_booked: 'meeting',
+  opportunity_created: 'opportunity',
+};
+const ATTRIBUTION_STAGE_ORDER = ['imported', 'contacted', 'replied', 'meeting', 'opportunity', 'sequence'];
 
 function parseCSVRow(line) {
   const result = [];
@@ -232,11 +242,28 @@ async function logLeadEvent({
   metadata = {},
   runRules = true,
 }) {
-  await pool.query(
+  const insertedEvent = await pool.query(
     `INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
-     VALUES ($1, $2, $3, $4, $5)`,
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, created_at`,
     [userId, leadId, eventType, channel, JSON.stringify(metadata)]
   );
+  const insertedEventId = insertedEvent.rows[0]?.id || null;
+  const insertedEventCreatedAt = insertedEvent.rows[0]?.created_at || new Date().toISOString();
+
+  try {
+    await recordAttributionTouchpoint({
+      eventId: insertedEventId,
+      userId,
+      leadId,
+      eventType,
+      channel,
+      metadata,
+      occurredAt: insertedEventCreatedAt,
+    });
+  } catch (error) {
+    console.warn('[Outbound Attribution] Failed to record touchpoint:', error.message);
+  }
 
   if (runRules) {
     await runWorkflowRulesForEvent({
@@ -247,6 +274,70 @@ async function logLeadEvent({
       triggerSource: 'lead_event',
     });
   }
+
+  return insertedEventId;
+}
+
+async function recordAttributionTouchpoint({
+  eventId,
+  userId,
+  leadId,
+  eventType,
+  channel = null,
+  metadata = {},
+  occurredAt = null,
+}) {
+  if (!eventId || !leadId) return;
+
+  const attributionStage = deriveAttributionStage(eventType, metadata);
+  if (!attributionStage) return;
+
+  const leadRes = await pool.query(
+    `SELECT source_type, source_reference
+     FROM outbound_leads
+     WHERE id = $1
+       AND user_id = $2
+     LIMIT 1`,
+    [leadId, userId]
+  );
+  const lead = leadRes.rows[0];
+  if (!lead) return;
+
+  const campaignId = sanitizeUuidValue(metadata.campaignId || metadata.campaign_id);
+  const sequenceId = sanitizeUuidValue(metadata.sequenceId || metadata.sequence_id);
+  let attributedValue = 0;
+
+  if (attributionStage === 'opportunity') {
+    const explicitValue = toFiniteNumber(
+      metadata.attributedValue ?? metadata.attributed_value ?? metadata.revenue ?? metadata.expectedRevenue,
+      0
+    );
+    attributedValue = explicitValue > 0 ? round2(explicitValue) : round2(await getAverageClosedWonValue(userId));
+  }
+
+  await pool.query(
+    `INSERT INTO attribution_touchpoints
+      (lead_event_id, user_id, lead_id, source_type, source_reference, campaign_id, sequence_id,
+       event_type, attribution_stage, channel, touch_weight, attributed_value, metadata, occurred_at)
+     VALUES
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, $12::jsonb, $13)
+     ON CONFLICT (lead_event_id) DO NOTHING`,
+    [
+      eventId,
+      userId,
+      leadId,
+      lead.source_type || 'other',
+      lead.source_reference || null,
+      campaignId,
+      sequenceId,
+      eventType,
+      attributionStage,
+      channel,
+      attributedValue,
+      JSON.stringify(metadata || {}),
+      occurredAt || new Date().toISOString(),
+    ]
+  );
 }
 
 async function computeEngagementSignals(userId, leadId) {
@@ -377,6 +468,69 @@ function sanitizeUuidList(values) {
   return (Array.isArray(values) ? values : [])
     .map((value) => String(value || '').trim())
     .filter((value) => uuidRegex.test(value));
+}
+
+function sanitizeUuidValue(value) {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const normalized = String(value || '').trim();
+  return uuidRegex.test(normalized) ? normalized : null;
+}
+
+function toFiniteNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function safeRate(numerator, denominator) {
+  const parsedNumerator = toFiniteNumber(numerator, 0);
+  const parsedDenominator = toFiniteNumber(denominator, 0);
+  if (parsedDenominator <= 0) return 0;
+  return round2((parsedNumerator / parsedDenominator) * 100);
+}
+
+function classifyPersonaTitle(title) {
+  const normalized = String(title || '').trim().toLowerCase();
+  if (!normalized) return 'Unknown';
+  if (normalized.includes('chief') || normalized.includes(' cxo ') || normalized.startsWith('coo') || normalized.startsWith('ceo')) {
+    return 'Executive';
+  }
+  if (normalized.includes('vp') || normalized.includes('vice president')) {
+    return 'VP';
+  }
+  if (normalized.includes('director') || normalized.includes('head of')) {
+    return 'Director';
+  }
+  if (normalized.includes('manager')) {
+    return 'Manager';
+  }
+  if (normalized.includes('owner') || normalized.includes('founder') || normalized.includes('principal')) {
+    return 'Owner/Founder';
+  }
+  return 'Other';
+}
+
+function deriveAttributionStage(eventType, metadata = {}) {
+  if (eventType === 'campaign_member_status_changed') {
+    const memberStatus = String(metadata.memberStatus || metadata.member_status || '').trim().toLowerCase();
+    if (memberStatus === 'contacted') return 'contacted';
+    return null;
+  }
+  return ATTRIBUTION_STAGE_BY_EVENT[eventType] || null;
+}
+
+async function getAverageClosedWonValue(userId) {
+  const result = await pool.query(
+    `SELECT
+       COALESCE(AVG(value), 0)::numeric(14,2) AS avg_closed_won_value
+     FROM deals
+     WHERE user_id = $1
+       AND stage = 'closed_won'
+       AND value IS NOT NULL
+       AND value > 0`,
+    [userId]
+  );
+  const value = Number(result.rows[0]?.avg_closed_won_value || 0);
+  return value > 0 ? value : 25000;
 }
 
 function round2(value) {
@@ -1172,6 +1326,245 @@ async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
         commitOnly: FORECAST_BUCKET_WEIGHTS.commitOnly,
         bestCaseOnly: FORECAST_BUCKET_WEIGHTS.bestCaseOnly,
       },
+    },
+  };
+}
+
+async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
+  const normalizedPeriodType = VALID_FORECAST_PERIOD_TYPES.has(periodType) ? periodType : 'monthly';
+  const period = getCurrentPeriodWindow(normalizedPeriodType);
+  const [overviewRes, sourceRes, sequenceRes, personaRowsRes, lineageRes, baselineValue] = await Promise.all([
+    pool.query(
+      `SELECT
+         COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'imported')::int AS imported_leads,
+         COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'contacted')::int AS contacted_leads,
+         COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'replied')::int AS replied_leads,
+         COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'meeting')::int AS meeting_leads,
+         COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'opportunity')::int AS opportunity_leads,
+         COALESCE(SUM(attributed_value) FILTER (WHERE attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
+       FROM attribution_touchpoints
+       WHERE user_id = $1
+         AND occurred_at >= $2::date
+         AND occurred_at < ($3::date + INTERVAL '1 day')`,
+      [userId, period.periodStart, period.periodEnd]
+    ),
+    pool.query(
+      `SELECT
+         COALESCE(NULLIF(t.source_type, ''), 'other') AS source_type,
+         COALESCE(NULLIF(t.source_reference, ''), 'unknown') AS source_reference,
+         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'imported')::int AS imported_leads,
+         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'contacted')::int AS contacted_leads,
+         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'replied')::int AS replied_leads,
+         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'meeting')::int AS meeting_leads,
+         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'opportunity')::int AS opportunity_leads,
+         COALESCE(SUM(t.attributed_value) FILTER (WHERE t.attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
+       FROM attribution_touchpoints t
+       WHERE t.user_id = $1
+         AND t.occurred_at >= $2::date
+         AND t.occurred_at < ($3::date + INTERVAL '1 day')
+       GROUP BY 1, 2
+       ORDER BY attributed_revenue DESC, opportunity_leads DESC, meeting_leads DESC, contacted_leads DESC
+       LIMIT 25`,
+      [userId, period.periodStart, period.periodEnd]
+    ),
+    pool.query(
+      `SELECT
+         t.sequence_id,
+         COALESCE(s.name, 'Unknown sequence') AS sequence_name,
+         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'contacted')::int AS contacted_leads,
+         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'replied')::int AS replied_leads,
+         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'meeting')::int AS meeting_leads,
+         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'opportunity')::int AS opportunity_leads,
+         COALESCE(SUM(t.attributed_value) FILTER (WHERE t.attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
+       FROM attribution_touchpoints t
+       LEFT JOIN sequences s ON s.id = t.sequence_id
+       WHERE t.user_id = $1
+         AND t.sequence_id IS NOT NULL
+         AND t.occurred_at >= $2::date
+         AND t.occurred_at < ($3::date + INTERVAL '1 day')
+       GROUP BY t.sequence_id, s.name
+       ORDER BY attributed_revenue DESC, opportunity_leads DESC, meeting_leads DESC
+       LIMIT 25`,
+      [userId, period.periodStart, period.periodEnd]
+    ),
+    pool.query(
+      `SELECT
+         t.lead_id,
+         t.attribution_stage,
+         t.attributed_value,
+         l.title
+       FROM attribution_touchpoints t
+       LEFT JOIN outbound_leads l ON l.id = t.lead_id
+       WHERE t.user_id = $1
+         AND t.occurred_at >= $2::date
+         AND t.occurred_at < ($3::date + INTERVAL '1 day')`,
+      [userId, period.periodStart, period.periodEnd]
+    ),
+    pool.query(
+      `SELECT
+         COALESCE(NULLIF(t.source_type, ''), 'other') AS source_type,
+         COALESCE(NULLIF(t.source_reference, ''), 'unknown') AS source_reference,
+         COALESCE(t.sequence_id::text, 'unsequenced') AS sequence_key,
+         COALESCE(s.name, 'Unsequenced') AS sequence_name,
+         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'meeting')::int AS meetings,
+         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'opportunity')::int AS opportunities,
+         COALESCE(SUM(t.attributed_value) FILTER (WHERE t.attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
+       FROM attribution_touchpoints t
+       LEFT JOIN sequences s ON s.id = t.sequence_id
+       WHERE t.user_id = $1
+         AND t.occurred_at >= $2::date
+         AND t.occurred_at < ($3::date + INTERVAL '1 day')
+       GROUP BY 1, 2, 3, 4
+       HAVING COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage IN ('meeting', 'opportunity')) > 0
+       ORDER BY attributed_revenue DESC, opportunities DESC, meetings DESC
+       LIMIT 20`,
+      [userId, period.periodStart, period.periodEnd]
+    ),
+    getAverageClosedWonValue(userId),
+  ]);
+
+  const overview = overviewRes.rows[0] || {};
+  const importedLeads = Number(overview.imported_leads || 0);
+  const contactedLeads = Number(overview.contacted_leads || 0);
+  const repliedLeads = Number(overview.replied_leads || 0);
+  const meetingLeads = Number(overview.meeting_leads || 0);
+  const opportunityLeads = Number(overview.opportunity_leads || 0);
+  const attributedRevenue = round2(Number(overview.attributed_revenue || 0));
+
+  const bySource = sourceRes.rows.map((row) => {
+    const imported = Number(row.imported_leads || 0);
+    const contacted = Number(row.contacted_leads || 0);
+    const replied = Number(row.replied_leads || 0);
+    const meetings = Number(row.meeting_leads || 0);
+    const opportunities = Number(row.opportunity_leads || 0);
+    const revenue = round2(Number(row.attributed_revenue || 0));
+    return {
+      sourceType: row.source_type,
+      sourceReference: row.source_reference,
+      importedLeads: imported,
+      contactedLeads: contacted,
+      repliedLeads: replied,
+      meetingLeads: meetings,
+      opportunityLeads: opportunities,
+      attributedRevenue: revenue,
+      meetingRateFromImported: safeRate(meetings, imported),
+      opportunityRateFromImported: safeRate(opportunities, imported),
+      replyRateFromContacted: safeRate(replied, contacted),
+      valuePerImportedLead: imported > 0 ? round2(revenue / imported) : 0,
+      valuePerOpportunity: opportunities > 0 ? round2(revenue / opportunities) : 0,
+    };
+  });
+
+  const bySequence = sequenceRes.rows.map((row) => {
+    const contacted = Number(row.contacted_leads || 0);
+    const replied = Number(row.replied_leads || 0);
+    const meetings = Number(row.meeting_leads || 0);
+    const opportunities = Number(row.opportunity_leads || 0);
+    const revenue = round2(Number(row.attributed_revenue || 0));
+    return {
+      sequenceId: row.sequence_id,
+      sequenceName: row.sequence_name,
+      contactedLeads: contacted,
+      repliedLeads: replied,
+      meetingLeads: meetings,
+      opportunityLeads: opportunities,
+      attributedRevenue: revenue,
+      replyRateFromContacted: safeRate(replied, contacted),
+      meetingRateFromContacted: safeRate(meetings, contacted),
+      opportunityRateFromContacted: safeRate(opportunities, contacted),
+    };
+  });
+
+  const personaBuckets = new Map();
+  for (const row of personaRowsRes.rows) {
+    const persona = classifyPersonaTitle(row.title);
+    if (!personaBuckets.has(persona)) {
+      personaBuckets.set(persona, {
+        persona,
+        leadIds: new Set(),
+        contactedLeadIds: new Set(),
+        repliedLeadIds: new Set(),
+        meetingLeadIds: new Set(),
+        opportunityLeadIds: new Set(),
+        attributedRevenue: 0,
+      });
+    }
+    const bucket = personaBuckets.get(persona);
+    const leadId = row.lead_id;
+    if (leadId) bucket.leadIds.add(leadId);
+
+    const stage = String(row.attribution_stage || '').trim().toLowerCase();
+    if (stage === 'contacted' && leadId) bucket.contactedLeadIds.add(leadId);
+    if (stage === 'replied' && leadId) bucket.repliedLeadIds.add(leadId);
+    if (stage === 'meeting' && leadId) bucket.meetingLeadIds.add(leadId);
+    if (stage === 'opportunity' && leadId) {
+      bucket.opportunityLeadIds.add(leadId);
+      bucket.attributedRevenue += Number(row.attributed_value || 0);
+    }
+  }
+
+  const byPersona = [...personaBuckets.values()]
+    .map((bucket) => {
+      const leads = bucket.leadIds.size;
+      const contacted = bucket.contactedLeadIds.size;
+      const replied = bucket.repliedLeadIds.size;
+      const meetings = bucket.meetingLeadIds.size;
+      const opportunities = bucket.opportunityLeadIds.size;
+      const revenue = round2(bucket.attributedRevenue);
+      return {
+        persona: bucket.persona,
+        leads,
+        contactedLeads: contacted,
+        repliedLeads: replied,
+        meetingLeads: meetings,
+        opportunityLeads: opportunities,
+        attributedRevenue: revenue,
+        meetingRateFromLeads: safeRate(meetings, leads),
+        opportunityRateFromLeads: safeRate(opportunities, leads),
+      };
+    })
+    .sort((a, b) => b.attributedRevenue - a.attributedRevenue || b.opportunityLeads - a.opportunityLeads || b.meetingLeads - a.meetingLeads)
+    .slice(0, 10);
+
+  const lineage = lineageRes.rows.map((row) => ({
+    sourceType: row.source_type,
+    sourceReference: row.source_reference,
+    sequenceKey: row.sequence_key,
+    sequenceName: row.sequence_name,
+    meetings: Number(row.meetings || 0),
+    opportunities: Number(row.opportunities || 0),
+    attributedRevenue: round2(Number(row.attributed_revenue || 0)),
+  }));
+
+  return {
+    period: {
+      type: period.periodType,
+      start: period.periodStart,
+      end: period.periodEnd,
+    },
+    overview: {
+      importedLeads,
+      contactedLeads,
+      repliedLeads,
+      meetingLeads,
+      opportunityLeads,
+      attributedRevenue,
+      meetingRateFromImported: safeRate(meetingLeads, importedLeads),
+      opportunityRateFromImported: safeRate(opportunityLeads, importedLeads),
+      replyRateFromContacted: safeRate(repliedLeads, contactedLeads),
+      valuePerImportedLead: importedLeads > 0 ? round2(attributedRevenue / importedLeads) : 0,
+      valuePerOpportunity: opportunityLeads > 0 ? round2(attributedRevenue / opportunityLeads) : 0,
+      estimatedSpend: 0,
+    },
+    bySource,
+    bySequence,
+    byPersona,
+    lineage,
+    assumptions: {
+      attributionModel: 'event_touchpoints',
+      stageOrder: ATTRIBUTION_STAGE_ORDER,
+      opportunityValueFallback: round2(baselineValue),
+      estimatedSpendModel: 'manual_cost_tracking_pending',
     },
   };
 }
@@ -2540,7 +2933,7 @@ router.patch('/leads/:id/suppression', async (req, res) => {
 
 /**
  * POST /api/outbound/leads/:id/outcome
- * Body: { outcome: 'replied'|'meeting'|'hard_bounce', note?: string }
+ * Body: { outcome: 'replied'|'meeting'|'opportunity'|'hard_bounce', note?: string }
  */
 router.post('/leads/:id/outcome', async (req, res) => {
   const outcome = String(req.body.outcome || '').trim().toLowerCase();
@@ -3174,6 +3567,20 @@ router.get('/forecast/summary', async (req, res) => {
   }
 
   const summary = await buildOutboundForecastSummary(req.user.id, periodType);
+  return res.json(summary);
+});
+
+/**
+ * GET /api/outbound/attribution/summary
+ * Query: period=weekly|monthly
+ */
+router.get('/attribution/summary', async (req, res) => {
+  const periodType = String(req.query.period || 'monthly').trim().toLowerCase();
+  if (!VALID_FORECAST_PERIOD_TYPES.has(periodType)) {
+    return res.status(400).json({ error: 'period must be weekly or monthly.' });
+  }
+
+  const summary = await buildOutboundAttributionSummary(req.user.id, periodType);
   return res.json(summary);
 });
 

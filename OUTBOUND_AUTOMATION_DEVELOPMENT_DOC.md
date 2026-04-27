@@ -237,13 +237,13 @@ Current lead generation logic creates synthetic Reddit/LinkedIn outputs, which i
 
 ### Progress status (as of April 27, 2026)
 
-- Phase 21 completion: 45%
+- Phase 21 completion: 55%
 - Measurement basis (weighted by planned capabilities):
   - Sequence state machine v2: 35%
   - Workflow rules engine: 30%
   - Scoring v2 + explainability: 45%
   - Forecast + goals: 40%
-  - Attribution + source ROI: 0%
+  - Attribution + source ROI: 35%
   - Data quality command center: 0%
   - Multifamily custom objects: 0%
 
@@ -337,6 +337,30 @@ Additional Phase 21 slice delivered now (Slice 4):
   - upsert forecast goals
   - fetch forecast summary
   - validate target + projection fields
+
+Additional Phase 21 slice delivered now (Slice 5):
+
+- Added attribution lineage data model:
+  - `attribution_touchpoints`
+- Added touchpoint write path:
+  - outbound lead events now persist source/sequence/campaign lineage snapshots
+  - opportunity events persist attributed value with closed-won fallback estimates
+- Added attribution API:
+  - `GET /api/outbound/attribution/summary`
+- Added attribution reporting logic:
+  - period-window summary (`weekly`/`monthly`)
+  - conversion/value rollups by source
+  - conversion/value rollups by sequence
+  - conversion/value rollups by persona
+  - source -> sequence lineage table for meeting/opportunity/revenue
+- Added Attribution + Source ROI UI section in `/outbound-automation`:
+  - period-aware KPI cards
+  - source conversion table
+  - top sequence and persona performance blocks
+- Expanded smoke test coverage:
+  - lead outcome -> opportunity trigger
+  - attribution summary fetch + response validation
+  - attribution table readiness check
 
 ## 7. Data Model Additions
 
@@ -480,5 +504,5 @@ Recommended next build steps:
 - Add persistent Draft Inbox and LinkedIn Task Board endpoints/UI
 - Add outbound workflow tests in CI
 - Add tenant branding/profile screens for white-label packaging
-- Continue Phase 21 with slice 5:
-  - attribution + source ROI lineage and summary reporting
+- Continue Phase 21 with slice 6:
+  - data quality command center (duplicate merge queue + required-field enrollment guardrails)
