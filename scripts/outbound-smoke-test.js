@@ -416,6 +416,103 @@ async function getDataQualityIssues(token, status = 'open') {
   return response.data;
 }
 
+async function mergeDataQualityIssue(token, issueId, payload = {}) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/data-quality/issues/${issueId}/merge`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `merge data quality issue failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function getDataQualityMergeOperations(token) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/data-quality/merge-operations?limit=50`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `get data quality merge operations failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function createContact(token, payload) {
+  const response = await fetchJson(`${BASE_URL}/api/contacts`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `create contact failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function createDeal(token, payload) {
+  const response = await fetchJson(`${BASE_URL}/api/deals`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `create deal failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function getMultifamilyEntities(token, entityType, search = '') {
+  const params = new URLSearchParams();
+  params.set('entityType', entityType);
+  params.set('limit', '100');
+  if (search) {
+    params.set('search', search);
+  }
+
+  const response = await fetchJson(`${BASE_URL}/api/outbound/multifamily/entities?${params.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `get multifamily entities failed (${entityType}): ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function bulkAssociateMultifamilyObject(token, objectId, payload) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/multifamily/objects/${objectId}/associations/bulk`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `bulk associate multifamily object failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function getObjectAssociations(token, objectId, entityType = '') {
+  const qs = entityType ? `?entityType=${encodeURIComponent(entityType)}` : '';
+  const response = await fetchJson(`${BASE_URL}/api/outbound/multifamily/objects/${objectId}/associations${qs}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `get object associations failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
 async function listCampaigns(token) {
   const response = await fetchJson(`${BASE_URL}/api/outbound/campaigns?limit=20`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -614,6 +711,7 @@ async function run() {
       'pipeline_forecasts',
       'attribution_touchpoints',
       'data_quality_issues',
+      'data_quality_merge_operations',
       'multifamily_objects',
       'multifamily_object_associations',
     ],
@@ -664,7 +762,6 @@ async function run() {
   assert(lowQualityImport.importedRows === 1, `expected low quality import importedRows=1, got ${lowQualityImport.importedRows}`);
   const leads = await listLeads(auth.token);
   assert(leads.total === 3, `expected 3 leads after low quality import, got ${leads.total}`);
-  const leadIds = leads.leads.map((lead) => lead.id);
   const lowQualityLead = leads.leads.find((lead) => String(lead.company || '').toLowerCase().includes('no channel'));
   assert(lowQualityLead, 'expected low quality lead for data quality guardrail checks');
 
@@ -677,6 +774,56 @@ async function run() {
     'expected missing_contact_channel issue for low quality lead'
   );
 
+  const duplicateCandidateCsv = [
+    'first_name,last_name,email,company,title,linkedin_url,location,notes',
+    'Avery,Nguyen,avery.duplicate@example.com,Multifamily Tech Co,VP Operations,https://www.linkedin.com/in/avery-nguyen,Chicago,Duplicate candidate for merge test',
+  ].join('\n');
+  const duplicateCandidateImport = await importCsv(auth.token, duplicateCandidateCsv, 'smoke-import-duplicate-candidate');
+  assert(
+    duplicateCandidateImport.importedRows === 1,
+    `expected duplicate-candidate import importedRows=1, got ${duplicateCandidateImport.importedRows}`
+  );
+
+  const leadsWithDuplicate = await listLeads(auth.token);
+  assert(leadsWithDuplicate.total === 4, `expected 4 leads before merge, got ${leadsWithDuplicate.total}`);
+  const duplicateCandidateLead = leadsWithDuplicate.leads.find(
+    (lead) => String(lead.email || '').toLowerCase() === 'avery.duplicate@example.com'
+  );
+  assert(duplicateCandidateLead, 'expected duplicate candidate lead before merge');
+
+  const dataQualityWithDuplicate = await getDataQualityIssues(auth.token, 'open');
+  const duplicateIssue = dataQualityWithDuplicate.issues.find((issue) => {
+    const candidateLeadIds = Array.isArray(issue.details?.candidateLeadIds) ? issue.details.candidateLeadIds : [];
+    return issue.issueType === 'potential_duplicate' && candidateLeadIds.includes(duplicateCandidateLead.id);
+  });
+  assert(duplicateIssue, 'expected open potential_duplicate issue after duplicate candidate import');
+
+  const mergeResult = await mergeDataQualityIssue(auth.token, duplicateIssue.id, {
+    primaryLeadId: highQualityLeadIds[0],
+    duplicateLeadIds: [duplicateCandidateLead.id],
+  });
+  assert(
+    Array.isArray(mergeResult.mergedLeadIds) && mergeResult.mergedLeadIds.includes(duplicateCandidateLead.id),
+    'expected merge response to include duplicate lead id'
+  );
+
+  const mergeOperations = await getDataQualityMergeOperations(auth.token);
+  assert(
+    Array.isArray(mergeOperations.mergeOperations) &&
+      mergeOperations.mergeOperations.some((operation) => operation.id === mergeResult.mergeOperation?.id),
+    'expected merge operation history to include latest merge'
+  );
+
+  const leadsAfterMerge = await listLeads(auth.token);
+  assert(leadsAfterMerge.total === 3, `expected 3 leads after duplicate merge, got ${leadsAfterMerge.total}`);
+  const leadIds = leadsAfterMerge.leads.map((lead) => lead.id);
+
+  const dataQualityAfterMerge = await getDataQualityIssues(auth.token, 'open');
+  assert(
+    !dataQualityAfterMerge.issues.some((issue) => issue.id === duplicateIssue.id),
+    'expected duplicate issue to be resolved after merge'
+  );
+
   const portfolioObject = await createMultifamilyObject(auth.token, {
     objectType: 'portfolio',
     name: `Smoke Portfolio ${Date.now()}`,
@@ -686,6 +833,61 @@ async function run() {
       ownerType: 'operator',
     },
   });
+  const propertyObject = await createMultifamilyObject(auth.token, {
+    objectType: 'property',
+    name: `Smoke Property ${Date.now()}`,
+    description: 'Slice 8 multifamily association workflow test',
+    metadata: {
+      market: 'TX',
+    },
+  });
+
+  const contact = await createContact(auth.token, {
+    name: 'Morgan Fields',
+    email: 'morgan.fields@example.com',
+    company: 'Atlas Living',
+    job_title: 'Director of Operations',
+    notes: 'Slice 8 contact association smoke test',
+  });
+  const deal = await createDeal(auth.token, {
+    title: 'Atlas Living Operations Modernization',
+    contact_id: contact.id,
+    stage: 'qualified',
+    value: 125000,
+    notes: 'Slice 8 deal association smoke test',
+  });
+
+  const contactEntitySearch = await getMultifamilyEntities(auth.token, 'contact', 'Morgan');
+  const dealEntitySearch = await getMultifamilyEntities(auth.token, 'deal', 'Operations Modernization');
+  const companyEntitySearch = await getMultifamilyEntities(auth.token, 'company', 'Atlas Living');
+
+  assert(contactEntitySearch.entities.some((entity) => entity.id === contact.id), 'expected contact explorer results');
+  assert(dealEntitySearch.entities.some((entity) => entity.id === deal.id), 'expected deal explorer results');
+  assert(
+    companyEntitySearch.entities.some((entity) => String(entity.companyName || '').toLowerCase() === 'atlas living'),
+    'expected company explorer results'
+  );
+
+  const contactBulkAssociation = await bulkAssociateMultifamilyObject(auth.token, propertyObject.id, {
+    entityType: 'contact',
+    entityIds: [contact.id],
+    metadata: { source: 'smoke_test_slice8' },
+  });
+  const dealBulkAssociation = await bulkAssociateMultifamilyObject(auth.token, propertyObject.id, {
+    entityType: 'deal',
+    entityIds: [deal.id],
+    metadata: { source: 'smoke_test_slice8' },
+  });
+  const companyBulkAssociation = await bulkAssociateMultifamilyObject(auth.token, propertyObject.id, {
+    entityType: 'company',
+    companyNames: ['Atlas Living'],
+    metadata: { source: 'smoke_test_slice8' },
+  });
+
+  assert(contactBulkAssociation.upsertedCount === 1, 'expected one contact bulk association');
+  assert(dealBulkAssociation.upsertedCount === 1, 'expected one deal bulk association');
+  assert(companyBulkAssociation.upsertedCount === 1, 'expected one company bulk association');
+
   const portfolioAssociation = await associateMultifamilyObject(auth.token, portfolioObject.id, {
     entityType: 'outbound_lead',
     entityId: highQualityLeadIds[0],
@@ -701,14 +903,49 @@ async function run() {
     leadsByPortfolio.leads.some((lead) => lead.id === highQualityLeadIds[0]),
     'expected associated lead in portfolio filtered leads'
   );
+
+  const propertyContactAssociations = await getObjectAssociations(auth.token, propertyObject.id, 'contact');
+  const propertyDealAssociations = await getObjectAssociations(auth.token, propertyObject.id, 'deal');
+  const propertyCompanyAssociations = await getObjectAssociations(auth.token, propertyObject.id, 'company');
+  assert(
+    propertyContactAssociations.associations.some((association) => association.entityId === contact.id),
+    'expected property object to include contact association'
+  );
+  assert(
+    propertyDealAssociations.associations.some((association) => association.entityId === deal.id),
+    'expected property object to include deal association'
+  );
+  assert(
+    propertyCompanyAssociations.associations.some(
+      (association) => String(association.companyName || '').toLowerCase() === 'atlas living'
+    ),
+    'expected property object to include company association'
+  );
+
   const multifamilySummary = await getMultifamilySummary(auth.token);
   assert(
     Number(multifamilySummary.objectCounts?.portfolio || 0) >= 1,
     'expected at least one portfolio object in multifamily summary'
   );
   assert(
+    Number(multifamilySummary.objectCounts?.property || 0) >= 1,
+    'expected at least one property object in multifamily summary'
+  );
+  assert(
     Number(multifamilySummary.associationCounts?.outbound_lead || 0) >= 1,
     'expected at least one outbound lead multifamily association'
+  );
+  assert(
+    Number(multifamilySummary.associationCounts?.contact || 0) >= 1,
+    'expected at least one contact multifamily association'
+  );
+  assert(
+    Number(multifamilySummary.associationCounts?.deal || 0) >= 1,
+    'expected at least one deal multifamily association'
+  );
+  assert(
+    Number(multifamilySummary.associationCounts?.company || 0) >= 1,
+    'expected at least one company multifamily association'
   );
 
   const initialSuppression = await setSuppression(auth.token, blockedLeadId, true, 'Smoke suppression check');
@@ -933,20 +1170,31 @@ async function run() {
   steps.push({
     step: 'data_quality',
     ok: true,
-    openIssues: dataQualityOpen.summary?.open_count,
-    openBlockingIssues: dataQualityOpen.summary?.open_blocking_count,
+    openIssues: dataQualityAfterMerge.summary?.open_count,
+    openBlockingIssues: dataQualityAfterMerge.summary?.open_blocking_count,
     lowQualityLeadId: lowQualityLead.id,
     blockedEnrollStatus: lowQualityEnrollAttempt.status,
+    mergeIssueId: duplicateIssue.id,
+    mergeOperationId: mergeResult.mergeOperation?.id,
+    mergeCount30d: dataQualityAfterMerge.summary?.merge_count_30d,
   });
 
   steps.push({
     step: 'multifamily_objects',
     ok: true,
     portfolioObjectId: portfolioObject.id,
+    propertyObjectId: propertyObject.id,
     portfolioAssociationId: portfolioAssociation.id,
+    contactAssociationCount: propertyContactAssociations.total,
+    dealAssociationCount: propertyDealAssociations.total,
+    companyAssociationCount: propertyCompanyAssociations.total,
     filteredLeadCount: leadsByPortfolio.total,
     summaryPortfolioCount: multifamilySummary.objectCounts?.portfolio,
+    summaryPropertyCount: multifamilySummary.objectCounts?.property,
     summaryLeadAssociations: multifamilySummary.associationCounts?.outbound_lead,
+    summaryContactAssociations: multifamilySummary.associationCounts?.contact,
+    summaryDealAssociations: multifamilySummary.associationCounts?.deal,
+    summaryCompanyAssociations: multifamilySummary.associationCounts?.company,
   });
 
   steps.push({

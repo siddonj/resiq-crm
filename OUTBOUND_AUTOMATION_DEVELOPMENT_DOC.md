@@ -237,15 +237,15 @@ Current lead generation logic creates synthetic Reddit/LinkedIn outputs, which i
 
 ### Progress status (as of April 27, 2026)
 
-- Phase 21 completion: 75%
+- Phase 21 completion: 85%
 - Measurement basis (weighted by planned capabilities):
   - Sequence state machine v2: 35%
   - Workflow rules engine: 30%
   - Scoring v2 + explainability: 45%
   - Forecast + goals: 40%
   - Attribution + source ROI: 35%
-  - Data quality command center: 40%
-  - Multifamily custom objects: 35%
+  - Data quality command center: 60%
+  - Multifamily custom objects: 60%
 
 Phase 21 slice delivered now:
 
@@ -426,6 +426,24 @@ Additional Phase 21 slice delivered now (Slice 7):
   - create object + associate to lead
   - verify lead segmentation filter by multifamily object
 
+Additional Phase 21 slice delivered now (Slice 8):
+
+- Added data quality merge operations model:
+  - `data_quality_merge_operations`
+- Added duplicate merge APIs:
+  - `GET /api/outbound/data-quality/merge-operations`
+  - `POST /api/outbound/data-quality/issues/:id/merge`
+- Added merge behavior for duplicate lead groups:
+  - re-parents lead-linked records (campaign members, sequence enrollments, drafts, events, attribution, score history)
+  - resolves duplicate issues and records merge field updates/history
+- Added advanced multifamily explorer APIs:
+  - `GET /api/outbound/multifamily/entities` (contacts/deals/companies)
+  - `POST /api/outbound/multifamily/objects/:id/associations/bulk`
+- Expanded smoke test coverage:
+  - duplicate lead issue detection + merge execution + merge history validation
+  - multifamily explorer entity search for contacts/deals/companies
+  - bulk association workflows for contacts/deals/companies
+
 ## 7. Data Model Additions
 
 Recommended new tables:
@@ -568,5 +586,5 @@ Recommended next build steps:
 - Add persistent Draft Inbox and LinkedIn Task Board endpoints/UI
 - Add outbound workflow tests in CI
 - Add tenant branding/profile screens for white-label packaging
-- Continue Phase 21 with slice 8:
-  - data quality merge operations + advanced multifamily explorer workflows for contacts/deals/companies
+- Continue Phase 21 with slice 9:
+  - draft inbox persistence + linked task board UX and workload balancing

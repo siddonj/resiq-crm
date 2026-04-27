@@ -22,6 +22,11 @@ const MULTIFAMILY_OBJECT_TYPES = [
   { value: 'tech_stack', label: 'Tech Stack' },
   { value: 'initiative', label: 'Initiative' },
 ]
+const MULTIFAMILY_EXPLORER_ENTITY_TYPES = [
+  { value: 'contact', label: 'Contacts' },
+  { value: 'deal', label: 'Deals' },
+  { value: 'company', label: 'Companies' },
+]
 const WORKFLOW_TRIGGER_EVENTS = [
   'lead_imported',
   'draft_generated',
@@ -133,11 +138,23 @@ export default function OutboundAutomation() {
   const [dataQualityIssues, setDataQualityIssues] = useState([])
   const [dataQualitySummary, setDataQualitySummary] = useState(null)
   const [loadingDataQuality, setLoadingDataQuality] = useState(false)
+  const [dataQualityMergeOperations, setDataQualityMergeOperations] = useState([])
+  const [loadingDataQualityMergeOperations, setLoadingDataQualityMergeOperations] = useState(false)
   const [dataQualityStatusFilter, setDataQualityStatusFilter] = useState('open')
   const [multifamilyObjects, setMultifamilyObjects] = useState([])
   const [multifamilySummary, setMultifamilySummary] = useState(null)
   const [loadingMultifamily, setLoadingMultifamily] = useState(false)
   const [leadObjectSelection, setLeadObjectSelection] = useState({})
+  const [multifamilyExplorer, setMultifamilyExplorer] = useState({
+    objectId: '',
+    entityType: 'contact',
+    search: '',
+  })
+  const [multifamilyEntities, setMultifamilyEntities] = useState([])
+  const [loadingMultifamilyEntities, setLoadingMultifamilyEntities] = useState(false)
+  const [multifamilyEntitySelection, setMultifamilyEntitySelection] = useState({})
+  const [selectedObjectAssociations, setSelectedObjectAssociations] = useState([])
+  const [loadingSelectedObjectAssociations, setLoadingSelectedObjectAssociations] = useState(false)
   const [multifamilyForm, setMultifamilyForm] = useState({
     objectType: 'portfolio',
     name: '',
@@ -326,6 +343,19 @@ export default function OutboundAutomation() {
     }
   }, [authHeaders, token, dataQualityStatusFilter])
 
+  const fetchDataQualityMergeOperations = useCallback(async () => {
+    if (!token) return
+    setLoadingDataQualityMergeOperations(true)
+    try {
+      const { data } = await axios.get('/api/outbound/data-quality/merge-operations?limit=50', authHeaders)
+      setDataQualityMergeOperations(Array.isArray(data.mergeOperations) ? data.mergeOperations : [])
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load merge operations.')
+    } finally {
+      setLoadingDataQualityMergeOperations(false)
+    }
+  }, [authHeaders, token])
+
   const fetchMultifamilyObjects = useCallback(async () => {
     if (!token) return
     setLoadingMultifamily(true)
@@ -342,6 +372,48 @@ export default function OutboundAutomation() {
       setLoadingMultifamily(false)
     }
   }, [authHeaders, token])
+
+  const fetchMultifamilyEntities = useCallback(async () => {
+    if (!token) return
+    setLoadingMultifamilyEntities(true)
+    try {
+      const params = new URLSearchParams()
+      params.append('entityType', multifamilyExplorer.entityType)
+      params.append('limit', '100')
+      if (multifamilyExplorer.search) {
+        params.append('search', multifamilyExplorer.search)
+      }
+
+      const { data } = await axios.get(`/api/outbound/multifamily/entities?${params.toString()}`, authHeaders)
+      setMultifamilyEntities(Array.isArray(data.entities) ? data.entities : [])
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load multifamily explorer entities.')
+    } finally {
+      setLoadingMultifamilyEntities(false)
+    }
+  }, [authHeaders, multifamilyExplorer.entityType, multifamilyExplorer.search, token])
+
+  const fetchSelectedObjectAssociations = useCallback(async () => {
+    if (!token || !multifamilyExplorer.objectId) {
+      setSelectedObjectAssociations([])
+      return
+    }
+
+    setLoadingSelectedObjectAssociations(true)
+    try {
+      const params = new URLSearchParams()
+      params.append('entityType', multifamilyExplorer.entityType)
+      const { data } = await axios.get(
+        `/api/outbound/multifamily/objects/${multifamilyExplorer.objectId}/associations?${params.toString()}`,
+        authHeaders
+      )
+      setSelectedObjectAssociations(Array.isArray(data.associations) ? data.associations : [])
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load object associations.')
+    } finally {
+      setLoadingSelectedObjectAssociations(false)
+    }
+  }, [authHeaders, multifamilyExplorer.entityType, multifamilyExplorer.objectId, token])
 
   useEffect(() => {
     fetchLeads()
@@ -380,8 +452,34 @@ export default function OutboundAutomation() {
   }, [fetchDataQualityIssues])
 
   useEffect(() => {
+    fetchDataQualityMergeOperations()
+  }, [fetchDataQualityMergeOperations])
+
+  useEffect(() => {
     fetchMultifamilyObjects()
   }, [fetchMultifamilyObjects])
+
+  useEffect(() => {
+    const hasSelectedObject = multifamilyObjects.some((object) => object.id === multifamilyExplorer.objectId)
+    if ((!multifamilyExplorer.objectId || !hasSelectedObject) && multifamilyObjects.length > 0) {
+      setMultifamilyExplorer((prev) => ({
+        ...prev,
+        objectId: multifamilyObjects[0].id,
+      }))
+    }
+  }, [multifamilyExplorer.objectId, multifamilyObjects])
+
+  useEffect(() => {
+    fetchMultifamilyEntities()
+  }, [fetchMultifamilyEntities])
+
+  useEffect(() => {
+    fetchSelectedObjectAssociations()
+  }, [fetchSelectedObjectAssociations])
+
+  useEffect(() => {
+    setMultifamilyEntitySelection({})
+  }, [multifamilyExplorer.entityType, multifamilyExplorer.objectId])
 
   useEffect(() => {
     if (!ruleTestLeadId && leads.length > 0) {
@@ -820,6 +918,44 @@ export default function OutboundAutomation() {
     })
   }
 
+  const handleMergeDuplicateIssue = async (issue) => {
+    const suggestedPrimaryLeadId = issue?.details?.suggestedPrimaryLeadId || issue?.leadId || null
+    const candidateLeadIds = Array.isArray(issue?.details?.candidateLeadIds)
+      ? issue.details.candidateLeadIds.filter((leadId) => leadId && leadId !== suggestedPrimaryLeadId)
+      : []
+
+    if (!suggestedPrimaryLeadId || candidateLeadIds.length === 0) {
+      setError('Duplicate issue does not contain merge candidates yet. Refresh the queue and try again.')
+      return
+    }
+
+    await runAction(`data-quality-merge-${issue.id}`, async () => {
+      const { data } = await axios.post(
+        `/api/outbound/data-quality/issues/${issue.id}/merge`,
+        {
+          primaryLeadId: suggestedPrimaryLeadId,
+          duplicateLeadIds: candidateLeadIds,
+        },
+        authHeaders
+      )
+
+      setMessage(
+        `Merged ${toInt(data?.mergeOperation?.mergedLeadCount)} duplicate lead(s) into ${data?.primaryLead?.name || 'primary lead'}.`
+      )
+      await Promise.all([
+        fetchDataQualityIssues(),
+        fetchDataQualityMergeOperations(),
+        fetchLeads(),
+        fetchAnalytics(),
+        fetchCampaigns(),
+        fetchSequenceEnrollments(),
+        fetchMultifamilyObjects(),
+        fetchMultifamilyEntities(),
+        fetchSelectedObjectAssociations(),
+      ])
+    })
+  }
+
   const handleCreateMultifamilyObject = async (event) => {
     event.preventDefault()
     const name = String(multifamilyForm.name || '').trim()
@@ -867,6 +1003,54 @@ export default function OutboundAutomation() {
     })
   }
 
+  const handleToggleMultifamilyEntitySelection = (entityKey, checked) => {
+    setMultifamilyEntitySelection((prev) => ({
+      ...prev,
+      [entityKey]: Boolean(checked),
+    }))
+  }
+
+  const handleBulkAssociateExplorerEntities = async () => {
+    if (!multifamilyExplorer.objectId) {
+      setError('Select a multifamily object before tagging entities.')
+      return
+    }
+
+    const selectedKeys = Object.entries(multifamilyEntitySelection)
+      .filter(([, selected]) => Boolean(selected))
+      .map(([entityKey]) => entityKey)
+
+    if (selectedKeys.length === 0) {
+      setError('Select at least one entity to associate.')
+      return
+    }
+
+    await runAction(`multifamily-bulk-${multifamilyExplorer.entityType}`, async () => {
+      const payload =
+        multifamilyExplorer.entityType === 'company'
+          ? {
+              entityType: 'company',
+              companyNames: selectedKeys,
+              metadata: { source: 'outbound_ui_bulk' },
+            }
+          : {
+              entityType: multifamilyExplorer.entityType,
+              entityIds: selectedKeys,
+              metadata: { source: 'outbound_ui_bulk' },
+            }
+
+      const { data } = await axios.post(
+        `/api/outbound/multifamily/objects/${multifamilyExplorer.objectId}/associations/bulk`,
+        payload,
+        authHeaders
+      )
+
+      setMessage(`Tagged ${toInt(data.upsertedCount)} ${multifamilyExplorer.entityType}(s) to selected object.`)
+      setMultifamilyEntitySelection({})
+      await Promise.all([fetchMultifamilyObjects(), fetchMultifamilyEntities(), fetchSelectedObjectAssociations(), fetchLeads()])
+    })
+  }
+
   const leadsStats = analytics?.leads || {}
   const emailLimit = analytics?.dailySendLimits?.email
   const linkedinLimit = analytics?.dailySendLimits?.linkedin
@@ -882,6 +1066,7 @@ export default function OutboundAutomation() {
   const dataQualityOpenCount = toInt(dataQualitySummary?.open_count)
   const dataQualityOpenBlockingCount = toInt(dataQualitySummary?.open_blocking_count)
   const dataQualityResolvedCount = toInt(dataQualitySummary?.resolved_count)
+  const dataQualityMergeCount30d = toInt(dataQualitySummary?.merge_count_30d)
   const multifamilyObjectCounts = multifamilySummary?.objectCounts || {}
   const multifamilyAssociationCounts = multifamilySummary?.associationCounts || {}
   const multifamilyObjectsByType = useMemo(() => {
@@ -898,6 +1083,17 @@ export default function OutboundAutomation() {
     }
     return map
   }, [multifamilyObjects])
+  const selectedMultifamilyEntityKeys = useMemo(
+    () =>
+      Object.entries(multifamilyEntitySelection)
+        .filter(([, selected]) => Boolean(selected))
+        .map(([entityKey]) => entityKey),
+    [multifamilyEntitySelection]
+  )
+  const selectedMultifamilyObject = useMemo(
+    () => multifamilyObjects.find((object) => object.id === multifamilyExplorer.objectId) || null,
+    [multifamilyExplorer.objectId, multifamilyObjects]
+  )
   const filterScopedObjects = filters.objectType ? multifamilyObjectsByType[filters.objectType] || [] : []
   const openEnrollmentByLead = useMemo(() => {
     const map = {}
@@ -944,7 +1140,10 @@ export default function OutboundAutomation() {
               fetchForecastSummary()
               fetchAttributionSummary()
               fetchDataQualityIssues()
+              fetchDataQualityMergeOperations()
               fetchMultifamilyObjects()
+              fetchMultifamilyEntities()
+              fetchSelectedObjectAssociations()
             }}
             className="text-sm bg-teal text-white px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
           >
@@ -1288,18 +1487,22 @@ export default function OutboundAutomation() {
           <div>
             <h3 className="text-sm font-semibold text-navy">Multifamily Object Explorer</h3>
             <p className="text-xs text-brand-gray mt-0.5">
-              Manage portfolio, property, tech stack, and initiative objects used for segmentation.
+              Manage portfolio, property, tech stack, and initiative objects with entity tagging workflows.
             </p>
           </div>
           <button
-            onClick={fetchMultifamilyObjects}
+            onClick={() => {
+              fetchMultifamilyObjects()
+              fetchMultifamilyEntities()
+              fetchSelectedObjectAssociations()
+            }}
             className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
           >
             Refresh Objects
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div className="bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-brand-gray">Portfolios</p>
             <p className="text-lg font-bold text-navy">{toInt(multifamilyObjectCounts.portfolio)}</p>
@@ -1319,6 +1522,18 @@ export default function OutboundAutomation() {
           <div className="bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-brand-gray">Lead Associations</p>
             <p className="text-lg font-bold text-navy">{toInt(multifamilyAssociationCounts.outbound_lead)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Contact Associations</p>
+            <p className="text-lg font-bold text-navy">{toInt(multifamilyAssociationCounts.contact)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Deal Associations</p>
+            <p className="text-lg font-bold text-navy">{toInt(multifamilyAssociationCounts.deal)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Company Associations</p>
+            <p className="text-lg font-bold text-navy">{toInt(multifamilyAssociationCounts.company)}</p>
           </div>
         </div>
 
@@ -1376,7 +1591,21 @@ export default function OutboundAutomation() {
                 {multifamilyObjects.slice(0, 20).map((object) => (
                   <tr key={object.id}>
                     <td className="py-2 pr-3 text-xs text-gray-700">{object.objectType}</td>
-                    <td className="py-2 pr-3 font-semibold text-navy">{object.name}</td>
+                    <td className="py-2 pr-3">
+                      <button
+                        onClick={() =>
+                          setMultifamilyExplorer((prev) => ({
+                            ...prev,
+                            objectId: object.id,
+                          }))
+                        }
+                        className={`font-semibold ${
+                          multifamilyExplorer.objectId === object.id ? 'text-teal underline' : 'text-navy hover:text-teal'
+                        }`}
+                      >
+                        {object.name}
+                      </button>
+                    </td>
                     <td className="py-2 pr-3 text-xs text-brand-gray">{object.description || 'No description'}</td>
                     <td className="py-2 pr-3 text-xs text-brand-gray">
                       Leads {toInt(object.associationCounts?.outboundLead)} | Contacts {toInt(object.associationCounts?.contact)} |
@@ -1388,6 +1617,154 @@ export default function OutboundAutomation() {
             </table>
           </div>
         )}
+
+        <div className="border border-gray-100 rounded-lg p-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-xs text-brand-gray">Explorer Object</p>
+            <select
+              value={multifamilyExplorer.objectId}
+              onChange={(event) =>
+                setMultifamilyExplorer((prev) => ({
+                  ...prev,
+                  objectId: event.target.value,
+                }))
+              }
+              className="border border-gray-200 rounded-lg px-2 py-1 text-xs"
+            >
+              <option value="">Select object</option>
+              {multifamilyObjects.map((object) => (
+                <option key={object.id} value={object.id}>
+                  {object.name} ({object.objectType})
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={multifamilyExplorer.entityType}
+              onChange={(event) =>
+                setMultifamilyExplorer((prev) => ({
+                  ...prev,
+                  entityType: event.target.value,
+                }))
+              }
+              className="border border-gray-200 rounded-lg px-2 py-1 text-xs"
+            >
+              {MULTIFAMILY_EXPLORER_ENTITY_TYPES.map((entityType) => (
+                <option key={entityType.value} value={entityType.value}>
+                  {entityType.label}
+                </option>
+              ))}
+            </select>
+
+            <input
+              type="text"
+              value={multifamilyExplorer.search}
+              onChange={(event) =>
+                setMultifamilyExplorer((prev) => ({
+                  ...prev,
+                  search: event.target.value,
+                }))
+              }
+              className="border border-gray-200 rounded-lg px-2 py-1 text-xs min-w-[180px]"
+              placeholder={`Search ${multifamilyExplorer.entityType}s`}
+            />
+            <button
+              onClick={fetchMultifamilyEntities}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-700 hover:bg-gray-50"
+            >
+              Search
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-brand-gray">
+              {selectedMultifamilyObject
+                ? `Selected object: ${selectedMultifamilyObject.name} (${selectedMultifamilyObject.objectType})`
+                : 'Select a multifamily object to start bulk tagging.'}
+            </p>
+            <button
+              onClick={handleBulkAssociateExplorerEntities}
+              disabled={
+                !multifamilyExplorer.objectId ||
+                selectedMultifamilyEntityKeys.length === 0 ||
+                busyKey === `multifamily-bulk-${multifamilyExplorer.entityType}`
+              }
+              className="text-xs border border-indigo-200 text-indigo-700 rounded px-2 py-1 hover:bg-indigo-50 disabled:opacity-60"
+            >
+              {busyKey === `multifamily-bulk-${multifamilyExplorer.entityType}`
+                ? 'Tagging...'
+                : `Tag Selected (${selectedMultifamilyEntityKeys.length})`}
+            </button>
+          </div>
+
+          {loadingMultifamilyEntities ? (
+            <p className="text-xs text-brand-gray">Loading explorer entities...</p>
+          ) : multifamilyEntities.length === 0 ? (
+            <p className="text-xs text-brand-gray">No entities found for this search.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-gray-100 text-left text-brand-gray">
+                    <th className="py-2 pr-2">Select</th>
+                    <th className="py-2 pr-2">Name</th>
+                    <th className="py-2 pr-2">Context</th>
+                    <th className="py-2 pr-2">Current Associations</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {multifamilyEntities.slice(0, 40).map((entity) => {
+                    const entityKey = multifamilyExplorer.entityType === 'company' ? entity.companyName || entity.id : entity.id
+                    return (
+                      <tr key={entityKey}>
+                        <td className="py-2 pr-2">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(multifamilyEntitySelection[entityKey])}
+                            onChange={(event) => handleToggleMultifamilyEntitySelection(entityKey, event.target.checked)}
+                          />
+                        </td>
+                        <td className="py-2 pr-2 font-semibold text-navy">
+                          {multifamilyExplorer.entityType === 'deal' ? entity.name : entity.name || entity.companyName}
+                        </td>
+                        <td className="py-2 pr-2 text-brand-gray">
+                          {multifamilyExplorer.entityType === 'contact' &&
+                            `${entity.email || 'No email'} • ${entity.company || 'No company'}`}
+                          {multifamilyExplorer.entityType === 'deal' &&
+                            `${entity.stage || 'unknown stage'} • ${entity.company || entity.contactName || 'No linked contact'}`}
+                          {multifamilyExplorer.entityType === 'company' &&
+                            `Contacts ${toInt(entity.contactCount)} • Leads ${toInt(entity.leadCount)}`}
+                        </td>
+                        <td className="py-2 pr-2 text-brand-gray">{toInt(entity.associationCount)}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="border-t border-gray-100 pt-3">
+            <p className="text-xs font-semibold text-navy mb-2">
+              Existing {multifamilyExplorer.entityType} associations for selected object
+            </p>
+            {loadingSelectedObjectAssociations ? (
+              <p className="text-xs text-brand-gray">Loading object associations...</p>
+            ) : selectedObjectAssociations.length === 0 ? (
+              <p className="text-xs text-brand-gray">No associations yet for this object/entity type.</p>
+            ) : (
+              <div className="space-y-1">
+                {selectedObjectAssociations.slice(0, 15).map((association) => (
+                  <p key={association.id} className="text-xs text-brand-gray">
+                    <span className="font-semibold text-navy">{association.target?.name || association.companyName || 'Unknown'}</span>
+                    {association.target?.company ? ` • ${association.target.company}` : ''}
+                    {association.target?.email ? ` • ${association.target.email}` : ''}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
@@ -1417,7 +1794,7 @@ export default function OutboundAutomation() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div className="bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-brand-gray">Open Issues</p>
             <p className="text-lg font-bold text-navy">{dataQualityOpenCount}</p>
@@ -1429,6 +1806,10 @@ export default function OutboundAutomation() {
           <div className="bg-gray-50 rounded-lg p-3">
             <p className="text-xs text-brand-gray">Resolved</p>
             <p className="text-lg font-bold text-emerald-700">{dataQualityResolvedCount}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Merges (30d)</p>
+            <p className="text-lg font-bold text-indigo-700">{dataQualityMergeCount30d}</p>
           </div>
         </div>
 
@@ -1509,6 +1890,15 @@ export default function OutboundAutomation() {
                             Reopen
                           </button>
                         )}
+                        {issue.issueType === 'potential_duplicate' && issue.status === 'open' && (
+                          <button
+                            onClick={() => handleMergeDuplicateIssue(issue)}
+                            disabled={busyKey === `data-quality-merge-${issue.id}`}
+                            className="text-xs border border-indigo-200 text-indigo-700 rounded px-2 py-1 hover:bg-indigo-50 disabled:opacity-60"
+                          >
+                            {busyKey === `data-quality-merge-${issue.id}` ? 'Merging...' : 'Merge Group'}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1517,6 +1907,33 @@ export default function OutboundAutomation() {
             </table>
           </div>
         )}
+
+        <div className="border-t border-gray-100 pt-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold text-navy">Recent Merge Operations</p>
+            <button
+              onClick={fetchDataQualityMergeOperations}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-700 hover:bg-gray-50"
+            >
+              Refresh Merges
+            </button>
+          </div>
+          {loadingDataQualityMergeOperations ? (
+            <p className="text-xs text-brand-gray mt-2">Loading merge operations...</p>
+          ) : dataQualityMergeOperations.length === 0 ? (
+            <p className="text-xs text-brand-gray mt-2">No merge operations yet.</p>
+          ) : (
+            <div className="mt-2 space-y-1">
+              {dataQualityMergeOperations.slice(0, 6).map((operation) => (
+                <p key={operation.id} className="text-xs text-brand-gray">
+                  <span className="font-semibold text-navy">{operation.primaryLead?.name || operation.primaryLeadId || 'Primary lead'}</span>
+                  {` merged ${toInt(operation.mergedLeadCount)} lead(s)`}
+                  {operation.createdAt ? ` • ${new Date(operation.createdAt).toLocaleString()}` : ''}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">

@@ -131,6 +131,7 @@ const MIN_SOURCE_CONFIDENCE_THRESHOLD = 40;
 const STALE_LEAD_DAYS = 90;
 const VALID_MULTIFAMILY_OBJECT_TYPES = new Set(['portfolio', 'property', 'tech_stack', 'initiative']);
 const VALID_MULTIFAMILY_ENTITY_TYPES = new Set(['outbound_lead', 'contact', 'deal', 'company']);
+const VALID_MULTIFAMILY_EXPLORER_ENTITY_TYPES = new Set(['contact', 'deal', 'company']);
 
 function parseCSVRow(line) {
   const result = [];
@@ -807,6 +808,66 @@ function mapMultifamilyAssociationRow(row) {
     },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function normalizeMultifamilyExplorerEntityType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!VALID_MULTIFAMILY_EXPLORER_ENTITY_TYPES.has(normalized)) return null;
+  return normalized;
+}
+
+function normalizeTextValue(value) {
+  if (value == null) return null;
+  const normalized = String(value).trim();
+  return normalized || null;
+}
+
+function mergeUniqueNoteBlocks(primaryNote, duplicates) {
+  const chunks = [primaryNote, ...duplicates.map((lead) => lead.notes)]
+    .map((value) => normalizeTextValue(value))
+    .filter(Boolean);
+
+  const unique = [];
+  for (const chunk of chunks) {
+    if (!unique.includes(chunk)) {
+      unique.push(chunk);
+    }
+  }
+
+  return unique.length ? unique.join('\n\n') : null;
+}
+
+function pickPrimaryThenDuplicate(primaryValue, duplicateLeads, fieldName) {
+  const primaryNormalized = normalizeTextValue(primaryValue);
+  if (primaryNormalized) return primaryNormalized;
+
+  for (const duplicate of duplicateLeads) {
+    const candidate = normalizeTextValue(duplicate?.[fieldName]);
+    if (candidate) return candidate;
+  }
+
+  return null;
+}
+
+function mapDataQualityMergeOperationRow(row) {
+  return {
+    id: row.id,
+    issueId: row.issue_id || null,
+    primaryLeadId: row.primary_lead_id || null,
+    primaryLead: row.primary_lead_id
+      ? {
+          id: row.primary_lead_id,
+          name: row.primary_lead_name || null,
+          email: row.primary_lead_email || null,
+          company: row.primary_lead_company || null,
+        }
+      : null,
+    mergedLeadIds: Array.isArray(row.merged_lead_ids) ? row.merged_lead_ids : [],
+    mergedLeadCount: Number(row.merged_lead_count || 0),
+    fieldUpdates: row.field_updates || {},
+    metadata: row.metadata || {},
+    createdAt: row.created_at,
   };
 }
 
@@ -2149,6 +2210,183 @@ router.get('/multifamily/summary', async (req, res) => {
 });
 
 /**
+ * GET /api/outbound/multifamily/entities
+ * Query: entityType=contact|deal|company, search, limit
+ */
+router.get('/multifamily/entities', async (req, res) => {
+  const entityType = normalizeMultifamilyExplorerEntityType(req.query.entityType || 'contact');
+  const search = String(req.query.search || '').trim();
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
+
+  if (!entityType) {
+    return res.status(400).json({ error: 'Invalid entityType. Use contact, deal, or company.' });
+  }
+
+  const params = [req.user.id];
+  let searchFilter = '';
+
+  if (search) {
+    params.push(`%${search}%`);
+    const searchIdx = params.length;
+    if (entityType === 'contact') {
+      searchFilter = `AND (
+        c.name ILIKE $${searchIdx}
+        OR COALESCE(c.email, '') ILIKE $${searchIdx}
+        OR COALESCE(c.company, '') ILIKE $${searchIdx}
+      )`;
+    } else if (entityType === 'deal') {
+      searchFilter = `AND (
+        d.title ILIKE $${searchIdx}
+        OR COALESCE(c.name, '') ILIKE $${searchIdx}
+        OR COALESCE(c.company, '') ILIKE $${searchIdx}
+        OR COALESCE(d.service_line, '') ILIKE $${searchIdx}
+      )`;
+    } else {
+      searchFilter = `AND company_name ILIKE $${searchIdx}`;
+    }
+  }
+
+  params.push(limit);
+  const limitIdx = params.length;
+
+  if (entityType === 'contact') {
+    const result = await pool.query(
+      `SELECT
+         c.id,
+         c.name,
+         c.email,
+         c.company,
+         COALESCE(c.job_title, NULL) AS title,
+         c.created_at,
+         (
+           SELECT COUNT(*)::int
+           FROM multifamily_object_associations moa
+           WHERE moa.user_id = c.user_id
+             AND moa.entity_type = 'contact'
+             AND moa.entity_id = c.id
+         ) AS association_count
+       FROM contacts c
+       WHERE c.user_id = $1
+       ${searchFilter}
+       ORDER BY association_count DESC, c.created_at DESC
+       LIMIT $${limitIdx}`,
+      params
+    );
+
+    return res.json({
+      entityType,
+      total: result.rows.length,
+      entities: result.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        email: row.email || null,
+        company: row.company || null,
+        title: row.title || null,
+        associationCount: Number(row.association_count || 0),
+        createdAt: row.created_at,
+      })),
+    });
+  }
+
+  if (entityType === 'deal') {
+    const result = await pool.query(
+      `SELECT
+         d.id,
+         d.title,
+         d.stage,
+         d.service_line,
+         d.value,
+         d.created_at,
+         c.name AS contact_name,
+         c.company AS contact_company,
+         (
+           SELECT COUNT(*)::int
+           FROM multifamily_object_associations moa
+           WHERE moa.user_id = d.user_id
+             AND moa.entity_type = 'deal'
+             AND moa.entity_id = d.id
+         ) AS association_count
+       FROM deals d
+       LEFT JOIN contacts c ON c.id = d.contact_id
+       WHERE d.user_id = $1
+       ${searchFilter}
+       ORDER BY association_count DESC, d.created_at DESC
+       LIMIT $${limitIdx}`,
+      params
+    );
+
+    return res.json({
+      entityType,
+      total: result.rows.length,
+      entities: result.rows.map((row) => ({
+        id: row.id,
+        name: row.title,
+        stage: row.stage,
+        serviceLine: row.service_line || null,
+        value: Number(row.value || 0),
+        contactName: row.contact_name || null,
+        company: row.contact_company || null,
+        associationCount: Number(row.association_count || 0),
+        createdAt: row.created_at,
+      })),
+    });
+  }
+
+  const result = await pool.query(
+    `WITH company_rollup AS (
+       SELECT
+         LOWER(BTRIM(company)) AS company_key,
+         MAX(BTRIM(company)) AS company_name,
+         COUNT(*) FILTER (WHERE source = 'contact')::int AS contact_count,
+         COUNT(*) FILTER (WHERE source = 'outbound_lead')::int AS lead_count
+       FROM (
+         SELECT company, 'contact'::text AS source
+         FROM contacts
+         WHERE user_id = $1
+           AND company IS NOT NULL
+           AND BTRIM(company) <> ''
+         UNION ALL
+         SELECT company, 'outbound_lead'::text AS source
+         FROM outbound_leads
+         WHERE user_id = $1
+           AND company IS NOT NULL
+           AND BTRIM(company) <> ''
+       ) companies
+       GROUP BY LOWER(BTRIM(company))
+     )
+     SELECT
+       company_name,
+       contact_count,
+       lead_count,
+       (
+         SELECT COUNT(*)::int
+         FROM multifamily_object_associations moa
+         WHERE moa.user_id = $1
+           AND moa.entity_type = 'company'
+           AND LOWER(BTRIM(moa.company_name)) = company_rollup.company_key
+       ) AS association_count
+     FROM company_rollup
+     WHERE 1 = 1
+     ${searchFilter}
+     ORDER BY association_count DESC, (contact_count + lead_count) DESC, company_name ASC
+     LIMIT $${limitIdx}`,
+    params
+  );
+
+  return res.json({
+    entityType,
+    total: result.rows.length,
+    entities: result.rows.map((row) => ({
+      id: row.company_name,
+      companyName: row.company_name,
+      contactCount: Number(row.contact_count || 0),
+      leadCount: Number(row.lead_count || 0),
+      associationCount: Number(row.association_count || 0),
+    })),
+  });
+});
+
+/**
  * GET /api/outbound/multifamily/objects
  * Query: objectType
  */
@@ -2481,6 +2719,147 @@ router.post('/multifamily/objects/:id/associations', async (req, res) => {
 });
 
 /**
+ * POST /api/outbound/multifamily/objects/:id/associations/bulk
+ * Body: { entityType, entityIds?, companyNames?, metadata? }
+ */
+router.post('/multifamily/objects/:id/associations/bulk', async (req, res) => {
+  const objectRes = await pool.query(
+    `SELECT id, object_type, name
+     FROM multifamily_objects
+     WHERE id = $1
+       AND user_id = $2
+     LIMIT 1`,
+    [req.params.id, req.user.id]
+  );
+  if (!objectRes.rows.length) {
+    return res.status(404).json({ error: 'Multifamily object not found.' });
+  }
+  const object = objectRes.rows[0];
+
+  const entityType = normalizeMultifamilyEntityType(req.body.entityType);
+  const metadata = isPlainObject(req.body.metadata) ? req.body.metadata : {};
+
+  if (!entityType) {
+    return res.status(400).json({ error: 'Valid entityType is required.' });
+  }
+
+  if (entityType === 'outbound_lead') {
+    return res.status(400).json({ error: 'Use lead-level tagging controls for outbound_lead bulk operations.' });
+  }
+
+  const associations = [];
+
+  if (entityType === 'company') {
+    const companyNames = Array.isArray(req.body.companyNames)
+      ? [...new Set(req.body.companyNames.map((value) => String(value || '').trim()).filter(Boolean))]
+      : [];
+
+    if (!companyNames.length) {
+      return res.status(400).json({ error: 'companyNames[] is required for company bulk associations.' });
+    }
+
+    for (const name of companyNames) {
+      const associationRes = await pool.query(
+        `INSERT INTO multifamily_object_associations
+          (user_id, object_id, object_type, entity_type, entity_id, company_name, target_key, metadata, updated_at)
+         VALUES
+          ($1, $2, $3, 'company', NULL, $4, $5, $6::jsonb, NOW())
+         ON CONFLICT (user_id, object_id, entity_type, target_key)
+         DO UPDATE SET
+           metadata = EXCLUDED.metadata,
+           updated_at = NOW()
+         RETURNING *`,
+        [req.user.id, object.id, object.object_type, name, name.toLowerCase(), JSON.stringify(metadata)]
+      );
+
+      associations.push(
+        mapMultifamilyAssociationRow({
+          ...associationRes.rows[0],
+          target_name: name,
+          target_email: null,
+          target_company: name,
+          target_title: null,
+        })
+      );
+    }
+
+    logAction(req.user.id, req.user.email, 'multifamily_object_association_bulk_upserted', 'multifamily_object', object.id, object.name, {
+      objectType: object.object_type,
+      entityType,
+      upsertedCount: associations.length,
+    });
+
+    return res.status(201).json({
+      objectId: object.id,
+      objectType: object.object_type,
+      entityType,
+      upsertedCount: associations.length,
+      associations,
+    });
+  }
+
+  const entityIds = sanitizeUuidList(req.body.entityIds);
+  if (!entityIds.length) {
+    return res.status(400).json({ error: 'entityIds[] is required for contact/deal bulk associations.' });
+  }
+
+  const missingIds = [];
+  for (const entityId of entityIds) {
+    const targetRecord = await verifyMultifamilyAssociationTarget(req.user.id, entityType, entityId);
+    if (!targetRecord) {
+      missingIds.push(entityId);
+      continue;
+    }
+
+    const associationRes = await pool.query(
+      `INSERT INTO multifamily_object_associations
+        (user_id, object_id, object_type, entity_type, entity_id, company_name, target_key, metadata, updated_at)
+       VALUES
+        ($1, $2, $3, $4, $5, NULL, $5, $6::jsonb, NOW())
+       ON CONFLICT (user_id, object_id, entity_type, target_key)
+       DO UPDATE SET
+         metadata = EXCLUDED.metadata,
+         updated_at = NOW()
+       RETURNING *`,
+      [req.user.id, object.id, object.object_type, entityType, entityId, JSON.stringify(metadata)]
+    );
+
+    associations.push(
+      mapMultifamilyAssociationRow({
+        ...associationRes.rows[0],
+        target_name: targetRecord.name || null,
+        target_email: targetRecord.email || null,
+        target_company: targetRecord.company || null,
+        target_title: targetRecord.title || null,
+      })
+    );
+  }
+
+  if (associations.length === 0) {
+    return res.status(404).json({
+      error: `No valid ${entityType} targets were found for this account.`,
+      missingIds,
+    });
+  }
+
+  logAction(req.user.id, req.user.email, 'multifamily_object_association_bulk_upserted', 'multifamily_object', object.id, object.name, {
+    objectType: object.object_type,
+    entityType,
+    upsertedCount: associations.length,
+    missingCount: missingIds.length,
+  });
+
+  return res.status(201).json({
+    objectId: object.id,
+    objectType: object.object_type,
+    entityType,
+    upsertedCount: associations.length,
+    missingIds,
+    associations,
+  });
+});
+
+/**
  * DELETE /api/outbound/multifamily/objects/:id/associations/:associationId
  */
 router.delete('/multifamily/objects/:id/associations/:associationId', async (req, res) => {
@@ -2669,7 +3048,13 @@ router.get('/data-quality/issues', async (req, res) => {
          COUNT(*) FILTER (WHERE status = 'open')::int AS open_count,
          COUNT(*) FILTER (WHERE status = 'open' AND is_blocking = TRUE)::int AS open_blocking_count,
          COUNT(*) FILTER (WHERE status = 'resolved')::int AS resolved_count,
-         COUNT(*) FILTER (WHERE status = 'dismissed')::int AS dismissed_count
+         COUNT(*) FILTER (WHERE status = 'dismissed')::int AS dismissed_count,
+         (
+           SELECT COUNT(*)::int
+           FROM data_quality_merge_operations m
+           WHERE m.user_id = $1
+             AND m.created_at >= NOW() - INTERVAL '30 days'
+         ) AS merge_count_30d
        FROM data_quality_issues
        WHERE user_id = $1`,
       [req.user.id]
@@ -2684,8 +3069,376 @@ router.get('/data-quality/issues', async (req, res) => {
       open_blocking_count: 0,
       resolved_count: 0,
       dismissed_count: 0,
+      merge_count_30d: 0,
     },
   });
+});
+
+/**
+ * GET /api/outbound/data-quality/merge-operations
+ * Query: limit
+ */
+router.get('/data-quality/merge-operations', async (req, res) => {
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
+  const result = await pool.query(
+    `SELECT
+       m.*,
+       l.name AS primary_lead_name,
+       l.email AS primary_lead_email,
+       l.company AS primary_lead_company
+     FROM data_quality_merge_operations m
+     LEFT JOIN outbound_leads l ON l.id = m.primary_lead_id
+     WHERE m.user_id = $1
+     ORDER BY m.created_at DESC
+     LIMIT $2`,
+    [req.user.id, limit]
+  );
+
+  return res.json({
+    total: result.rows.length,
+    mergeOperations: result.rows.map(mapDataQualityMergeOperationRow),
+  });
+});
+
+/**
+ * POST /api/outbound/data-quality/issues/:id/merge
+ * Body: { primaryLeadId?, duplicateLeadIds?[] }
+ */
+router.post('/data-quality/issues/:id/merge', async (req, res) => {
+  const issueRes = await pool.query(
+    `SELECT id, issue_type, status, details, lead_id
+     FROM data_quality_issues
+     WHERE id = $1
+       AND user_id = $2
+     LIMIT 1`,
+    [req.params.id, req.user.id]
+  );
+  if (!issueRes.rows.length) {
+    return res.status(404).json({ error: 'Data quality issue not found.' });
+  }
+
+  const issue = issueRes.rows[0];
+  if (issue.issue_type !== 'potential_duplicate') {
+    return res.status(400).json({ error: 'Merge is only supported for potential_duplicate issues.' });
+  }
+
+  const issueDetails = isPlainObject(issue.details) ? issue.details : {};
+  const candidateLeadIdsFromIssue = sanitizeUuidList(issueDetails.candidateLeadIds || issueDetails.candidate_lead_ids || []);
+  const bodyDuplicateLeadIds = sanitizeUuidList(req.body.duplicateLeadIds || []);
+  const primaryLeadId = sanitizeUuidValue(req.body.primaryLeadId || issueDetails.suggestedPrimaryLeadId || issue.lead_id || '');
+
+  if (!primaryLeadId) {
+    return res.status(400).json({ error: 'primaryLeadId is required for duplicate merge.' });
+  }
+
+  const fallbackDuplicates = candidateLeadIdsFromIssue.filter((leadId) => leadId !== primaryLeadId);
+  const duplicateLeadIds = [...new Set((bodyDuplicateLeadIds.length ? bodyDuplicateLeadIds : fallbackDuplicates).filter((leadId) => leadId !== primaryLeadId))];
+
+  if (!duplicateLeadIds.length) {
+    return res.status(400).json({ error: 'At least one duplicate lead id is required for merge.' });
+  }
+
+  const mergeLeadIds = [...new Set([primaryLeadId, ...duplicateLeadIds])];
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const leadsRes = await client.query(
+      `SELECT *
+       FROM outbound_leads
+       WHERE user_id = $1
+         AND id = ANY($2::uuid[])
+       FOR UPDATE`,
+      [req.user.id, mergeLeadIds]
+    );
+
+    const leadById = new Map(leadsRes.rows.map((lead) => [lead.id, lead]));
+    if (!leadById.has(primaryLeadId)) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Primary lead not found for this account.' });
+    }
+
+    const missingDuplicates = duplicateLeadIds.filter((leadId) => !leadById.has(leadId));
+    if (missingDuplicates.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        error: 'One or more duplicate leads were not found for this account.',
+        missingDuplicateLeadIds: missingDuplicates,
+      });
+    }
+
+    const primaryLead = leadById.get(primaryLeadId);
+    const duplicateLeads = duplicateLeadIds.map((leadId) => leadById.get(leadId)).filter(Boolean);
+
+    const mergedFields = {};
+    const textFields = ['name', 'first_name', 'last_name', 'email', 'phone', 'company', 'title', 'linkedin_url', 'website', 'location'];
+    for (const field of textFields) {
+      mergedFields[field] = pickPrimaryThenDuplicate(primaryLead[field], duplicateLeads, field);
+    }
+
+    if (mergedFields.email) {
+      mergedFields.email = mergedFields.email.toLowerCase();
+    }
+    if (mergedFields.linkedin_url) {
+      mergedFields.linkedin_url = canonicalLinkedInUrl(mergedFields.linkedin_url);
+    }
+
+    const mergedNotes = mergeUniqueNoteBlocks(primaryLead.notes, duplicateLeads);
+    const mergedRawData = Object.assign(
+      {},
+      ...duplicateLeads.map((lead) => (isPlainObject(lead.raw_data) ? lead.raw_data : {})),
+      isPlainObject(primaryLead.raw_data) ? primaryLead.raw_data : {}
+    );
+
+    const mergedSourceConfidence = Math.max(
+      Number(primaryLead.source_confidence || 0),
+      ...duplicateLeads.map((lead) => Number(lead.source_confidence || 0))
+    );
+    const mergedFitScore = Math.max(Number(primaryLead.fit_score || 0), ...duplicateLeads.map((lead) => Number(lead.fit_score || 0)));
+    const mergedIntentScore = Math.max(Number(primaryLead.intent_score || 0), ...duplicateLeads.map((lead) => Number(lead.intent_score || 0)));
+    const mergedTotalScore = Math.max(Number(primaryLead.total_score || 0), ...duplicateLeads.map((lead) => Number(lead.total_score || 0)));
+
+    const fieldUpdates = {};
+    for (const field of [...textFields, 'notes']) {
+      const oldValue = primaryLead[field] == null ? null : primaryLead[field];
+      const nextValue = field === 'notes' ? mergedNotes : mergedFields[field];
+      if ((oldValue || null) !== (nextValue || null)) {
+        fieldUpdates[field] = { from: oldValue || null, to: nextValue || null };
+      }
+    }
+    if (Number(primaryLead.source_confidence || 0) !== mergedSourceConfidence) {
+      fieldUpdates.source_confidence = { from: Number(primaryLead.source_confidence || 0), to: mergedSourceConfidence };
+    }
+    if (Number(primaryLead.fit_score || 0) !== mergedFitScore) {
+      fieldUpdates.fit_score = { from: Number(primaryLead.fit_score || 0), to: mergedFitScore };
+    }
+    if (Number(primaryLead.intent_score || 0) !== mergedIntentScore) {
+      fieldUpdates.intent_score = { from: Number(primaryLead.intent_score || 0), to: mergedIntentScore };
+    }
+    if (Number(primaryLead.total_score || 0) !== mergedTotalScore) {
+      fieldUpdates.total_score = { from: Number(primaryLead.total_score || 0), to: mergedTotalScore };
+    }
+
+    const nextRecommendedAction = pickPrimaryThenDuplicate(primaryLead.next_recommended_action, duplicateLeads, 'next_recommended_action');
+    const suppressionReason = pickPrimaryThenDuplicate(primaryLead.suppression_reason, duplicateLeads, 'suppression_reason');
+    const lastOutreachChannel = pickPrimaryThenDuplicate(primaryLead.last_outreach_channel, duplicateLeads, 'last_outreach_channel');
+    const isSynthetic = Boolean(primaryLead.is_synthetic) && duplicateLeads.every((lead) => Boolean(lead.is_synthetic));
+
+    const updatedPrimaryRes = await client.query(
+      `UPDATE outbound_leads
+       SET name = $1,
+           first_name = $2,
+           last_name = $3,
+           email = $4,
+           phone = $5,
+           company = $6,
+           title = $7,
+           linkedin_url = $8,
+           website = $9,
+           location = $10,
+           notes = $11,
+           raw_data = $12::jsonb,
+           source_confidence = $13,
+           fit_score = $14,
+           intent_score = $15,
+           total_score = $16,
+           next_recommended_action = $17,
+           suppression_reason = $18,
+           last_outreach_channel = $19,
+           is_synthetic = $20,
+           updated_at = NOW()
+       WHERE id = $21
+         AND user_id = $22
+       RETURNING *`,
+      [
+        mergedFields.name,
+        mergedFields.first_name,
+        mergedFields.last_name,
+        mergedFields.email,
+        mergedFields.phone,
+        mergedFields.company,
+        mergedFields.title,
+        mergedFields.linkedin_url,
+        mergedFields.website,
+        mergedFields.location,
+        mergedNotes,
+        JSON.stringify(mergedRawData),
+        mergedSourceConfidence,
+        mergedFitScore,
+        mergedIntentScore,
+        mergedTotalScore,
+        nextRecommendedAction,
+        suppressionReason,
+        lastOutreachChannel,
+        isSynthetic,
+        primaryLeadId,
+        req.user.id,
+      ]
+    );
+
+    await client.query(
+      `DELETE FROM outbound_campaign_members duplicate_member
+       USING outbound_campaign_members primary_member
+       WHERE duplicate_member.lead_id = ANY($1::uuid[])
+         AND primary_member.lead_id = $2
+         AND duplicate_member.campaign_id = primary_member.campaign_id`,
+      [duplicateLeadIds, primaryLeadId]
+    );
+
+    await client.query(
+      `UPDATE outbound_campaign_members
+       SET lead_id = $1,
+           updated_at = NOW()
+       WHERE lead_id = ANY($2::uuid[])`,
+      [primaryLeadId, duplicateLeadIds]
+    );
+
+    await client.query(
+      `UPDATE outbound_sequence_enrollments
+       SET status = 'stopped',
+           stop_reason = COALESCE(stop_reason, $1),
+           stopped_at = COALESCE(stopped_at, NOW()),
+           updated_at = NOW(),
+           last_transition_at = NOW()
+       WHERE user_id = $2
+         AND lead_id = ANY($3::uuid[])
+         AND status IN ('active', 'paused')`,
+      [`Merged into primary lead ${primaryLeadId}`, req.user.id, duplicateLeadIds]
+    );
+
+    await client.query(
+      `UPDATE outbound_sequence_enrollments
+       SET lead_id = $1,
+           updated_at = NOW()
+       WHERE user_id = $2
+         AND lead_id = ANY($3::uuid[])`,
+      [primaryLeadId, req.user.id, duplicateLeadIds]
+    );
+
+    await client.query(`UPDATE outbound_message_drafts SET lead_id = $1, updated_at = NOW() WHERE lead_id = ANY($2::uuid[])`, [
+      primaryLeadId,
+      duplicateLeadIds,
+    ]);
+    await client.query(`UPDATE linkedin_outreach_tasks SET lead_id = $1, updated_at = NOW() WHERE lead_id = ANY($2::uuid[])`, [
+      primaryLeadId,
+      duplicateLeadIds,
+    ]);
+    await client.query(`UPDATE lead_source_events SET lead_id = $1 WHERE user_id = $2 AND lead_id = ANY($3::uuid[])`, [
+      primaryLeadId,
+      req.user.id,
+      duplicateLeadIds,
+    ]);
+    await client.query(`UPDATE lead_score_history SET lead_id = $1 WHERE user_id = $2 AND lead_id = ANY($3::uuid[])`, [
+      primaryLeadId,
+      req.user.id,
+      duplicateLeadIds,
+    ]);
+    await client.query(`UPDATE attribution_touchpoints SET lead_id = $1 WHERE user_id = $2 AND lead_id = ANY($3::uuid[])`, [
+      primaryLeadId,
+      req.user.id,
+      duplicateLeadIds,
+    ]);
+
+    await client.query(
+      `DELETE FROM multifamily_object_associations duplicate_association
+       USING multifamily_object_associations primary_association
+       WHERE duplicate_association.user_id = $1
+         AND primary_association.user_id = duplicate_association.user_id
+         AND duplicate_association.entity_type = 'outbound_lead'
+         AND primary_association.entity_type = 'outbound_lead'
+         AND duplicate_association.entity_id = ANY($2::uuid[])
+         AND primary_association.entity_id = $3
+         AND duplicate_association.object_id = primary_association.object_id`,
+      [req.user.id, duplicateLeadIds, primaryLeadId]
+    );
+
+    await client.query(
+      `UPDATE multifamily_object_associations
+       SET entity_id = $1,
+           target_key = $1::text,
+           updated_at = NOW()
+       WHERE user_id = $2
+         AND entity_type = 'outbound_lead'
+         AND entity_id = ANY($3::uuid[])`,
+      [primaryLeadId, req.user.id, duplicateLeadIds]
+    );
+
+    await client.query(
+      `UPDATE data_quality_issues
+       SET lead_id = $1,
+           updated_at = NOW()
+       WHERE user_id = $2
+         AND lead_id = ANY($3::uuid[])`,
+      [primaryLeadId, req.user.id, duplicateLeadIds]
+    );
+
+    const mergeOpRes = await client.query(
+      `INSERT INTO data_quality_merge_operations
+        (user_id, issue_id, primary_lead_id, merged_lead_ids, merged_lead_count, field_updates, metadata)
+       VALUES
+        ($1, $2, $3, $4::uuid[], $5, $6::jsonb, $7::jsonb)
+       RETURNING *`,
+      [
+        req.user.id,
+        issue.id,
+        primaryLeadId,
+        duplicateLeadIds,
+        duplicateLeadIds.length,
+        JSON.stringify(fieldUpdates),
+        JSON.stringify({
+          issueStatusAtMerge: issue.status,
+          source: 'data_quality_issue_merge',
+        }),
+      ]
+    );
+    const mergeOperation = mergeOpRes.rows[0];
+
+    await client.query(
+      `UPDATE data_quality_issues
+       SET status = 'resolved',
+           resolved_at = NOW(),
+           updated_at = NOW(),
+           details = jsonb_set(COALESCE(details, '{}'::jsonb), '{mergeOperationId}', to_jsonb($1::text), true)
+       WHERE user_id = $2
+         AND issue_type = 'potential_duplicate'
+         AND (id = $3 OR lead_id = $4 OR lead_id = ANY($5::uuid[]))`,
+      [mergeOperation.id, req.user.id, issue.id, primaryLeadId, duplicateLeadIds]
+    );
+
+    await client.query(
+      `DELETE FROM outbound_leads
+       WHERE user_id = $1
+         AND id = ANY($2::uuid[])`,
+      [req.user.id, duplicateLeadIds]
+    );
+
+    await client.query('COMMIT');
+
+    await syncDataQualityIssuesForUser(req.user.id);
+
+    logAction(req.user.id, req.user.email, 'outbound_data_quality_duplicates_merged', 'outbound_lead', primaryLeadId, updatedPrimaryRes.rows[0]?.name || null, {
+      issueId: issue.id,
+      mergedLeadIds: duplicateLeadIds,
+      mergeOperationId: mergeOperation.id,
+    });
+
+    return res.json({
+      mergeOperation: mapDataQualityMergeOperationRow(mergeOperation),
+      primaryLead: updatedPrimaryRes.rows[0],
+      mergedLeadIds: duplicateLeadIds,
+      resolvedIssueId: issue.id,
+    });
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // ignore rollback failure
+    }
+    return res.status(500).json({ error: 'Failed to merge duplicate leads.', message: err.message });
+  } finally {
+    client.release();
+  }
 });
 
 /**
