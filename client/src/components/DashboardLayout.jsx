@@ -83,10 +83,10 @@ export default function DashboardLayout() {
       availableTabs.find((tab) => tab.items.some((item) => isItemActivePath(item, location.pathname))) ||
       availableTabs[0]
 
-    if (matchingTab && matchingTab.id !== activeTabId) {
-      setActiveTabId(matchingTab.id)
-    }
-  }, [location.pathname, availableTabs, activeTabId])
+    if (!matchingTab) return
+
+    setActiveTabId((prev) => (matchingTab.id === prev ? prev : matchingTab.id))
+  }, [location.pathname, availableTabs])
 
   const activeTab =
     availableTabs.find((tab) => tab.id === activeTabId) || availableTabs[0] || { label: 'Navigation', items: [] }
