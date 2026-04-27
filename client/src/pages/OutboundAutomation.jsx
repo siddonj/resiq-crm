@@ -124,6 +124,13 @@ export default function OutboundAutomation() {
   const [loadingDraftInbox, setLoadingDraftInbox] = useState(false)
   const [linkedinTaskBoard, setLinkedinTaskBoard] = useState(null)
   const [loadingLinkedinTaskBoard, setLoadingLinkedinTaskBoard] = useState(false)
+  const [savedViews, setSavedViews] = useState([])
+  const [loadingSavedViews, setLoadingSavedViews] = useState(false)
+  const [savedViewName, setSavedViewName] = useState('')
+  const [selectedSavedViewId, setSelectedSavedViewId] = useState('')
+  const [slaAlerts, setSlaAlerts] = useState([])
+  const [slaSummary, setSlaSummary] = useState(null)
+  const [loadingSlaAlerts, setLoadingSlaAlerts] = useState(false)
   const [campaigns, setCampaigns] = useState([])
   const [loadingCampaigns, setLoadingCampaigns] = useState(false)
   const [sequences, setSequences] = useState([])
@@ -189,6 +196,12 @@ export default function OutboundAutomation() {
     objectType: '',
     objectId: '',
     limit: 100,
+  })
+  const [selectedLeadMap, setSelectedLeadMap] = useState({})
+  const [bulkActionForm, setBulkActionForm] = useState({
+    actionType: 'set_status',
+    status: 'qualified',
+    reason: '',
   })
   const [importConfig, setImportConfig] = useState({
     sourceType: 'csv',
@@ -268,6 +281,40 @@ export default function OutboundAutomation() {
       setError(err.response?.data?.error || 'Failed to load LinkedIn task board.')
     } finally {
       setLoadingLinkedinTaskBoard(false)
+    }
+  }, [authHeaders, token])
+
+  const fetchSavedViews = useCallback(async () => {
+    if (!token) return
+    setLoadingSavedViews(true)
+    try {
+      const { data } = await axios.get('/api/outbound/saved-views?scope=outbound_leads', authHeaders)
+      const views = Array.isArray(data.views) ? data.views : []
+      setSavedViews(views)
+      if (!selectedSavedViewId) {
+        const defaultView = views.find((view) => view.isDefault) || views[0]
+        if (defaultView) {
+          setSelectedSavedViewId(defaultView.id)
+        }
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load saved views.')
+    } finally {
+      setLoadingSavedViews(false)
+    }
+  }, [authHeaders, selectedSavedViewId, token])
+
+  const fetchSlaAlerts = useCallback(async () => {
+    if (!token) return
+    setLoadingSlaAlerts(true)
+    try {
+      const { data } = await axios.get('/api/outbound/sla/alerts', authHeaders)
+      setSlaAlerts(Array.isArray(data.alerts) ? data.alerts : [])
+      setSlaSummary(data.summary || null)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load SLA alerts.')
+    } finally {
+      setLoadingSlaAlerts(false)
     }
   }, [authHeaders, token])
 
@@ -460,6 +507,14 @@ export default function OutboundAutomation() {
   }, [fetchLinkedinTaskBoard])
 
   useEffect(() => {
+    fetchSavedViews()
+  }, [fetchSavedViews])
+
+  useEffect(() => {
+    fetchSlaAlerts()
+  }, [fetchSlaAlerts])
+
+  useEffect(() => {
     fetchAnalytics()
   }, [fetchAnalytics])
 
@@ -526,6 +581,16 @@ export default function OutboundAutomation() {
       setRuleTestLeadId(leads[0].id)
     }
   }, [leads, ruleTestLeadId])
+
+  useEffect(() => {
+    setSelectedLeadMap((prev) => {
+      const next = {}
+      for (const lead of leads) {
+        if (prev[lead.id]) next[lead.id] = true
+      }
+      return next
+    })
+  }, [leads])
 
   const runAction = async (key, fn) => {
     setBusyKey(key)
@@ -739,6 +804,137 @@ export default function OutboundAutomation() {
         `LinkedIn queue rebalanced: ${toInt(data.rebalancedCount)} tasks across ${toInt(data.windowDays, 1)} day(s).`
       )
       await Promise.all([fetchLinkedinTaskBoard(), fetchDraftInbox()])
+    })
+  }
+
+  const handleApplySavedView = async (viewId) => {
+    const view = savedViews.find((item) => item.id === viewId)
+    if (!view) {
+      setError('Saved view not found.')
+      return
+    }
+
+    const viewFilters = view.filters || {}
+    const nextFilters = {
+      status: viewFilters.status || '',
+      minScore: toInt(viewFilters.minScore, 0),
+      search: viewFilters.search || '',
+      objectType: viewFilters.objectType || '',
+      objectId: viewFilters.objectId || '',
+      limit: toInt(viewFilters.limit, 100),
+    }
+
+    setSelectedSavedViewId(view.id)
+    setFilters(nextFilters)
+
+    await runAction(`saved-view-apply-${view.id}`, async () => {
+      const params = new URLSearchParams()
+      if (nextFilters.status) params.append('status', nextFilters.status)
+      if (nextFilters.search) params.append('search', nextFilters.search)
+      if (nextFilters.objectType) params.append('objectType', nextFilters.objectType)
+      if (nextFilters.objectId) params.append('objectId', nextFilters.objectId)
+      params.append('minScore', String(nextFilters.minScore))
+      params.append('limit', String(nextFilters.limit))
+
+      const { data } = await axios.get(`/api/outbound/leads?${params.toString()}`, authHeaders)
+      setLeads(Array.isArray(data.leads) ? data.leads : [])
+      setMessage(`Applied saved view: ${view.name}`)
+    })
+  }
+
+  const handleSaveCurrentView = async () => {
+    const name = String(savedViewName || '').trim()
+    if (!name) {
+      setError('Saved view name is required.')
+      return
+    }
+
+    await runAction('saved-view-create', async () => {
+      await axios.post(
+        '/api/outbound/saved-views',
+        {
+          scope: 'outbound_leads',
+          name,
+          filters,
+          isDefault: false,
+        },
+        authHeaders
+      )
+      setSavedViewName('')
+      await fetchSavedViews()
+      setMessage('Saved outbound view created.')
+    })
+  }
+
+  const handleDeleteSavedView = async (viewId) => {
+    await runAction(`saved-view-delete-${viewId}`, async () => {
+      await axios.delete(`/api/outbound/saved-views/${viewId}`, authHeaders)
+      if (selectedSavedViewId === viewId) {
+        setSelectedSavedViewId('')
+      }
+      await fetchSavedViews()
+      setMessage('Saved view deleted.')
+    })
+  }
+
+  const handleToggleLeadSelected = (leadId, checked) => {
+    setSelectedLeadMap((prev) => ({
+      ...prev,
+      [leadId]: Boolean(checked),
+    }))
+  }
+
+  const handleToggleSelectAllVisibleLeads = (checked) => {
+    setSelectedLeadMap((prev) => {
+      const next = { ...prev }
+      for (const lead of leads) {
+        next[lead.id] = Boolean(checked)
+      }
+      return next
+    })
+  }
+
+  const handleRunBulkAction = async () => {
+    if (!selectedLeadIds.length) {
+      setError('Select at least one lead before running a bulk action.')
+      return
+    }
+
+    const actionType = bulkActionForm.actionType
+    const payload = {}
+    if (actionType === 'set_status') {
+      payload.status = bulkActionForm.status
+    }
+    if (actionType === 'suppress') {
+      const reason = String(bulkActionForm.reason || '').trim()
+      if (!reason) {
+        setError('Suppression reason is required for bulk suppress action.')
+        return
+      }
+      payload.reason = reason
+    }
+
+    await runAction(`bulk-action-${actionType}`, async () => {
+      const { data } = await axios.post(
+        '/api/outbound/leads/bulk',
+        {
+          leadIds: selectedLeadIds,
+          actionType,
+          payload,
+        },
+        authHeaders
+      )
+
+      setMessage(`Bulk action "${actionType}" updated ${toInt(data.updatedCount)} lead(s).`)
+      setSelectedLeadMap({})
+      await Promise.all([
+        fetchLeads(),
+        fetchDraftInbox(),
+        fetchLinkedinTaskBoard(),
+        fetchSlaAlerts(),
+        fetchAnalytics(),
+        fetchSequenceEnrollments(),
+      ])
     })
   }
 
@@ -1205,6 +1401,15 @@ export default function OutboundAutomation() {
   const dataQualityOpenBlockingCount = toInt(dataQualitySummary?.open_blocking_count)
   const dataQualityResolvedCount = toInt(dataQualitySummary?.resolved_count)
   const dataQualityMergeCount30d = toInt(dataQualitySummary?.merge_count_30d)
+  const slaCounts = slaSummary || {}
+  const selectedLeadIds = useMemo(
+    () =>
+      Object.entries(selectedLeadMap)
+        .filter(([, selected]) => Boolean(selected))
+        .map(([leadId]) => leadId),
+    [selectedLeadMap]
+  )
+  const allVisibleLeadsSelected = leads.length > 0 && leads.every((lead) => Boolean(selectedLeadMap[lead.id]))
   const multifamilyObjectCounts = multifamilySummary?.objectCounts || {}
   const multifamilyAssociationCounts = multifamilySummary?.associationCounts || {}
   const multifamilyObjectsByType = useMemo(() => {
@@ -1272,6 +1477,8 @@ export default function OutboundAutomation() {
               fetchLeads()
               fetchDraftInbox()
               fetchLinkedinTaskBoard()
+              fetchSavedViews()
+              fetchSlaAlerts()
               fetchAnalytics()
               fetchCampaigns()
               fetchSequences()
@@ -1301,6 +1508,117 @@ export default function OutboundAutomation() {
           {error || message}
         </div>
       )}
+
+      <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">Saved Views</h3>
+            <p className="text-xs text-brand-gray mt-0.5">Save and reapply outbound filters instantly.</p>
+          </div>
+          <button
+            onClick={fetchSavedViews}
+            className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
+          >
+            {loadingSavedViews ? 'Refreshing...' : 'Refresh Views'}
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+          <select
+            value={selectedSavedViewId}
+            onChange={(event) => setSelectedSavedViewId(event.target.value)}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="">Select saved view</option>
+            {savedViews.map((view) => (
+              <option key={view.id} value={view.id}>
+                {view.name}
+                {view.isDefault ? ' (Default)' : ''}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => handleApplySavedView(selectedSavedViewId)}
+            disabled={!selectedSavedViewId || busyKey === `saved-view-apply-${selectedSavedViewId}`}
+            className="border border-teal text-teal rounded-lg px-3 py-2 text-sm font-semibold hover:bg-teal/5 disabled:opacity-60"
+          >
+            Apply View
+          </button>
+          <button
+            onClick={() => handleDeleteSavedView(selectedSavedViewId)}
+            disabled={!selectedSavedViewId || busyKey === `saved-view-delete-${selectedSavedViewId}`}
+            className="border border-rose-200 text-rose-700 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-rose-50 disabled:opacity-60"
+          >
+            Delete View
+          </button>
+          <div className="text-xs text-brand-gray flex items-center">Total views: {savedViews.length}</div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          <input
+            type="text"
+            value={savedViewName}
+            onChange={(event) => setSavedViewName(event.target.value)}
+            placeholder="New view name"
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+          />
+          <button
+            onClick={handleSaveCurrentView}
+            disabled={busyKey === 'saved-view-create'}
+            className="bg-navy text-white rounded-lg px-3 py-2 text-sm font-semibold hover:bg-navy/90 disabled:opacity-60"
+          >
+            {busyKey === 'saved-view-create' ? 'Saving...' : 'Save Current Filters'}
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">SLA Alerts</h3>
+            <p className="text-xs text-brand-gray mt-0.5">Highlights overdue work and at-risk outreach tasks.</p>
+          </div>
+          <button
+            onClick={fetchSlaAlerts}
+            className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
+          >
+            {loadingSlaAlerts ? 'Refreshing...' : 'Refresh Alerts'}
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Total</p>
+            <p className="text-lg font-bold text-navy">{toInt(slaCounts.totalAlerts)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">LinkedIn Overdue</p>
+            <p className="text-lg font-bold text-rose-700">{toInt(slaCounts.overdueLinkedIn)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Stale Email Drafts</p>
+            <p className="text-lg font-bold text-amber-700">{toInt(slaCounts.staleApprovedEmailDrafts)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Paused Sequences</p>
+            <p className="text-lg font-bold text-indigo-700">{toInt(slaCounts.stalePausedEnrollments)}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">High Score Not Contacted</p>
+            <p className="text-lg font-bold text-navy">{toInt(slaCounts.highScoreNotContacted)}</p>
+          </div>
+        </div>
+        {slaAlerts.length > 0 && (
+          <div className="space-y-1">
+            {slaAlerts.slice(0, 6).map((alert) => (
+              <p key={`${alert.type}-${alert.id}`} className="text-xs text-brand-gray">
+                <span className={`font-semibold ${alert.severity === 'high' ? 'text-rose-700' : 'text-amber-700'}`}>
+                  {alert.type}
+                </span>{' '}
+                {alert.lead?.name ? `- ${alert.lead.name}` : ''}{' '}
+                {alert.ageHours != null ? `(${toInt(alert.ageHours)}h)` : ''}
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-xl shadow-sm p-4">
@@ -2002,7 +2320,7 @@ export default function OutboundAutomation() {
                     </td>
                     <td className="py-2 pr-3 text-xs text-gray-700">{issue.status}</td>
                     <td className="py-2 pr-3">
-                      <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
                         {issue.status !== 'resolved' && (
                           <button
                             onClick={() => handleDataQualityIssueStatus(issue.id, 'resolved')}
@@ -2600,6 +2918,54 @@ export default function OutboundAutomation() {
           </button>
         </div>
 
+        <div className="border border-gray-100 rounded-lg p-3 space-y-2">
+          <p className="text-xs font-semibold text-navy">Bulk Actions</p>
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+            <select
+              value={bulkActionForm.actionType}
+              onChange={(event) => setBulkActionForm((prev) => ({ ...prev, actionType: event.target.value }))}
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="set_status">Set Status</option>
+              <option value="suppress">Suppress</option>
+              <option value="unsuppress">Unsuppress</option>
+              <option value="rescore">Rescore</option>
+            </select>
+            {bulkActionForm.actionType === 'set_status' && (
+              <select
+                value={bulkActionForm.status}
+                onChange={(event) => setBulkActionForm((prev) => ({ ...prev, status: event.target.value }))}
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              >
+                {LEAD_STATUSES.filter((status) => status.value).map((status) => (
+                  <option key={status.value} value={status.value}>
+                    {status.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            {bulkActionForm.actionType === 'suppress' && (
+              <input
+                type="text"
+                value={bulkActionForm.reason}
+                onChange={(event) => setBulkActionForm((prev) => ({ ...prev, reason: event.target.value }))}
+                placeholder="Suppression reason"
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              />
+            )}
+            <button
+              onClick={handleRunBulkAction}
+              disabled={selectedLeadIds.length === 0 || busyKey === `bulk-action-${bulkActionForm.actionType}`}
+              className="bg-navy text-white rounded-lg px-3 py-2 text-sm font-semibold hover:bg-navy/90 disabled:opacity-60"
+            >
+              {busyKey === `bulk-action-${bulkActionForm.actionType}` ? 'Running...' : `Run (${selectedLeadIds.length})`}
+            </button>
+            <p className="text-xs text-brand-gray flex items-center">
+              {selectedLeadIds.length} lead(s) selected
+            </p>
+          </div>
+        </div>
+
         {loadingLeads || loadingAnalytics ? (
           <div className="text-sm text-brand-gray">Loading outbound data...</div>
         ) : leads.length === 0 ? (
@@ -2609,6 +2975,13 @@ export default function OutboundAutomation() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
+                  <th className="py-2 pr-3">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleLeadsSelected}
+                      onChange={(event) => handleToggleSelectAllVisibleLeads(event.target.checked)}
+                    />
+                  </th>
                   <th className="py-2 pr-3">Lead</th>
                   <th className="py-2 pr-3">Company</th>
                   <th className="py-2 pr-3">Score</th>
@@ -2619,6 +2992,13 @@ export default function OutboundAutomation() {
               <tbody className="divide-y divide-gray-50">
                 {leads.map((lead) => (
                   <tr key={lead.id}>
+                    <td className="py-3 pr-3 align-top">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(selectedLeadMap[lead.id])}
+                        onChange={(event) => handleToggleLeadSelected(lead.id, event.target.checked)}
+                      />
+                    </td>
                     <td className="py-3 pr-3">
                       <p className="font-semibold text-navy">{lead.name}</p>
                       <p className="text-xs text-brand-gray">{lead.email || 'No email'}</p>

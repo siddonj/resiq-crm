@@ -135,6 +135,8 @@ const VALID_MULTIFAMILY_EXPLORER_ENTITY_TYPES = new Set(['contact', 'deal', 'com
 const VALID_DRAFT_STATUSES = new Set(['drafted', 'approved', 'sent', 'archived']);
 const VALID_DRAFT_CHANNELS = new Set(['email', 'linkedin']);
 const VALID_LINKEDIN_TASK_STATUSES = new Set(['pending', 'drafted', 'approved', 'completed', 'skipped', 'blocked']);
+const VALID_OUTBOUND_SAVED_VIEW_SCOPES = new Set(['outbound_leads']);
+const VALID_OUTBOUND_BULK_ACTIONS = new Set(['set_status', 'suppress', 'unsuppress', 'rescore']);
 
 function parseCSVRow(line) {
   const result = [];
@@ -927,6 +929,58 @@ function mapTaskBoardBuckets(rows) {
     buckets[item.status].push(item);
   }
   return buckets;
+}
+
+function normalizeSavedViewFilters(filters) {
+  const source = isPlainObject(filters) ? filters : {};
+  const normalized = {};
+
+  if (source.status) {
+    const status = String(source.status).trim().toLowerCase();
+    if (VALID_OUTBOUND_LEAD_STATUSES.has(status)) {
+      normalized.status = status;
+    }
+  }
+
+  if (source.search) {
+    const search = String(source.search).trim();
+    if (search) normalized.search = search.slice(0, 200);
+  }
+
+  const minScore = Number(source.minScore);
+  if (Number.isFinite(minScore)) {
+    normalized.minScore = Math.max(0, Math.min(100, Math.round(minScore)));
+  }
+
+  const limit = Number(source.limit);
+  if (Number.isFinite(limit)) {
+    normalized.limit = Math.max(1, Math.min(500, Math.round(limit)));
+  }
+
+  const objectType = normalizeMultifamilyObjectType(source.objectType);
+  if (objectType) {
+    normalized.objectType = objectType;
+  }
+
+  const objectId = sanitizeUuidValue(source.objectId || '');
+  if (objectId) {
+    normalized.objectId = objectId;
+  }
+
+  return normalized;
+}
+
+function mapSavedViewRow(row) {
+  return {
+    id: row.id,
+    scope: row.scope,
+    name: row.name,
+    isDefault: Boolean(row.is_default),
+    filters: row.filters || {},
+    displayOptions: row.display_options || {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function normalizeMultifamilyExplorerEntityType(value) {
@@ -3107,6 +3161,516 @@ router.get('/leads', async (req, res) => {
 
   const result = await pool.query(sql, params);
   return res.json({ total: result.rows.length, leads: result.rows });
+});
+
+/**
+ * GET /api/outbound/saved-views
+ * Query: scope=outbound_leads
+ */
+router.get('/saved-views', async (req, res) => {
+  const scope = String(req.query.scope || 'outbound_leads').trim().toLowerCase();
+  if (!VALID_OUTBOUND_SAVED_VIEW_SCOPES.has(scope)) {
+    return res.status(400).json({ error: 'Invalid saved view scope.' });
+  }
+
+  const result = await pool.query(
+    `SELECT *
+     FROM outbound_saved_views
+     WHERE user_id = $1
+       AND scope = $2
+     ORDER BY is_default DESC, updated_at DESC`,
+    [req.user.id, scope]
+  );
+
+  return res.json({
+    total: result.rows.length,
+    views: result.rows.map(mapSavedViewRow),
+  });
+});
+
+/**
+ * POST /api/outbound/saved-views
+ * Body: { scope?, name, filters?, displayOptions?, isDefault? }
+ */
+router.post('/saved-views', async (req, res) => {
+  const scope = String(req.body.scope || 'outbound_leads').trim().toLowerCase();
+  const name = String(req.body.name || '').trim();
+  const isDefault = Boolean(req.body.isDefault);
+  const filters = normalizeSavedViewFilters(req.body.filters);
+  const displayOptions = isPlainObject(req.body.displayOptions) ? req.body.displayOptions : {};
+
+  if (!VALID_OUTBOUND_SAVED_VIEW_SCOPES.has(scope)) {
+    return res.status(400).json({ error: 'Invalid saved view scope.' });
+  }
+  if (!name) {
+    return res.status(400).json({ error: 'Saved view name is required.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    if (isDefault) {
+      await client.query(
+        `UPDATE outbound_saved_views
+         SET is_default = FALSE,
+             updated_at = NOW()
+         WHERE user_id = $1
+           AND scope = $2
+           AND is_default = TRUE`,
+        [req.user.id, scope]
+      );
+    }
+
+    const insertedRes = await client.query(
+      `INSERT INTO outbound_saved_views
+        (user_id, scope, name, is_default, filters, display_options, updated_at)
+       VALUES
+        ($1, $2, $3, $4, $5::jsonb, $6::jsonb, NOW())
+       RETURNING *`,
+      [req.user.id, scope, name, isDefault, JSON.stringify(filters), JSON.stringify(displayOptions)]
+    );
+
+    await client.query('COMMIT');
+
+    logAction(req.user.id, req.user.email, 'outbound_saved_view_created', 'outbound_saved_view', insertedRes.rows[0].id, name, {
+      scope,
+      isDefault,
+    });
+
+    return res.status(201).json(mapSavedViewRow(insertedRes.rows[0]));
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // ignore rollback error
+    }
+    if (String(err.message || '').toLowerCase().includes('duplicate') || String(err.code || '') === '23505') {
+      return res.status(409).json({ error: 'A saved view with this name already exists.' });
+    }
+    return res.status(500).json({ error: 'Failed to create saved view.', message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * PATCH /api/outbound/saved-views/:id
+ * Body: { name?, filters?, displayOptions?, isDefault? }
+ */
+router.patch('/saved-views/:id', async (req, res) => {
+  const existingRes = await pool.query(
+    `SELECT *
+     FROM outbound_saved_views
+     WHERE id = $1
+       AND user_id = $2
+     LIMIT 1`,
+    [req.params.id, req.user.id]
+  );
+  if (!existingRes.rows.length) {
+    return res.status(404).json({ error: 'Saved view not found.' });
+  }
+
+  const existing = existingRes.rows[0];
+  const nextName = req.body.name == null ? existing.name : String(req.body.name).trim();
+  const nextIsDefault = req.body.isDefault == null ? Boolean(existing.is_default) : Boolean(req.body.isDefault);
+  const nextFilters = req.body.filters == null ? existing.filters || {} : normalizeSavedViewFilters(req.body.filters);
+  const nextDisplayOptions =
+    req.body.displayOptions == null ? existing.display_options || {} : isPlainObject(req.body.displayOptions) ? req.body.displayOptions : {};
+
+  if (!nextName) {
+    return res.status(400).json({ error: 'Saved view name cannot be empty.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    if (nextIsDefault) {
+      await client.query(
+        `UPDATE outbound_saved_views
+         SET is_default = FALSE,
+             updated_at = NOW()
+         WHERE user_id = $1
+           AND scope = $2
+           AND id <> $3
+           AND is_default = TRUE`,
+        [req.user.id, existing.scope, existing.id]
+      );
+    }
+
+    const updatedRes = await client.query(
+      `UPDATE outbound_saved_views
+       SET name = $1,
+           is_default = $2,
+           filters = $3::jsonb,
+           display_options = $4::jsonb,
+           updated_at = NOW()
+       WHERE id = $5
+         AND user_id = $6
+       RETURNING *`,
+      [nextName, nextIsDefault, JSON.stringify(nextFilters), JSON.stringify(nextDisplayOptions), req.params.id, req.user.id]
+    );
+
+    await client.query('COMMIT');
+
+    logAction(req.user.id, req.user.email, 'outbound_saved_view_updated', 'outbound_saved_view', req.params.id, nextName, {
+      isDefault: nextIsDefault,
+    });
+
+    return res.json(mapSavedViewRow(updatedRes.rows[0]));
+  } catch (err) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // ignore rollback error
+    }
+    if (String(err.message || '').toLowerCase().includes('duplicate') || String(err.code || '') === '23505') {
+      return res.status(409).json({ error: 'A saved view with this name already exists.' });
+    }
+    return res.status(500).json({ error: 'Failed to update saved view.', message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * DELETE /api/outbound/saved-views/:id
+ */
+router.delete('/saved-views/:id', async (req, res) => {
+  const deletedRes = await pool.query(
+    `DELETE FROM outbound_saved_views
+     WHERE id = $1
+       AND user_id = $2
+     RETURNING id, name, scope`,
+    [req.params.id, req.user.id]
+  );
+
+  if (!deletedRes.rows.length) {
+    return res.status(404).json({ error: 'Saved view not found.' });
+  }
+
+  const deleted = deletedRes.rows[0];
+  logAction(req.user.id, req.user.email, 'outbound_saved_view_deleted', 'outbound_saved_view', deleted.id, deleted.name, {
+    scope: deleted.scope,
+  });
+
+  return res.status(204).send();
+});
+
+/**
+ * POST /api/outbound/leads/bulk
+ * Body: { leadIds: string[], actionType: set_status|suppress|unsuppress|rescore, payload?: {} }
+ */
+router.post('/leads/bulk', async (req, res) => {
+  const leadIds = sanitizeUuidList(req.body.leadIds);
+  const actionType = String(req.body.actionType || '').trim().toLowerCase();
+  const payload = isPlainObject(req.body.payload) ? req.body.payload : {};
+
+  if (!leadIds.length) {
+    return res.status(400).json({ error: 'leadIds[] is required.' });
+  }
+  if (!VALID_OUTBOUND_BULK_ACTIONS.has(actionType)) {
+    return res.status(400).json({ error: 'Invalid bulk action type.' });
+  }
+
+  const leadsRes = await pool.query(
+    `SELECT id, name, status, suppression_reason
+     FROM outbound_leads
+     WHERE user_id = $1
+       AND id = ANY($2::uuid[])`,
+    [req.user.id, leadIds]
+  );
+  const foundLeadIds = new Set(leadsRes.rows.map((lead) => lead.id));
+  const missingLeadIds = leadIds.filter((leadId) => !foundLeadIds.has(leadId));
+
+  if (!leadsRes.rows.length) {
+    return res.status(404).json({ error: 'No leads found for this action.' });
+  }
+
+  const updatedLeadIds = [];
+  const autoStoppedEnrollmentIds = [];
+  const statusTarget = String(payload.status || '').trim().toLowerCase();
+  const suppressionReason = String(payload.reason || '').trim();
+
+  if (actionType === 'set_status' && !VALID_OUTBOUND_LEAD_STATUSES.has(statusTarget)) {
+    return res.status(400).json({ error: 'payload.status must be a valid lead status for set_status action.' });
+  }
+  if (actionType === 'suppress' && !suppressionReason) {
+    return res.status(400).json({ error: 'payload.reason is required for suppress bulk action.' });
+  }
+
+  for (const lead of leadsRes.rows) {
+    if (actionType === 'set_status') {
+      await pool.query(
+        `UPDATE outbound_leads
+         SET status = $1,
+             updated_at = NOW()
+         WHERE id = $2
+           AND user_id = $3`,
+        [statusTarget, lead.id, req.user.id]
+      );
+      await logLeadEvent({
+        userId: req.user.id,
+        leadId: lead.id,
+        eventType: 'bulk_status_updated',
+        metadata: {
+          fromStatus: lead.status,
+          toStatus: statusTarget,
+        },
+      });
+      updatedLeadIds.push(lead.id);
+      continue;
+    }
+
+    if (actionType === 'suppress') {
+      await pool.query(
+        `UPDATE outbound_leads
+         SET status = 'suppressed',
+             suppression_reason = $1,
+             updated_at = NOW()
+         WHERE id = $2
+           AND user_id = $3`,
+        [suppressionReason, lead.id, req.user.id]
+      );
+      await logLeadEvent({
+        userId: req.user.id,
+        leadId: lead.id,
+        eventType: 'lead_suppressed',
+        metadata: {
+          reason: suppressionReason,
+          bulkAction: true,
+        },
+      });
+      const stoppedIds = await autoStopOpenSequenceEnrollments({
+        userId: req.user.id,
+        leadId: lead.id,
+        reason: 'Auto-stopped after bulk suppression',
+        triggerSource: 'bulk_action',
+        metadata: {
+          actionType,
+        },
+      });
+      autoStoppedEnrollmentIds.push(...stoppedIds);
+      updatedLeadIds.push(lead.id);
+      continue;
+    }
+
+    if (actionType === 'unsuppress') {
+      await pool.query(
+        `UPDATE outbound_leads
+         SET status = CASE WHEN status = 'suppressed' THEN 'new' ELSE status END,
+             suppression_reason = NULL,
+             updated_at = NOW()
+         WHERE id = $1
+           AND user_id = $2`,
+        [lead.id, req.user.id]
+      );
+      await logLeadEvent({
+        userId: req.user.id,
+        leadId: lead.id,
+        eventType: 'lead_unsuppressed',
+        metadata: {
+          bulkAction: true,
+        },
+      });
+      updatedLeadIds.push(lead.id);
+      continue;
+    }
+
+    if (actionType === 'rescore') {
+      const leadFullRes = await pool.query(
+        `SELECT * FROM outbound_leads WHERE id = $1 AND user_id = $2`,
+        [lead.id, req.user.id]
+      );
+      if (!leadFullRes.rows.length) continue;
+      const fullLead = leadFullRes.rows[0];
+      const engagement = await computeEngagementSignals(req.user.id, fullLead.id);
+      const score = scoreLead(fullLead, engagement);
+
+      await pool.query(
+        `UPDATE outbound_leads
+         SET fit_score = $1,
+             intent_score = $2,
+             total_score = $3,
+             status = $4,
+             next_recommended_action = $5,
+             updated_at = NOW()
+         WHERE id = $6
+           AND user_id = $7`,
+        [score.fitScore, score.intentScore, score.totalScore, score.status, score.nextRecommendedAction, lead.id, req.user.id]
+      );
+      await logLeadEvent({
+        userId: req.user.id,
+        leadId: lead.id,
+        eventType: 'lead_scored',
+        metadata: {
+          ...score,
+          bulkAction: true,
+        },
+      });
+      await recordLeadScoreHistory({
+        userId: req.user.id,
+        leadId: lead.id,
+        score,
+        source: 'bulk_rescore',
+      });
+      updatedLeadIds.push(lead.id);
+    }
+  }
+
+  logAction(req.user.id, req.user.email, 'outbound_bulk_action_executed', 'outbound_lead', null, actionType, {
+    actionType,
+    requestedCount: leadIds.length,
+    updatedCount: updatedLeadIds.length,
+    missingCount: missingLeadIds.length,
+  });
+
+  return res.json({
+    actionType,
+    requestedCount: leadIds.length,
+    updatedCount: updatedLeadIds.length,
+    updatedLeadIds,
+    missingLeadIds,
+    autoStoppedEnrollmentIds: [...new Set(autoStoppedEnrollmentIds)],
+  });
+});
+
+/**
+ * GET /api/outbound/sla/alerts
+ */
+router.get('/sla/alerts', async (req, res) => {
+  const [overdueLinkedInRes, staleEmailDraftsRes, stalePausedEnrollmentsRes, highScoreUncontactedRes] = await Promise.all([
+    pool.query(
+      `SELECT
+         t.id AS alert_id,
+         'linkedin_overdue'::text AS alert_type,
+         'high'::text AS severity,
+         t.id AS task_id,
+         t.lead_id,
+         t.due_at,
+         l.name AS lead_name,
+         l.company AS lead_company,
+         l.total_score,
+         EXTRACT(EPOCH FROM (NOW() - t.due_at))::bigint AS age_seconds
+       FROM linkedin_outreach_tasks t
+       JOIN outbound_leads l ON l.id = t.lead_id
+       WHERE t.user_id = $1
+         AND t.status IN ('pending', 'drafted', 'approved', 'blocked')
+         AND t.due_at IS NOT NULL
+         AND t.due_at < NOW()
+       ORDER BY t.due_at ASC
+       LIMIT 50`,
+      [req.user.id]
+    ),
+    pool.query(
+      `SELECT
+         d.id AS alert_id,
+         'email_draft_stale'::text AS alert_type,
+         'medium'::text AS severity,
+         d.id AS draft_id,
+         d.lead_id,
+         d.approved_at AS due_at,
+         l.name AS lead_name,
+         l.company AS lead_company,
+         l.total_score,
+         EXTRACT(EPOCH FROM (NOW() - d.approved_at))::bigint AS age_seconds
+       FROM outbound_message_drafts d
+       JOIN outbound_leads l ON l.id = d.lead_id
+       WHERE d.user_id = $1
+         AND d.channel = 'email'
+         AND d.status = 'approved'
+         AND d.approved_at < NOW() - INTERVAL '24 hours'
+       ORDER BY d.approved_at ASC
+       LIMIT 50`,
+      [req.user.id]
+    ),
+    pool.query(
+      `SELECT
+         e.id AS alert_id,
+         'sequence_paused_stale'::text AS alert_type,
+         'medium'::text AS severity,
+         e.id AS enrollment_id,
+         e.lead_id,
+         e.paused_at AS due_at,
+         l.name AS lead_name,
+         l.company AS lead_company,
+         l.total_score,
+         EXTRACT(EPOCH FROM (NOW() - COALESCE(e.paused_at, e.updated_at)))::bigint AS age_seconds
+       FROM outbound_sequence_enrollments e
+       JOIN outbound_leads l ON l.id = e.lead_id
+       WHERE e.user_id = $1
+         AND e.status = 'paused'
+         AND COALESCE(e.paused_at, e.updated_at) < NOW() - INTERVAL '48 hours'
+       ORDER BY COALESCE(e.paused_at, e.updated_at) ASC
+       LIMIT 50`,
+      [req.user.id]
+    ),
+    pool.query(
+      `SELECT
+         l.id AS alert_id,
+         'high_score_not_contacted'::text AS alert_type,
+         'high'::text AS severity,
+         l.id AS lead_id,
+         l.updated_at AS due_at,
+         l.name AS lead_name,
+         l.company AS lead_company,
+         l.total_score,
+         EXTRACT(EPOCH FROM (NOW() - l.updated_at))::bigint AS age_seconds
+       FROM outbound_leads l
+       WHERE l.user_id = $1
+         AND l.total_score >= 75
+         AND l.status IN ('new', 'qualified', 'queued')
+         AND l.updated_at < NOW() - INTERVAL '72 hours'
+       ORDER BY l.total_score DESC, l.updated_at ASC
+       LIMIT 50`,
+      [req.user.id]
+    ),
+  ]);
+
+  const allAlerts = [
+    ...overdueLinkedInRes.rows,
+    ...staleEmailDraftsRes.rows,
+    ...stalePausedEnrollmentsRes.rows,
+    ...highScoreUncontactedRes.rows,
+  ]
+    .map((row) => ({
+      id: row.alert_id,
+      type: row.alert_type,
+      severity: row.severity,
+      leadId: row.lead_id || null,
+      dueAt: row.due_at || null,
+      ageHours: row.age_seconds != null ? round2(Number(row.age_seconds) / 3600) : null,
+      lead: {
+        id: row.lead_id || null,
+        name: row.lead_name || null,
+        company: row.lead_company || null,
+        totalScore: Number(row.total_score || 0),
+      },
+      taskId: row.task_id || null,
+      draftId: row.draft_id || null,
+      enrollmentId: row.enrollment_id || null,
+    }))
+    .sort((a, b) => {
+      const severityRank = { high: 1, medium: 2, low: 3 };
+      if (severityRank[a.severity] !== severityRank[b.severity]) {
+        return (severityRank[a.severity] || 99) - (severityRank[b.severity] || 99);
+      }
+      const aDue = a.dueAt ? new Date(a.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
+      const bDue = b.dueAt ? new Date(b.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
+      return aDue - bDue;
+    });
+
+  return res.json({
+    summary: {
+      totalAlerts: allAlerts.length,
+      overdueLinkedIn: overdueLinkedInRes.rows.length,
+      staleApprovedEmailDrafts: staleEmailDraftsRes.rows.length,
+      stalePausedEnrollments: stalePausedEnrollmentsRes.rows.length,
+      highScoreNotContacted: highScoreUncontactedRes.rows.length,
+    },
+    alerts: allAlerts.slice(0, 120),
+  });
 });
 
 /**

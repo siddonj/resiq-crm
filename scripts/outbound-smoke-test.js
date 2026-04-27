@@ -177,6 +177,57 @@ async function listLeads(token, filters = {}) {
   return response.data;
 }
 
+async function listSavedViews(token, scope = 'outbound_leads') {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/saved-views?scope=${encodeURIComponent(scope)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  assert(response.ok, `list saved views failed: ${JSON.stringify(response.data)}`);
+  assert(Array.isArray(response.data.views), 'saved views response missing views array');
+  return response.data;
+}
+
+async function createSavedView(token, payload) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/saved-views`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `create saved view failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function runBulkLeadAction(token, payload) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/leads/bulk`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `bulk lead action failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function getSlaAlerts(token) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/sla/alerts`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `get sla alerts failed: ${JSON.stringify(response.data)}`);
+  assert(response.data && response.data.summary, 'sla alerts response missing summary');
+  assert(Array.isArray(response.data.alerts), 'sla alerts response missing alerts array');
+  return response.data;
+}
+
 async function createMultifamilyObject(token, payload) {
   const response = await fetchJson(`${BASE_URL}/api/outbound/multifamily/objects`, {
     method: 'POST',
@@ -724,6 +775,24 @@ async function findLinkedInTaskId(databaseUrl, userId, draftId) {
   }
 }
 
+async function markLinkedinTaskOverdue(databaseUrl, userId, taskId) {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+
+  try {
+    await client.query(
+      `UPDATE linkedin_outreach_tasks
+       SET due_at = NOW() - INTERVAL '2 hours',
+           updated_at = NOW()
+       WHERE user_id = $1
+         AND id = $2`,
+      [userId, taskId]
+    );
+  } finally {
+    await client.end();
+  }
+}
+
 async function run() {
   const envVars = loadEnvFile();
   ensureEncryptionKey(envVars);
@@ -757,6 +826,7 @@ async function run() {
       'data_quality_merge_operations',
       'multifamily_objects',
       'multifamily_object_associations',
+      'outbound_saved_views',
     ],
     60000
   );
@@ -800,6 +870,53 @@ async function run() {
   assert(initialLeads.total === 2, `expected 2 leads after dedupe run, got ${initialLeads.total}`);
   const highQualityLeadIds = initialLeads.leads.map((lead) => lead.id);
   const blockedLeadId = highQualityLeadIds[1];
+
+  const savedView = await createSavedView(auth.token, {
+    scope: 'outbound_leads',
+    name: `Queued View ${Date.now()}`,
+    filters: {
+      status: 'queued',
+      minScore: 0,
+      limit: 100,
+    },
+    isDefault: true,
+  });
+  assert(savedView.id, 'expected saved view id from create');
+
+  const savedViews = await listSavedViews(auth.token, 'outbound_leads');
+  assert(
+    savedViews.views.some((view) => view.id === savedView.id && view.isDefault),
+    'expected created saved view in saved views list as default'
+  );
+
+  const bulkSetStatus = await runBulkLeadAction(auth.token, {
+    leadIds: highQualityLeadIds,
+    actionType: 'set_status',
+    payload: {
+      status: 'queued',
+    },
+  });
+  assert(bulkSetStatus.updatedCount === highQualityLeadIds.length, 'expected bulk set_status to update both leads');
+  const queuedLeads = await listLeads(auth.token, { status: 'queued' });
+  assert(
+    queuedLeads.leads.filter((lead) => highQualityLeadIds.includes(lead.id)).length === highQualityLeadIds.length,
+    'expected both high quality leads to move to queued after bulk status action'
+  );
+
+  const bulkSuppress = await runBulkLeadAction(auth.token, {
+    leadIds: [blockedLeadId],
+    actionType: 'suppress',
+    payload: {
+      reason: 'Smoke bulk suppress',
+    },
+  });
+  assert(bulkSuppress.updatedCount === 1, 'expected bulk suppress to update one lead');
+  const bulkUnsuppress = await runBulkLeadAction(auth.token, {
+    leadIds: [blockedLeadId],
+    actionType: 'unsuppress',
+    payload: {},
+  });
+  assert(bulkUnsuppress.updatedCount === 1, 'expected bulk unsuppress to update one lead');
 
   const lowQualityImport = await importCsv(auth.token, buildLowQualityCsvPayload(), 'smoke-import-low-quality');
   assert(lowQualityImport.importedRows === 1, `expected low quality import importedRows=1, got ${lowQualityImport.importedRows}`);
@@ -1181,6 +1298,13 @@ async function run() {
   );
 
   const taskId = await findLinkedInTaskId(databaseUrl, auth.userId, linkedinDraft.id);
+  await markLinkedinTaskOverdue(databaseUrl, auth.userId, taskId);
+  const slaAlerts = await getSlaAlerts(auth.token);
+  assert(
+    Array.isArray(slaAlerts.alerts) && slaAlerts.alerts.some((alert) => alert.type === 'linkedin_overdue'),
+    'expected SLA alerts to include linkedin_overdue after forcing overdue task'
+  );
+
   const completedTask = await completeLinkedInTask(auth.token, taskId);
   const linkedinBoardAfterComplete = await getLinkedinTaskBoard(auth.token);
   assert(
@@ -1279,6 +1403,24 @@ async function run() {
     summaryContactAssociations: multifamilySummary.associationCounts?.contact,
     summaryDealAssociations: multifamilySummary.associationCounts?.deal,
     summaryCompanyAssociations: multifamilySummary.associationCounts?.company,
+  });
+
+  steps.push({
+    step: 'saved_views_bulk_actions',
+    ok: true,
+    savedViewId: savedView.id,
+    totalSavedViews: savedViews.total,
+    bulkSetStatusUpdated: bulkSetStatus.updatedCount,
+    bulkSuppressUpdated: bulkSuppress.updatedCount,
+    bulkUnsuppressUpdated: bulkUnsuppress.updatedCount,
+    queuedLeadCount: queuedLeads.total,
+  });
+
+  steps.push({
+    step: 'sla_alerts',
+    ok: true,
+    totalAlerts: slaAlerts.summary?.totalAlerts,
+    overdueLinkedIn: slaAlerts.summary?.overdueLinkedIn,
   });
 
   steps.push({
