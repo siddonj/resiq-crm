@@ -634,10 +634,56 @@ Local prerequisites:
 - `ENCRYPTION_KEY` set to exactly 32 bytes
 - Root + server + client dependencies installed
 
+Additional Phase 21 slice delivered now (Slice 11):
+
+- Added workspace configuration data model:
+  - `outbound_workspace_config` (per-user sender identity, daily limits, SLA thresholds)
+- Added workspace config APIs:
+  - `GET /api/outbound/workspace/config`
+  - `PUT /api/outbound/workspace/config`
+- Added SLA escalation automation data model:
+  - `outbound_sla_escalations` (per-user rules with type, threshold override, action)
+  - `outbound_notifications` (notification queue for escalation triggers)
+- Added SLA escalation APIs:
+  - `GET /api/outbound/sla/escalations`
+  - `POST /api/outbound/sla/escalations`
+  - `PATCH /api/outbound/sla/escalations/:id`
+  - `POST /api/outbound/sla/escalations/run`
+- Added notifications APIs:
+  - `GET /api/outbound/notifications`
+  - `PATCH /api/outbound/notifications/:id/read`
+  - `POST /api/outbound/notifications/read-all`
+- Added advanced bulk action APIs:
+  - `POST /api/outbound/bulk/sequence-enroll` (with data quality guard)
+  - `POST /api/outbound/bulk/sequence-unenroll`
+  - `POST /api/outbound/bulk/multifamily-tag`
+  - `POST /api/outbound/bulk/campaign-transition`
+- Added Workspace Configuration UI panel in `/outbound-automation`:
+  - sender name and email signature fields
+  - daily email and LinkedIn limit controls
+  - SLA threshold overrides (draft stale hours, LinkedIn overdue hours, paused stale days, high-score not-contacted days)
+- Added SLA Escalation Rules UI panel:
+  - add/enable/disable escalation rules per SLA type
+  - one-click run escalation check
+  - last-run timestamp per rule
+- Added Notifications UI panel:
+  - unread badge on section header
+  - notification feed with read/unread state
+  - mark individual or all as read
+- Extended Bulk Actions in lead table:
+  - bulk sequence enroll (select sequence from list)
+  - bulk sequence unenroll
+  - bulk multifamily tag (select object from list)
+- Expanded smoke test coverage:
+  - workspace config get + put validation
+  - escalation rule create/toggle/run lifecycle
+  - notification list and mark-all-read
+  - bulk sequence enroll/unenroll with enrollment count assertions
+  - bulk multifamily tag with tagged count assertion
+
 Recommended next build steps:
 
-- Add tenant branding/profile screens for white-label packaging
-- Add SLA escalation automations (notifications/reminders)
-- Add advanced bulk actions (sequence enroll/unenroll, multifamily tagging, campaign member transitions)
-- Continue Phase 21 with slice 11:
-  - packaging/ops hardening + white-label configuration workflows
+- Ship Phases 0–4 MVP gap: replace synthetic lead service with real CSV-to-import pipeline validation
+- Add per-tenant branding screens for white-label packaging
+- Add campaign-transition bulk action UI (member ID selection surface)
+- Integrate workspace config sender name/signature into draft generation payload

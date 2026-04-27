@@ -213,6 +213,29 @@ export default function OutboundAutomation() {
     includeEmail: true,
     includeLinkedIn: true,
   })
+  const [workspaceConfig, setWorkspaceConfig] = useState(null)
+  const [loadingWorkspaceConfig, setLoadingWorkspaceConfig] = useState(false)
+  const [workspaceConfigForm, setWorkspaceConfigForm] = useState({
+    senderName: '',
+    emailSignature: '',
+    dailyEmailLimit: 50,
+    dailyLinkedinLimit: 20,
+    slaDraftStaleHours: 24,
+    slaLinkedinOverdueHours: 24,
+    slaPausedStaleDays: 3,
+    slaHighScoreNotContactedDays: 2,
+  })
+  const [escalationRules, setEscalationRules] = useState([])
+  const [loadingEscalations, setLoadingEscalations] = useState(false)
+  const [newEscalationType, setNewEscalationType] = useState('draft_stale')
+  const [notifications, setNotifications] = useState([])
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0)
+  const [loadingNotifications, setLoadingNotifications] = useState(false)
+  const [bulkAdvancedForm, setBulkAdvancedForm] = useState({
+    sequenceId: '',
+    multifamilyObjectId: '',
+    campaignMemberStatus: 'contacted',
+  })
 
   const authHeaders = useMemo(
     () => ({
@@ -583,6 +606,18 @@ export default function OutboundAutomation() {
   }, [leads, ruleTestLeadId])
 
   useEffect(() => {
+    fetchWorkspaceConfig()
+  }, [fetchWorkspaceConfig])
+
+  useEffect(() => {
+    fetchEscalationRules()
+  }, [fetchEscalationRules])
+
+  useEffect(() => {
+    fetchNotifications()
+  }, [fetchNotifications])
+
+  useEffect(() => {
     setSelectedLeadMap((prev) => {
       const next = {}
       for (const lead of leads) {
@@ -591,6 +626,56 @@ export default function OutboundAutomation() {
       return next
     })
   }, [leads])
+
+  const fetchWorkspaceConfig = useCallback(async () => {
+    if (!token) return
+    setLoadingWorkspaceConfig(true)
+    try {
+      const { data } = await axios.get('/api/outbound/workspace/config', authHeaders)
+      setWorkspaceConfig(data)
+      setWorkspaceConfigForm({
+        senderName: data.senderName || '',
+        emailSignature: data.emailSignature || '',
+        dailyEmailLimit: data.dailyEmailLimit ?? 50,
+        dailyLinkedinLimit: data.dailyLinkedinLimit ?? 20,
+        slaDraftStaleHours: data.slaDraftStaleHours ?? 24,
+        slaLinkedinOverdueHours: data.slaLinkedinOverdueHours ?? 24,
+        slaPausedStaleDays: data.slaPausedStaleDays ?? 3,
+        slaHighScoreNotContactedDays: data.slaHighScoreNotContactedDays ?? 2,
+      })
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load workspace config.')
+    } finally {
+      setLoadingWorkspaceConfig(false)
+    }
+  }, [authHeaders, token])
+
+  const fetchEscalationRules = useCallback(async () => {
+    if (!token) return
+    setLoadingEscalations(true)
+    try {
+      const { data } = await axios.get('/api/outbound/sla/escalations', authHeaders)
+      setEscalationRules(Array.isArray(data) ? data : [])
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load escalation rules.')
+    } finally {
+      setLoadingEscalations(false)
+    }
+  }, [authHeaders, token])
+
+  const fetchNotifications = useCallback(async () => {
+    if (!token) return
+    setLoadingNotifications(true)
+    try {
+      const { data } = await axios.get('/api/outbound/notifications', authHeaders)
+      setNotifications(Array.isArray(data.notifications) ? data.notifications : [])
+      setNotificationUnreadCount(toInt(data.unreadCount))
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load notifications.')
+    } finally {
+      setLoadingNotifications(false)
+    }
+  }, [authHeaders, token])
 
   const runAction = async (key, fn) => {
     setBusyKey(key)
@@ -935,6 +1020,114 @@ export default function OutboundAutomation() {
         fetchAnalytics(),
         fetchSequenceEnrollments(),
       ])
+    })
+  }
+
+  const handleSaveWorkspaceConfig = async () => {
+    await runAction('save-workspace-config', async () => {
+      const { data } = await axios.put('/api/outbound/workspace/config', workspaceConfigForm, authHeaders)
+      setWorkspaceConfig(data)
+      setMessage('Workspace configuration saved.')
+    })
+  }
+
+  const handleCreateEscalation = async () => {
+    await runAction('create-escalation', async () => {
+      await axios.post('/api/outbound/sla/escalations', { escalationType: newEscalationType }, authHeaders)
+      setMessage(`Escalation rule for "${newEscalationType}" created.`)
+      await fetchEscalationRules()
+    })
+  }
+
+  const handleToggleEscalation = async (rule) => {
+    await runAction(`toggle-escalation-${rule.id}`, async () => {
+      await axios.patch(`/api/outbound/sla/escalations/${rule.id}`, { isEnabled: !rule.isEnabled }, authHeaders)
+      await fetchEscalationRules()
+    })
+  }
+
+  const handleRunEscalations = async () => {
+    await runAction('run-escalations', async () => {
+      const { data } = await axios.post('/api/outbound/sla/escalations/run', {}, authHeaders)
+      setMessage(`Escalations run: ${toInt(data.triggeredCount)} rule(s) triggered.`)
+      await fetchNotifications()
+    })
+  }
+
+  const handleMarkNotificationRead = async (notifId) => {
+    await runAction(`mark-read-${notifId}`, async () => {
+      await axios.patch(`/api/outbound/notifications/${notifId}/read`, {}, authHeaders)
+      await fetchNotifications()
+    })
+  }
+
+  const handleMarkAllNotificationsRead = async () => {
+    await runAction('mark-all-read', async () => {
+      const { data } = await axios.post('/api/outbound/notifications/read-all', {}, authHeaders)
+      setMessage(`Marked ${toInt(data.markedRead)} notification(s) as read.`)
+      await fetchNotifications()
+    })
+  }
+
+  const handleBulkSequenceEnroll = async () => {
+    if (!selectedLeadIds.length) {
+      setError('Select at least one lead before enrolling.')
+      return
+    }
+    if (!bulkAdvancedForm.sequenceId) {
+      setError('Select a sequence to enroll into.')
+      return
+    }
+    await runAction('bulk-seq-enroll', async () => {
+      const { data } = await axios.post(
+        '/api/outbound/bulk/sequence-enroll',
+        { leadIds: selectedLeadIds, sequenceId: bulkAdvancedForm.sequenceId },
+        authHeaders
+      )
+      setMessage(
+        `Bulk enroll: ${toInt(data.enrolledCount)} enrolled, ${toInt(data.skippedCount)} skipped, ${toInt(data.errorCount)} errors.`
+      )
+      setSelectedLeadMap({})
+      await Promise.all([fetchLeads(), fetchSequenceEnrollments()])
+    })
+  }
+
+  const handleBulkSequenceUnenroll = async () => {
+    if (!selectedLeadIds.length) {
+      setError('Select at least one lead before unenrolling.')
+      return
+    }
+    await runAction('bulk-seq-unenroll', async () => {
+      const { data } = await axios.post(
+        '/api/outbound/bulk/sequence-unenroll',
+        { leadIds: selectedLeadIds },
+        authHeaders
+      )
+      setMessage(
+        `Bulk unenroll: ${toInt(data.stoppedCount)} stopped, ${toInt(data.skippedCount)} skipped.`
+      )
+      setSelectedLeadMap({})
+      await Promise.all([fetchLeads(), fetchSequenceEnrollments()])
+    })
+  }
+
+  const handleBulkMultifamilyTag = async () => {
+    if (!selectedLeadIds.length) {
+      setError('Select at least one lead before tagging.')
+      return
+    }
+    if (!bulkAdvancedForm.multifamilyObjectId) {
+      setError('Select a multifamily object to tag leads with.')
+      return
+    }
+    await runAction('bulk-mf-tag', async () => {
+      const { data } = await axios.post(
+        '/api/outbound/bulk/multifamily-tag',
+        { leadIds: selectedLeadIds, objectId: bulkAdvancedForm.multifamilyObjectId },
+        authHeaders
+      )
+      setMessage(`Bulk tag: ${toInt(data.taggedCount)} lead(s) tagged.`)
+      setSelectedLeadMap({})
     })
   }
 
@@ -2964,6 +3157,55 @@ export default function OutboundAutomation() {
               {selectedLeadIds.length} lead(s) selected
             </p>
           </div>
+
+          <div className="border-t border-gray-100 pt-2 space-y-2">
+            <p className="text-xs font-semibold text-navy">Advanced Bulk Actions</p>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+              <select
+                value={bulkAdvancedForm.sequenceId}
+                onChange={(e) => setBulkAdvancedForm((prev) => ({ ...prev, sequenceId: e.target.value }))}
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+              >
+                <option value="">Select sequence...</option>
+                {sequences.map((seq) => (
+                  <option key={seq.id} value={seq.id}>{seq.name}</option>
+                ))}
+              </select>
+              <button
+                onClick={handleBulkSequenceEnroll}
+                disabled={selectedLeadIds.length === 0 || busyKey === 'bulk-seq-enroll'}
+                className="border border-indigo-200 text-indigo-700 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-indigo-50 disabled:opacity-60"
+              >
+                {busyKey === 'bulk-seq-enroll' ? 'Enrolling...' : `Enroll Sequence (${selectedLeadIds.length})`}
+              </button>
+              <button
+                onClick={handleBulkSequenceUnenroll}
+                disabled={selectedLeadIds.length === 0 || busyKey === 'bulk-seq-unenroll'}
+                className="border border-rose-200 text-rose-700 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-rose-50 disabled:opacity-60"
+              >
+                {busyKey === 'bulk-seq-unenroll' ? 'Unenrolling...' : `Unenroll (${selectedLeadIds.length})`}
+              </button>
+              <div className="flex gap-2">
+                <select
+                  value={bulkAdvancedForm.multifamilyObjectId}
+                  onChange={(e) => setBulkAdvancedForm((prev) => ({ ...prev, multifamilyObjectId: e.target.value }))}
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm flex-1"
+                >
+                  <option value="">Select object...</option>
+                  {multifamilyObjects.map((obj) => (
+                    <option key={obj.id} value={obj.id}>{obj.name} ({obj.objectType})</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleBulkMultifamilyTag}
+                  disabled={selectedLeadIds.length === 0 || busyKey === 'bulk-mf-tag'}
+                  className="border border-teal text-teal rounded-lg px-3 py-2 text-sm font-semibold hover:bg-teal/5 disabled:opacity-60"
+                >
+                  {busyKey === 'bulk-mf-tag' ? 'Tagging...' : 'Tag'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
         {loadingLeads || loadingAnalytics ? (
@@ -3383,6 +3625,269 @@ export default function OutboundAutomation() {
                 )}
               </div>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Workspace Config ─────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">Workspace Configuration</h3>
+            <p className="text-xs text-brand-gray mt-0.5">Sender identity, daily limits, and SLA thresholds for this workspace.</p>
+          </div>
+          <button
+            onClick={handleSaveWorkspaceConfig}
+            disabled={loadingWorkspaceConfig || busyKey === 'save-workspace-config'}
+            className="text-xs bg-navy text-white rounded-lg px-3 py-1.5 hover:bg-navy/90 disabled:opacity-60"
+          >
+            {busyKey === 'save-workspace-config' ? 'Saving...' : 'Save Config'}
+          </button>
+        </div>
+
+        {loadingWorkspaceConfig ? (
+          <p className="text-sm text-brand-gray">Loading workspace config...</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-navy block mb-1">Sender Name</label>
+                <input
+                  type="text"
+                  value={workspaceConfigForm.senderName}
+                  onChange={(e) => setWorkspaceConfigForm((prev) => ({ ...prev, senderName: e.target.value }))}
+                  placeholder="e.g. Your Name"
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-navy block mb-1">Email Signature</label>
+                <textarea
+                  value={workspaceConfigForm.emailSignature}
+                  onChange={(e) => setWorkspaceConfigForm((prev) => ({ ...prev, emailSignature: e.target.value }))}
+                  placeholder="Your email signature..."
+                  rows={3}
+                  className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-navy block mb-1">Daily Email Limit</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={workspaceConfigForm.dailyEmailLimit}
+                    onChange={(e) => setWorkspaceConfigForm((prev) => ({ ...prev, dailyEmailLimit: Number(e.target.value) }))}
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-navy block mb-1">Daily LinkedIn Limit</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={workspaceConfigForm.dailyLinkedinLimit}
+                    onChange={(e) => setWorkspaceConfigForm((prev) => ({ ...prev, dailyLinkedinLimit: Number(e.target.value) }))}
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full"
+                  />
+                </div>
+              </div>
+              <p className="text-xs font-semibold text-navy">SLA Thresholds</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] text-brand-gray block mb-1">Draft stale after (hours)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={workspaceConfigForm.slaDraftStaleHours}
+                    onChange={(e) => setWorkspaceConfigForm((prev) => ({ ...prev, slaDraftStaleHours: Number(e.target.value) }))}
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-brand-gray block mb-1">LinkedIn overdue after (hours)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={workspaceConfigForm.slaLinkedinOverdueHours}
+                    onChange={(e) => setWorkspaceConfigForm((prev) => ({ ...prev, slaLinkedinOverdueHours: Number(e.target.value) }))}
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-brand-gray block mb-1">Paused sequence stale after (days)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={workspaceConfigForm.slaPausedStaleDays}
+                    onChange={(e) => setWorkspaceConfigForm((prev) => ({ ...prev, slaPausedStaleDays: Number(e.target.value) }))}
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-brand-gray block mb-1">High-score not contacted after (days)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={workspaceConfigForm.slaHighScoreNotContactedDays}
+                    onChange={(e) => setWorkspaceConfigForm((prev) => ({ ...prev, slaHighScoreNotContactedDays: Number(e.target.value) }))}
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {workspaceConfig && (
+          <p className="text-[11px] text-brand-gray">
+            Last saved: {new Date(workspaceConfig.updatedAt).toLocaleString()}
+          </p>
+        )}
+      </div>
+
+      {/* ── SLA Escalation Rules ─────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">SLA Escalation Rules</h3>
+            <p className="text-xs text-brand-gray mt-0.5">Automatically create notifications when SLA thresholds are breached.</p>
+          </div>
+          <button
+            onClick={handleRunEscalations}
+            disabled={busyKey === 'run-escalations'}
+            className="text-xs border border-amber-200 text-amber-700 rounded-lg px-3 py-1.5 hover:bg-amber-50 disabled:opacity-60"
+          >
+            {busyKey === 'run-escalations' ? 'Running...' : 'Run Escalation Check'}
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          <select
+            value={newEscalationType}
+            onChange={(e) => setNewEscalationType(e.target.value)}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm flex-1"
+          >
+            <option value="draft_stale">Stale Approved Email Draft</option>
+            <option value="linkedin_overdue">Overdue LinkedIn Task</option>
+            <option value="paused_stale">Stale Paused Sequence</option>
+            <option value="high_score_not_contacted">High-Score Lead Not Contacted</option>
+          </select>
+          <button
+            onClick={handleCreateEscalation}
+            disabled={busyKey === 'create-escalation'}
+            className="text-xs bg-navy text-white rounded-lg px-3 py-2 hover:bg-navy/90 disabled:opacity-60"
+          >
+            {busyKey === 'create-escalation' ? 'Adding...' : 'Add Rule'}
+          </button>
+        </div>
+
+        {loadingEscalations ? (
+          <p className="text-sm text-brand-gray">Loading escalation rules...</p>
+        ) : escalationRules.length === 0 ? (
+          <p className="text-sm text-brand-gray">No escalation rules configured. Add one above to start automating SLA notifications.</p>
+        ) : (
+          <div className="space-y-2">
+            {escalationRules.map((rule) => (
+              <div
+                key={rule.id}
+                className="flex items-center justify-between border border-gray-100 rounded-lg px-3 py-2"
+              >
+                <div>
+                  <p className="text-sm font-semibold text-navy">{rule.label}</p>
+                  <p className="text-[11px] text-brand-gray">
+                    Action: {rule.action}
+                    {rule.thresholdOverride != null ? ` · Override threshold: ${rule.thresholdOverride}` : ' · Uses workspace threshold'}
+                    {rule.lastRunAt ? ` · Last run: ${new Date(rule.lastRunAt).toLocaleString()}` : ' · Never run'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleToggleEscalation(rule)}
+                  disabled={busyKey === `toggle-escalation-${rule.id}`}
+                  className={`text-xs border rounded-lg px-3 py-1.5 disabled:opacity-60 ${
+                    rule.isEnabled
+                      ? 'border-rose-200 text-rose-700 hover:bg-rose-50'
+                      : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                  }`}
+                >
+                  {rule.isEnabled ? 'Disable' : 'Enable'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Notifications ────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">
+              Notifications
+              {notificationUnreadCount > 0 && (
+                <span className="ml-2 bg-rose-600 text-white text-[11px] font-bold rounded-full px-1.5 py-0.5">
+                  {notificationUnreadCount}
+                </span>
+              )}
+            </h3>
+            <p className="text-xs text-brand-gray mt-0.5">SLA escalation alerts and automated system notifications.</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={fetchNotifications}
+              className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
+            >
+              {loadingNotifications ? 'Refreshing...' : 'Refresh'}
+            </button>
+            {notificationUnreadCount > 0 && (
+              <button
+                onClick={handleMarkAllNotificationsRead}
+                disabled={busyKey === 'mark-all-read'}
+                className="text-xs border border-indigo-200 text-indigo-700 rounded-lg px-3 py-1.5 hover:bg-indigo-50 disabled:opacity-60"
+              >
+                {busyKey === 'mark-all-read' ? 'Marking...' : 'Mark All Read'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {loadingNotifications ? (
+          <p className="text-sm text-brand-gray">Loading notifications...</p>
+        ) : notifications.length === 0 ? (
+          <p className="text-sm text-brand-gray">No notifications yet. Run an escalation check to generate alerts.</p>
+        ) : (
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {notifications.map((notif) => (
+              <div
+                key={notif.id}
+                className={`flex items-start justify-between border rounded-lg px-3 py-2 gap-3 ${
+                  notif.isRead ? 'border-gray-100 bg-white' : 'border-indigo-100 bg-indigo-50/30'
+                }`}
+              >
+                <div className="flex-1 min-w-0">
+                  <p className={`text-sm font-semibold ${notif.isRead ? 'text-navy' : 'text-indigo-900'}`}>
+                    {notif.title}
+                  </p>
+                  <p className="text-[11px] text-brand-gray mt-0.5">{notif.body}</p>
+                  <p className="text-[11px] text-brand-gray mt-0.5">
+                    {new Date(notif.createdAt).toLocaleString()}
+                  </p>
+                </div>
+                {!notif.isRead && (
+                  <button
+                    onClick={() => handleMarkNotificationRead(notif.id)}
+                    disabled={busyKey === `mark-read-${notif.id}`}
+                    className="text-[11px] border border-gray-200 text-gray-600 rounded px-2 py-1 hover:bg-gray-50 disabled:opacity-60 shrink-0"
+                  >
+                    Mark read
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>

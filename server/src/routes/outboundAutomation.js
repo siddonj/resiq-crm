@@ -6323,4 +6323,632 @@ router.get('/analytics/summary', async (req, res) => {
   });
 });
 
+// ─── WORKSPACE CONFIG ─────────────────────────────────────────────────────────
+
+const WORKSPACE_CONFIG_DEFAULTS = {
+  sender_name: '',
+  email_signature: '',
+  daily_email_limit: 50,
+  daily_linkedin_limit: 20,
+  sla_draft_stale_hours: 24,
+  sla_linkedin_overdue_hours: 24,
+  sla_paused_stale_days: 3,
+  sla_high_score_not_contacted_days: 2,
+};
+
+async function getOrCreateWorkspaceConfig(userId) {
+  const existing = await pool.query(
+    'SELECT * FROM outbound_workspace_config WHERE user_id = $1',
+    [userId]
+  );
+  if (existing.rows.length > 0) return existing.rows[0];
+  const ins = await pool.query(
+    `INSERT INTO outbound_workspace_config
+       (user_id, sender_name, email_signature, daily_email_limit, daily_linkedin_limit,
+        sla_draft_stale_hours, sla_linkedin_overdue_hours, sla_paused_stale_days,
+        sla_high_score_not_contacted_days)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     RETURNING *`,
+    [
+      userId,
+      WORKSPACE_CONFIG_DEFAULTS.sender_name,
+      WORKSPACE_CONFIG_DEFAULTS.email_signature,
+      WORKSPACE_CONFIG_DEFAULTS.daily_email_limit,
+      WORKSPACE_CONFIG_DEFAULTS.daily_linkedin_limit,
+      WORKSPACE_CONFIG_DEFAULTS.sla_draft_stale_hours,
+      WORKSPACE_CONFIG_DEFAULTS.sla_linkedin_overdue_hours,
+      WORKSPACE_CONFIG_DEFAULTS.sla_paused_stale_days,
+      WORKSPACE_CONFIG_DEFAULTS.sla_high_score_not_contacted_days,
+    ]
+  );
+  return ins.rows[0];
+}
+
+function formatWorkspaceConfig(row) {
+  return {
+    senderName: row.sender_name,
+    emailSignature: row.email_signature,
+    dailyEmailLimit: Number(row.daily_email_limit),
+    dailyLinkedinLimit: Number(row.daily_linkedin_limit),
+    slaDraftStaleHours: Number(row.sla_draft_stale_hours),
+    slaLinkedinOverdueHours: Number(row.sla_linkedin_overdue_hours),
+    slaPausedStaleDays: Number(row.sla_paused_stale_days),
+    slaHighScoreNotContactedDays: Number(row.sla_high_score_not_contacted_days),
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * GET /api/outbound/workspace/config
+ */
+router.get('/workspace/config', async (req, res) => {
+  const cfg = await getOrCreateWorkspaceConfig(req.user.id);
+  return res.json(formatWorkspaceConfig(cfg));
+});
+
+/**
+ * PUT /api/outbound/workspace/config
+ */
+router.put('/workspace/config', async (req, res) => {
+  const {
+    senderName,
+    emailSignature,
+    dailyEmailLimit,
+    dailyLinkedinLimit,
+    slaDraftStaleHours,
+    slaLinkedinOverdueHours,
+    slaPausedStaleDays,
+    slaHighScoreNotContactedDays,
+  } = req.body;
+
+  const emailLimitVal = Math.round(Number(dailyEmailLimit ?? 50));
+  const linkedinLimitVal = Math.round(Number(dailyLinkedinLimit ?? 20));
+  if (emailLimitVal < 1 || emailLimitVal > 500) {
+    return res.status(400).json({ error: 'dailyEmailLimit must be between 1 and 500.' });
+  }
+  if (linkedinLimitVal < 1 || linkedinLimitVal > 100) {
+    return res.status(400).json({ error: 'dailyLinkedinLimit must be between 1 and 100.' });
+  }
+
+  const result = await pool.query(
+    `INSERT INTO outbound_workspace_config
+       (user_id, sender_name, email_signature, daily_email_limit, daily_linkedin_limit,
+        sla_draft_stale_hours, sla_linkedin_overdue_hours, sla_paused_stale_days,
+        sla_high_score_not_contacted_days, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+     ON CONFLICT (user_id) DO UPDATE SET
+       sender_name = EXCLUDED.sender_name,
+       email_signature = EXCLUDED.email_signature,
+       daily_email_limit = EXCLUDED.daily_email_limit,
+       daily_linkedin_limit = EXCLUDED.daily_linkedin_limit,
+       sla_draft_stale_hours = EXCLUDED.sla_draft_stale_hours,
+       sla_linkedin_overdue_hours = EXCLUDED.sla_linkedin_overdue_hours,
+       sla_paused_stale_days = EXCLUDED.sla_paused_stale_days,
+       sla_high_score_not_contacted_days = EXCLUDED.sla_high_score_not_contacted_days,
+       updated_at = NOW()
+     RETURNING *`,
+    [
+      req.user.id,
+      String(senderName ?? '').slice(0, 200),
+      String(emailSignature ?? '').slice(0, 2000),
+      emailLimitVal,
+      linkedinLimitVal,
+      Math.max(1, Math.round(Number(slaDraftStaleHours ?? 24))),
+      Math.max(1, Math.round(Number(slaLinkedinOverdueHours ?? 24))),
+      Math.max(1, Math.round(Number(slaPausedStaleDays ?? 3))),
+      Math.max(1, Math.round(Number(slaHighScoreNotContactedDays ?? 2))),
+    ]
+  );
+
+  return res.json(formatWorkspaceConfig(result.rows[0]));
+});
+
+// ─── ADVANCED BULK ACTIONS ────────────────────────────────────────────────────
+
+/**
+ * POST /api/outbound/bulk/sequence-enroll
+ * Body: { leadIds: string[], sequenceId: string }
+ */
+router.post('/bulk/sequence-enroll', async (req, res) => {
+  const { leadIds, sequenceId } = req.body;
+  if (!Array.isArray(leadIds) || leadIds.length === 0) {
+    return res.status(400).json({ error: 'leadIds must be a non-empty array.' });
+  }
+  if (leadIds.length > 100) {
+    return res.status(400).json({ error: 'Maximum 100 leads per bulk operation.' });
+  }
+  if (!sequenceId || typeof sequenceId !== 'string') {
+    return res.status(400).json({ error: 'sequenceId is required.' });
+  }
+
+  const seqCheck = await pool.query(
+    'SELECT id FROM outbound_sequences WHERE id = $1 AND user_id = $2',
+    [sequenceId, req.user.id]
+  );
+  if (seqCheck.rows.length === 0) {
+    return res.status(404).json({ error: 'Sequence not found.' });
+  }
+
+  const results = { enrolled: [], skipped: [], errors: [] };
+
+  for (const leadId of leadIds) {
+    try {
+      const leadRow = await pool.query(
+        'SELECT id, email, linkedin_url FROM outbound_leads WHERE id = $1 AND user_id = $2',
+        [leadId, req.user.id]
+      );
+      if (leadRow.rows.length === 0) {
+        results.errors.push({ leadId, reason: 'Not found' });
+        continue;
+      }
+      const lead = leadRow.rows[0];
+      if (!lead.email && !lead.linkedin_url) {
+        results.skipped.push({ leadId, reason: 'Missing contact channel (data quality block)' });
+        continue;
+      }
+      const openCheck = await pool.query(
+        `SELECT id FROM outbound_sequence_enrollments
+         WHERE lead_id = $1 AND user_id = $2 AND state IN ('active','paused')`,
+        [leadId, req.user.id]
+      );
+      if (openCheck.rows.length > 0) {
+        results.skipped.push({ leadId, reason: 'Already enrolled in an active sequence' });
+        continue;
+      }
+      const enroll = await pool.query(
+        `INSERT INTO outbound_sequence_enrollments
+           (user_id, lead_id, sequence_id, state, current_step, enrolled_at)
+         VALUES ($1,$2,$3,'active',1,NOW()) RETURNING id`,
+        [req.user.id, leadId, sequenceId]
+      );
+      await pool.query(
+        `INSERT INTO outbound_sequence_enrollment_transitions
+           (enrollment_id, from_state, to_state, reason)
+         VALUES ($1,NULL,'active','Bulk enrolled')`,
+        [enroll.rows[0].id]
+      );
+      await pool.query(
+        `INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
+         VALUES ($1,$2,'sequence_enrolled','system',$3)`,
+        [req.user.id, leadId, JSON.stringify({ sequenceId, enrollmentId: enroll.rows[0].id, bulk: true })]
+      );
+      results.enrolled.push(leadId);
+    } catch (err) {
+      results.errors.push({ leadId, reason: err.message });
+    }
+  }
+
+  return res.json({
+    enrolledCount: results.enrolled.length,
+    skippedCount: results.skipped.length,
+    errorCount: results.errors.length,
+    enrolled: results.enrolled,
+    skipped: results.skipped,
+    errors: results.errors,
+  });
+});
+
+/**
+ * POST /api/outbound/bulk/sequence-unenroll
+ * Body: { leadIds: string[] }
+ */
+router.post('/bulk/sequence-unenroll', async (req, res) => {
+  const { leadIds } = req.body;
+  if (!Array.isArray(leadIds) || leadIds.length === 0) {
+    return res.status(400).json({ error: 'leadIds must be a non-empty array.' });
+  }
+  if (leadIds.length > 100) {
+    return res.status(400).json({ error: 'Maximum 100 leads per bulk operation.' });
+  }
+
+  const results = { stopped: [], skipped: [], errors: [] };
+
+  for (const leadId of leadIds) {
+    try {
+      const enrollment = await pool.query(
+        `SELECT id, state FROM outbound_sequence_enrollments
+         WHERE lead_id = $1 AND user_id = $2 AND state IN ('active','paused')
+         ORDER BY enrolled_at DESC LIMIT 1`,
+        [leadId, req.user.id]
+      );
+      if (enrollment.rows.length === 0) {
+        results.skipped.push({ leadId, reason: 'No active enrollment found' });
+        continue;
+      }
+      const fromState = enrollment.rows[0].state;
+      await pool.query(
+        `UPDATE outbound_sequence_enrollments SET state = 'stopped', stopped_at = NOW()
+         WHERE id = $1`,
+        [enrollment.rows[0].id]
+      );
+      await pool.query(
+        `INSERT INTO outbound_sequence_enrollment_transitions
+           (enrollment_id, from_state, to_state, reason)
+         VALUES ($1,$2,'stopped','Bulk unenroll')`,
+        [enrollment.rows[0].id, fromState]
+      );
+      results.stopped.push(leadId);
+    } catch (err) {
+      results.errors.push({ leadId, reason: err.message });
+    }
+  }
+
+  return res.json({
+    stoppedCount: results.stopped.length,
+    skippedCount: results.skipped.length,
+    errorCount: results.errors.length,
+    stopped: results.stopped,
+    skipped: results.skipped,
+    errors: results.errors,
+  });
+});
+
+/**
+ * POST /api/outbound/bulk/multifamily-tag
+ * Body: { leadIds: string[], objectId: string }
+ */
+router.post('/bulk/multifamily-tag', async (req, res) => {
+  const { leadIds, objectId } = req.body;
+  if (!Array.isArray(leadIds) || leadIds.length === 0) {
+    return res.status(400).json({ error: 'leadIds must be a non-empty array.' });
+  }
+  if (leadIds.length > 100) {
+    return res.status(400).json({ error: 'Maximum 100 leads per bulk operation.' });
+  }
+  if (!objectId || typeof objectId !== 'string') {
+    return res.status(400).json({ error: 'objectId is required.' });
+  }
+
+  const objCheck = await pool.query(
+    'SELECT id FROM multifamily_objects WHERE id = $1 AND user_id = $2',
+    [objectId, req.user.id]
+  );
+  if (objCheck.rows.length === 0) {
+    return res.status(404).json({ error: 'Multifamily object not found.' });
+  }
+
+  const results = { tagged: [], errors: [] };
+
+  for (const leadId of leadIds) {
+    try {
+      await pool.query(
+        `INSERT INTO multifamily_object_associations (object_id, target_type, target_id, user_id)
+         VALUES ($1,'outbound_lead',$2,$3)
+         ON CONFLICT DO NOTHING`,
+        [objectId, leadId, req.user.id]
+      );
+      results.tagged.push(leadId);
+    } catch (err) {
+      results.errors.push({ leadId, reason: err.message });
+    }
+  }
+
+  return res.json({
+    taggedCount: results.tagged.length,
+    errorCount: results.errors.length,
+    tagged: results.tagged,
+    errors: results.errors,
+  });
+});
+
+/**
+ * POST /api/outbound/bulk/campaign-transition
+ * Body: { memberIds: string[], status: string }
+ */
+router.post('/bulk/campaign-transition', async (req, res) => {
+  const { memberIds, status } = req.body;
+  if (!Array.isArray(memberIds) || memberIds.length === 0) {
+    return res.status(400).json({ error: 'memberIds must be a non-empty array.' });
+  }
+  if (memberIds.length > 100) {
+    return res.status(400).json({ error: 'Maximum 100 members per bulk operation.' });
+  }
+  if (!VALID_CAMPAIGN_MEMBER_STATUSES.has(status)) {
+    return res.status(400).json({
+      error: `Invalid status. Valid values: ${[...VALID_CAMPAIGN_MEMBER_STATUSES].join(', ')}.`,
+    });
+  }
+
+  const results = { updated: [], errors: [] };
+
+  for (const memberId of memberIds) {
+    try {
+      const upd = await pool.query(
+        `UPDATE outbound_campaign_members SET status = $1, updated_at = NOW()
+         WHERE id = $2 AND user_id = $3 RETURNING id, lead_id`,
+        [status, memberId, req.user.id]
+      );
+      if (upd.rows.length === 0) {
+        results.errors.push({ memberId, reason: 'Not found or unauthorized' });
+        continue;
+      }
+      const leadStatus = CAMPAIGN_MEMBER_TO_LEAD_STATUS[status];
+      if (leadStatus && upd.rows[0].lead_id) {
+        await pool.query(
+          `UPDATE outbound_leads SET status = $1, updated_at = NOW()
+           WHERE id = $2 AND user_id = $3`,
+          [leadStatus, upd.rows[0].lead_id, req.user.id]
+        );
+      }
+      results.updated.push(memberId);
+    } catch (err) {
+      results.errors.push({ memberId, reason: err.message });
+    }
+  }
+
+  return res.json({
+    updatedCount: results.updated.length,
+    errorCount: results.errors.length,
+    updated: results.updated,
+    errors: results.errors,
+  });
+});
+
+// ─── SLA ESCALATIONS ──────────────────────────────────────────────────────────
+
+const VALID_ESCALATION_TYPES = new Set([
+  'draft_stale',
+  'linkedin_overdue',
+  'paused_stale',
+  'high_score_not_contacted',
+]);
+const VALID_ESCALATION_ACTIONS = new Set(['notify', 'log_event']);
+const ESCALATION_TYPE_LABELS = {
+  draft_stale: 'Stale Approved Email Draft',
+  linkedin_overdue: 'Overdue LinkedIn Task',
+  paused_stale: 'Stale Paused Sequence',
+  high_score_not_contacted: 'High-Score Lead Not Contacted',
+};
+
+async function runEscalationChecks(userId) {
+  const cfg = await getOrCreateWorkspaceConfig(userId);
+  const escalations = await pool.query(
+    'SELECT * FROM outbound_sla_escalations WHERE user_id = $1 AND is_enabled = TRUE',
+    [userId]
+  );
+
+  const triggered = [];
+
+  for (const rule of escalations.rows) {
+    const type = rule.escalation_type;
+    let items = [];
+
+    if (type === 'draft_stale') {
+      const hours = rule.threshold_override ?? Number(cfg.sla_draft_stale_hours);
+      const res = await pool.query(
+        `SELECT d.id, ol.name
+         FROM outbound_message_drafts d
+         JOIN outbound_leads ol ON ol.id = d.lead_id
+         WHERE d.user_id = $1 AND d.status = 'approved'
+           AND d.updated_at < NOW() - ($2 || ' hours')::INTERVAL`,
+        [userId, hours]
+      );
+      items = res.rows.map((r) => ({ id: r.id, label: r.name || 'Unknown lead' }));
+    } else if (type === 'linkedin_overdue') {
+      const hours = rule.threshold_override ?? Number(cfg.sla_linkedin_overdue_hours);
+      const res = await pool.query(
+        `SELECT t.id, ol.name
+         FROM linkedin_outreach_tasks t
+         JOIN outbound_leads ol ON ol.id = t.lead_id
+         WHERE t.user_id = $1 AND t.status IN ('pending','drafted','approved')
+           AND t.scheduled_for < NOW() - ($2 || ' hours')::INTERVAL`,
+        [userId, hours]
+      );
+      items = res.rows.map((r) => ({ id: r.id, label: r.name || 'Unknown lead' }));
+    } else if (type === 'paused_stale') {
+      const days = rule.threshold_override ?? Number(cfg.sla_paused_stale_days);
+      const res = await pool.query(
+        `SELECT e.id, ol.name
+         FROM outbound_sequence_enrollments e
+         JOIN outbound_leads ol ON ol.id = e.lead_id
+         WHERE e.user_id = $1 AND e.state = 'paused'
+           AND e.updated_at < NOW() - ($2 || ' days')::INTERVAL`,
+        [userId, days]
+      );
+      items = res.rows.map((r) => ({ id: r.id, label: r.name || 'Unknown lead' }));
+    } else if (type === 'high_score_not_contacted') {
+      const days = rule.threshold_override ?? Number(cfg.sla_high_score_not_contacted_days);
+      const res = await pool.query(
+        `SELECT id, name FROM outbound_leads
+         WHERE user_id = $1 AND total_score >= 70
+           AND status IN ('new','qualified')
+           AND created_at < NOW() - ($2 || ' days')::INTERVAL`,
+        [userId, days]
+      );
+      items = res.rows.map((r) => ({ id: r.id, label: r.name || 'Unknown lead' }));
+    }
+
+    if (items.length > 0) {
+      const title = ESCALATION_TYPE_LABELS[type] || type;
+      const body = `${items.length} item${items.length === 1 ? '' : 's'} need attention: ${
+        items
+          .slice(0, 3)
+          .map((i) => i.label)
+          .join(', ')
+      }${items.length > 3 ? ` and ${items.length - 3} more` : ''}.`;
+
+      if (rule.action === 'notify') {
+        await pool.query(
+          `INSERT INTO outbound_notifications (user_id, notification_type, title, body)
+           VALUES ($1,$2,$3,$4)`,
+          [userId, type, title, body]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
+           VALUES ($1,NULL,'sla_escalation_triggered','system',$2)`,
+          [userId, JSON.stringify({ escalationType: type, count: items.length })]
+        );
+      }
+
+      await pool.query(
+        'UPDATE outbound_sla_escalations SET last_run_at = NOW() WHERE id = $1',
+        [rule.id]
+      );
+      triggered.push({ type, count: items.length, action: rule.action });
+    }
+  }
+
+  return triggered;
+}
+
+function formatEscalationRule(r) {
+  return {
+    id: r.id,
+    escalationType: r.escalation_type,
+    label: ESCALATION_TYPE_LABELS[r.escalation_type] || r.escalation_type,
+    thresholdOverride: r.threshold_override,
+    action: r.action,
+    isEnabled: r.is_enabled,
+    lastRunAt: r.last_run_at,
+    createdAt: r.created_at,
+  };
+}
+
+/**
+ * GET /api/outbound/sla/escalations
+ */
+router.get('/sla/escalations', async (req, res) => {
+  const rows = await pool.query(
+    'SELECT * FROM outbound_sla_escalations WHERE user_id = $1 ORDER BY created_at',
+    [req.user.id]
+  );
+  return res.json(rows.rows.map(formatEscalationRule));
+});
+
+/**
+ * POST /api/outbound/sla/escalations
+ * Body: { escalationType, thresholdOverride?, action? }
+ */
+router.post('/sla/escalations', async (req, res) => {
+  const { escalationType, thresholdOverride, action = 'notify' } = req.body;
+  if (!VALID_ESCALATION_TYPES.has(escalationType)) {
+    return res.status(400).json({
+      error: `escalationType must be one of: ${[...VALID_ESCALATION_TYPES].join(', ')}.`,
+    });
+  }
+  if (!VALID_ESCALATION_ACTIONS.has(action)) {
+    return res.status(400).json({ error: 'action must be notify or log_event.' });
+  }
+
+  const result = await pool.query(
+    `INSERT INTO outbound_sla_escalations
+       (user_id, escalation_type, threshold_override, action)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (user_id, escalation_type) DO UPDATE SET
+       threshold_override = EXCLUDED.threshold_override,
+       action = EXCLUDED.action,
+       is_enabled = TRUE
+     RETURNING *`,
+    [
+      req.user.id,
+      escalationType,
+      thresholdOverride != null ? Number(thresholdOverride) : null,
+      action,
+    ]
+  );
+
+  return res.status(201).json(formatEscalationRule(result.rows[0]));
+});
+
+/**
+ * PATCH /api/outbound/sla/escalations/:id
+ * Body: { isEnabled?, thresholdOverride?, action? }
+ */
+router.patch('/sla/escalations/:id', async (req, res) => {
+  const { isEnabled, thresholdOverride, action } = req.body;
+  const sets = [];
+  const vals = [req.params.id, req.user.id];
+
+  if (typeof isEnabled === 'boolean') {
+    sets.push(`is_enabled = $${vals.length + 1}`);
+    vals.push(isEnabled);
+  }
+  if (thresholdOverride !== undefined) {
+    sets.push(`threshold_override = $${vals.length + 1}`);
+    vals.push(thresholdOverride !== null ? Number(thresholdOverride) : null);
+  }
+  if (action !== undefined) {
+    if (!VALID_ESCALATION_ACTIONS.has(action)) {
+      return res.status(400).json({ error: 'action must be notify or log_event.' });
+    }
+    sets.push(`action = $${vals.length + 1}`);
+    vals.push(action);
+  }
+  if (sets.length === 0) return res.status(400).json({ error: 'No fields to update.' });
+
+  const result = await pool.query(
+    `UPDATE outbound_sla_escalations SET ${sets.join(', ')}
+     WHERE id = $1 AND user_id = $2 RETURNING *`,
+    vals
+  );
+  if (result.rows.length === 0) return res.status(404).json({ error: 'Escalation rule not found.' });
+  return res.json(formatEscalationRule(result.rows[0]));
+});
+
+/**
+ * POST /api/outbound/sla/escalations/run
+ */
+router.post('/sla/escalations/run', async (req, res) => {
+  const triggered = await runEscalationChecks(req.user.id);
+  return res.json({ triggered, triggeredCount: triggered.length });
+});
+
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/outbound/notifications
+ * Query: unreadOnly=true
+ */
+router.get('/notifications', async (req, res) => {
+  const unreadOnly = req.query.unreadOnly === 'true';
+  const whereExtra = unreadOnly ? 'AND is_read = FALSE' : '';
+  const rows = await pool.query(
+    `SELECT * FROM outbound_notifications
+     WHERE user_id = $1 ${whereExtra}
+     ORDER BY is_read ASC, created_at DESC
+     LIMIT 100`,
+    [req.user.id]
+  );
+  const unreadCount = rows.rows.filter((r) => !r.is_read).length;
+  return res.json({
+    unreadCount,
+    notifications: rows.rows.map((r) => ({
+      id: r.id,
+      type: r.notification_type,
+      title: r.title,
+      body: r.body,
+      relatedEntityType: r.related_entity_type,
+      relatedEntityId: r.related_entity_id,
+      isRead: r.is_read,
+      createdAt: r.created_at,
+    })),
+  });
+});
+
+/**
+ * PATCH /api/outbound/notifications/:id/read
+ */
+router.patch('/notifications/:id/read', async (req, res) => {
+  const result = await pool.query(
+    `UPDATE outbound_notifications SET is_read = TRUE
+     WHERE id = $1 AND user_id = $2 RETURNING id`,
+    [req.params.id, req.user.id]
+  );
+  if (result.rows.length === 0) return res.status(404).json({ error: 'Notification not found.' });
+  return res.json({ id: result.rows[0].id, isRead: true });
+});
+
+/**
+ * POST /api/outbound/notifications/read-all
+ */
+router.post('/notifications/read-all', async (req, res) => {
+  const result = await pool.query(
+    `UPDATE outbound_notifications SET is_read = TRUE
+     WHERE user_id = $1 AND is_read = FALSE RETURNING id`,
+    [req.user.id]
+  );
+  return res.json({ markedRead: result.rows.length });
+});
+
 module.exports = router;

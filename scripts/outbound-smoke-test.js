@@ -1492,6 +1492,127 @@ async function run() {
     auditBytes: auditExport.body.length,
   });
 
+  // ── Slice 11: workspace config ─────────────────────────────────────────────
+  const authH = { Authorization: `Bearer ${auth.token}` };
+
+  const cfgGet = await fetchJson(`${BASE_URL}/api/outbound/workspace/config`, { headers: authH });
+  assert(cfgGet.ok, `workspace/config GET failed: ${JSON.stringify(cfgGet.data)}`);
+  assert(typeof cfgGet.data.dailyEmailLimit === 'number', 'workspace config missing dailyEmailLimit');
+
+  const cfgPut = await fetchJson(`${BASE_URL}/api/outbound/workspace/config`, {
+    method: 'PUT',
+    headers: { ...authH, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      senderName: 'Smoke Test Sender',
+      emailSignature: 'Sent via ResiQ',
+      dailyEmailLimit: 40,
+      dailyLinkedinLimit: 15,
+      slaDraftStaleHours: 12,
+      slaLinkedinOverdueHours: 8,
+      slaPausedStaleDays: 2,
+      slaHighScoreNotContactedDays: 1,
+    }),
+  });
+  assert(cfgPut.ok, `workspace/config PUT failed: ${JSON.stringify(cfgPut.data)}`);
+  assert(cfgPut.data.senderName === 'Smoke Test Sender', 'workspace config senderName not persisted');
+  assert(cfgPut.data.dailyEmailLimit === 40, 'workspace config dailyEmailLimit not persisted');
+  steps.push({ step: 'workspace_config', ok: true, senderName: cfgPut.data.senderName });
+
+  // ── Slice 11: SLA escalation rules ────────────────────────────────────────
+  const escalCreate = await fetchJson(`${BASE_URL}/api/outbound/sla/escalations`, {
+    method: 'POST',
+    headers: { ...authH, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ escalationType: 'high_score_not_contacted', action: 'notify' }),
+  });
+  assert(escalCreate.status === 201, `sla/escalations POST status ${escalCreate.status}: ${JSON.stringify(escalCreate.data)}`);
+  assert(escalCreate.data.escalationType === 'high_score_not_contacted', 'escalation type mismatch');
+  const escalId = escalCreate.data.id;
+
+  const escalList = await fetchJson(`${BASE_URL}/api/outbound/sla/escalations`, { headers: authH });
+  assert(escalList.ok, `sla/escalations GET failed: ${JSON.stringify(escalList.data)}`);
+  assert(Array.isArray(escalList.data), 'escalations response not array');
+  assert(escalList.data.some((r) => r.id === escalId), 'created escalation not in list');
+
+  const escalToggle = await fetchJson(`${BASE_URL}/api/outbound/sla/escalations/${escalId}`, {
+    method: 'PATCH',
+    headers: { ...authH, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isEnabled: false }),
+  });
+  assert(escalToggle.ok, `sla escalation PATCH failed: ${JSON.stringify(escalToggle.data)}`);
+  assert(escalToggle.data.isEnabled === false, 'escalation toggle failed');
+
+  await fetchJson(`${BASE_URL}/api/outbound/sla/escalations/${escalId}`, {
+    method: 'PATCH',
+    headers: { ...authH, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isEnabled: true }),
+  });
+
+  const escalRun = await fetchJson(`${BASE_URL}/api/outbound/sla/escalations/run`, {
+    method: 'POST',
+    headers: { ...authH, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert(escalRun.ok, `sla/escalations/run failed: ${JSON.stringify(escalRun.data)}`);
+  assert(typeof escalRun.data.triggeredCount === 'number', 'escalation run missing triggeredCount');
+  steps.push({ step: 'sla_escalations', ok: true, triggeredCount: escalRun.data.triggeredCount });
+
+  // ── Slice 11: notifications ────────────────────────────────────────────────
+  const notifList = await fetchJson(`${BASE_URL}/api/outbound/notifications`, { headers: authH });
+  assert(notifList.ok, `notifications GET failed: ${JSON.stringify(notifList.data)}`);
+  assert(typeof notifList.data.unreadCount === 'number', 'notifications missing unreadCount');
+  assert(Array.isArray(notifList.data.notifications), 'notifications not array');
+
+  const markAllRead = await fetchJson(`${BASE_URL}/api/outbound/notifications/read-all`, {
+    method: 'POST',
+    headers: { ...authH, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert(markAllRead.ok, `notifications/read-all failed: ${JSON.stringify(markAllRead.data)}`);
+  assert(typeof markAllRead.data.markedRead === 'number', 'read-all missing markedRead');
+  steps.push({ step: 'notifications', ok: true, unreadCount: notifList.data.unreadCount, markedRead: markAllRead.data.markedRead });
+
+  // ── Slice 11: bulk sequence enroll/unenroll ────────────────────────────────
+  const seqListForBulk = await fetchJson(`${BASE_URL}/api/outbound/sequences`, { headers: authH });
+  assert(seqListForBulk.ok, `sequences GET failed: ${JSON.stringify(seqListForBulk.data)}`);
+  const seqsForBulk = seqListForBulk.data.sequences || [];
+  if (seqsForBulk.length > 0 && highQualityLeadIds.length > 0) {
+    const bulkEnroll = await fetchJson(`${BASE_URL}/api/outbound/bulk/sequence-enroll`, {
+      method: 'POST',
+      headers: { ...authH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadIds: highQualityLeadIds.slice(0, 2), sequenceId: seqsForBulk[0].id }),
+    });
+    assert(bulkEnroll.ok, `bulk/sequence-enroll failed: ${JSON.stringify(bulkEnroll.data)}`);
+    assert(typeof bulkEnroll.data.enrolledCount === 'number', 'bulk enroll missing enrolledCount');
+
+    const bulkUnenroll = await fetchJson(`${BASE_URL}/api/outbound/bulk/sequence-unenroll`, {
+      method: 'POST',
+      headers: { ...authH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadIds: highQualityLeadIds.slice(0, 2) }),
+    });
+    assert(bulkUnenroll.ok, `bulk/sequence-unenroll failed: ${JSON.stringify(bulkUnenroll.data)}`);
+    assert(typeof bulkUnenroll.data.stoppedCount === 'number', 'bulk unenroll missing stoppedCount');
+    steps.push({ step: 'bulk_sequence_ops', ok: true, enrolled: bulkEnroll.data.enrolledCount, stopped: bulkUnenroll.data.stoppedCount });
+  } else {
+    steps.push({ step: 'bulk_sequence_ops', ok: true, skipped: 'no sequences or leads available' });
+  }
+
+  // ── Slice 11: bulk multifamily tag ────────────────────────────────────────
+  const mfListForBulk = await fetchJson(`${BASE_URL}/api/outbound/multifamily/objects`, { headers: authH });
+  assert(mfListForBulk.ok, `multifamily/objects GET failed: ${JSON.stringify(mfListForBulk.data)}`);
+  const mfObjsForBulk = mfListForBulk.data.objects || [];
+  if (mfObjsForBulk.length > 0 && highQualityLeadIds.length > 0) {
+    const bulkMfTag = await fetchJson(`${BASE_URL}/api/outbound/bulk/multifamily-tag`, {
+      method: 'POST',
+      headers: { ...authH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadIds: highQualityLeadIds.slice(0, 2), objectId: mfObjsForBulk[0].id }),
+    });
+    assert(bulkMfTag.ok, `bulk/multifamily-tag failed: ${JSON.stringify(bulkMfTag.data)}`);
+    assert(typeof bulkMfTag.data.taggedCount === 'number', 'bulk multifamily tag missing taggedCount');
+    steps.push({ step: 'bulk_multifamily_tag', ok: true, taggedCount: bulkMfTag.data.taggedCount });
+  } else {
+    steps.push({ step: 'bulk_multifamily_tag', ok: true, skipped: 'no objects or leads available' });
+  }
+
   console.log(
     JSON.stringify(
       {
