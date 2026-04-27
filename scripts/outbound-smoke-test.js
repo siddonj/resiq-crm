@@ -111,6 +111,13 @@ function buildCsvPayload() {
   ].join('\n');
 }
 
+function buildLowQualityCsvPayload() {
+  return [
+    'first_name,last_name,email,company,title,linkedin_url,location,notes',
+    'Casey,Nochannel,,No Channel Holdings,Operations Manager,,Austin,Missing outreach channel for guardrail test',
+  ].join('\n');
+}
+
 async function registerUser() {
   const email = `smoke_${Date.now()}@example.com`;
   const password = 'SmokeTest123!';
@@ -232,6 +239,19 @@ async function enrollLeadInSequence(token, sequenceId, leadId) {
   return response.data;
 }
 
+async function attemptEnrollLeadInSequence(token, sequenceId, leadId) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/sequences/${sequenceId}/enroll`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ leadId }),
+  });
+
+  return response;
+}
+
 async function setSequenceEnrollmentState(token, enrollmentId, state, reason = null) {
   const response = await fetchJson(`${BASE_URL}/api/outbound/sequences/enrollments/${enrollmentId}/state`, {
     method: 'PATCH',
@@ -335,6 +355,17 @@ async function getAttributionSummary(token, period = 'monthly') {
   });
 
   assert(response.ok, `get attribution summary failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function getDataQualityIssues(token, status = 'open') {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/data-quality/issues?status=${encodeURIComponent(status)}&limit=200`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `get data quality issues failed: ${JSON.stringify(response.data)}`);
   return response.data;
 }
 
@@ -535,6 +566,7 @@ async function run() {
       'sales_goals',
       'pipeline_forecasts',
       'attribution_touchpoints',
+      'data_quality_issues',
     ],
     60000
   );
@@ -574,10 +606,27 @@ async function run() {
   assert(secondImport.importedRows === 0, `expected second import importedRows=0, got ${secondImport.importedRows}`);
   assert(secondImport.duplicateRows === 2, `expected second import duplicateRows=2, got ${secondImport.duplicateRows}`);
 
+  const initialLeads = await listLeads(auth.token);
+  assert(initialLeads.total === 2, `expected 2 leads after dedupe run, got ${initialLeads.total}`);
+  const highQualityLeadIds = initialLeads.leads.map((lead) => lead.id);
+  const blockedLeadId = highQualityLeadIds[1];
+
+  const lowQualityImport = await importCsv(auth.token, buildLowQualityCsvPayload(), 'smoke-import-low-quality');
+  assert(lowQualityImport.importedRows === 1, `expected low quality import importedRows=1, got ${lowQualityImport.importedRows}`);
   const leads = await listLeads(auth.token);
-  assert(leads.total === 2, `expected 2 leads after dedupe run, got ${leads.total}`);
+  assert(leads.total === 3, `expected 3 leads after low quality import, got ${leads.total}`);
   const leadIds = leads.leads.map((lead) => lead.id);
-  const blockedLeadId = leadIds[1];
+  const lowQualityLead = leads.leads.find((lead) => String(lead.company || '').toLowerCase().includes('no channel'));
+  assert(lowQualityLead, 'expected low quality lead for data quality guardrail checks');
+
+  const dataQualityOpen = await getDataQualityIssues(auth.token, 'open');
+  assert(Array.isArray(dataQualityOpen.issues), 'data quality issues response missing issues array');
+  assert(
+    dataQualityOpen.issues.some(
+      (issue) => issue.leadId === lowQualityLead.id && issue.issueType === 'missing_contact_channel'
+    ),
+    'expected missing_contact_channel issue for low quality lead'
+  );
 
   const initialSuppression = await setSuppression(auth.token, blockedLeadId, true, 'Smoke suppression check');
   const blockedDraftAttempt = await expectGenerateDraftConflict(auth.token, blockedLeadId, 'email');
@@ -602,6 +651,13 @@ async function run() {
       body: 'Checking in after yesterday.',
     },
   ]);
+
+  const lowQualityEnrollAttempt = await attemptEnrollLeadInSequence(auth.token, sequence.id, lowQualityLead.id);
+  assert(lowQualityEnrollAttempt.status === 409, `expected low quality enroll to fail with 409, got ${lowQualityEnrollAttempt.status}`);
+  assert(
+    lowQualityEnrollAttempt.data?.code === 'data_quality_block',
+    `expected data quality block code, got ${JSON.stringify(lowQualityEnrollAttempt.data)}`
+  );
 
   const enrolled = await enrollLeadInSequence(auth.token, sequence.id, blockedLeadId);
   assert(enrolled.status === 'active', `expected enrollment to be active, got ${enrolled.status}`);
@@ -635,7 +691,7 @@ async function run() {
   assert(Array.isArray(campaignsList.campaigns), 'campaigns list missing campaigns array');
   assert(campaignsList.campaigns.length >= 1, 'expected at least one campaign in list');
 
-  const leadId = leads.leads[0].id;
+  const leadId = highQualityLeadIds[0];
   const scored = await scoreLead(auth.token, leadId);
 
   const workflowRule = await createWorkflowRule(auth.token, {
@@ -789,6 +845,15 @@ async function run() {
     sourceRows: attributionSummary.bySource.length,
     sequenceRows: attributionSummary.bySequence.length,
     personaRows: attributionSummary.byPersona.length,
+  });
+
+  steps.push({
+    step: 'data_quality',
+    ok: true,
+    openIssues: dataQualityOpen.summary?.open_count,
+    openBlockingIssues: dataQualityOpen.summary?.open_blocking_count,
+    lowQualityLeadId: lowQualityLead.id,
+    blockedEnrollStatus: lowQualityEnrollAttempt.status,
   });
 
   steps.push({

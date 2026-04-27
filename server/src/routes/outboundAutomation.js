@@ -117,6 +117,18 @@ const ATTRIBUTION_STAGE_BY_EVENT = {
   opportunity_created: 'opportunity',
 };
 const ATTRIBUTION_STAGE_ORDER = ['imported', 'contacted', 'replied', 'meeting', 'opportunity', 'sequence'];
+const VALID_DATA_QUALITY_STATUSES = new Set(['open', 'resolved', 'dismissed']);
+const VALID_DATA_QUALITY_ISSUE_TYPES = new Set([
+  'missing_contact_channel',
+  'missing_company',
+  'missing_title',
+  'low_source_confidence',
+  'stale_lead',
+  'potential_duplicate',
+]);
+const DATA_QUALITY_BLOCKING_TYPES = new Set(['missing_contact_channel']);
+const MIN_SOURCE_CONFIDENCE_THRESHOLD = 40;
+const STALE_LEAD_DAYS = 90;
 
 function parseCSVRow(line) {
   const result = [];
@@ -507,6 +519,241 @@ function classifyPersonaTitle(title) {
     return 'Owner/Founder';
   }
   return 'Other';
+}
+
+function normalizeIssueToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function getLeadUpdatedAt(lead) {
+  return lead?.updated_at || lead?.created_at || null;
+}
+
+function buildLeadDataQualityIssueCandidates(lead, { duplicateGroup = null } = {}) {
+  if (!lead || !lead.id) return [];
+
+  const issues = [];
+  const leadId = lead.id;
+  const hasEmail = Boolean(String(lead.email || '').trim());
+  const hasLinkedIn = Boolean(String(lead.linkedin_url || '').trim());
+  const hasCompany = Boolean(String(lead.company || '').trim());
+  const hasTitle = Boolean(String(lead.title || '').trim());
+  const sourceConfidence = Number(lead.source_confidence || 0);
+  const updatedAt = getLeadUpdatedAt(lead);
+  const daysSinceUpdate = updatedAt ? Math.floor((Date.now() - new Date(updatedAt).getTime()) / (1000 * 60 * 60 * 24)) : null;
+
+  if (!hasEmail && !hasLinkedIn) {
+    issues.push({
+      leadId,
+      issueType: 'missing_contact_channel',
+      issueKey: `missing_contact_channel:${leadId}`,
+      severity: 'high',
+      isBlocking: true,
+      details: {
+        message: 'Lead requires email or LinkedIn URL before sequence enrollment.',
+        missingFields: ['email_or_linkedin_url'],
+      },
+    });
+  }
+
+  if (!hasCompany) {
+    issues.push({
+      leadId,
+      issueType: 'missing_company',
+      issueKey: `missing_company:${leadId}`,
+      severity: 'medium',
+      isBlocking: false,
+      details: {
+        message: 'Company is missing.',
+        missingFields: ['company'],
+      },
+    });
+  }
+
+  if (!hasTitle) {
+    issues.push({
+      leadId,
+      issueType: 'missing_title',
+      issueKey: `missing_title:${leadId}`,
+      severity: 'low',
+      isBlocking: false,
+      details: {
+        message: 'Title is missing.',
+        missingFields: ['title'],
+      },
+    });
+  }
+
+  if (sourceConfidence < MIN_SOURCE_CONFIDENCE_THRESHOLD) {
+    issues.push({
+      leadId,
+      issueType: 'low_source_confidence',
+      issueKey: `low_source_confidence:${leadId}`,
+      severity: 'medium',
+      isBlocking: false,
+      details: {
+        message: `Source confidence is below ${MIN_SOURCE_CONFIDENCE_THRESHOLD}.`,
+        sourceConfidence,
+        minThreshold: MIN_SOURCE_CONFIDENCE_THRESHOLD,
+      },
+    });
+  }
+
+  if (daysSinceUpdate != null && daysSinceUpdate >= STALE_LEAD_DAYS) {
+    issues.push({
+      leadId,
+      issueType: 'stale_lead',
+      issueKey: `stale_lead:${leadId}`,
+      severity: 'medium',
+      isBlocking: false,
+      details: {
+        message: `Lead record is stale (${daysSinceUpdate} days since update).`,
+        staleDays: daysSinceUpdate,
+      },
+    });
+  }
+
+  if (duplicateGroup && Array.isArray(duplicateGroup.leadIds) && duplicateGroup.leadIds.length > 1) {
+    issues.push({
+      leadId,
+      issueType: 'potential_duplicate',
+      issueKey: `potential_duplicate:${duplicateGroup.groupKey}:${leadId}`,
+      severity: 'high',
+      isBlocking: false,
+      details: {
+        message: 'Potential duplicate lead found by normalized name + company.',
+        groupKey: duplicateGroup.groupKey,
+        candidateLeadIds: duplicateGroup.leadIds,
+        suggestedPrimaryLeadId: duplicateGroup.suggestedPrimaryLeadId || null,
+      },
+    });
+  }
+
+  return issues;
+}
+
+function buildDuplicateGroupIndex(leads) {
+  const groups = new Map();
+  for (const lead of leads) {
+    const normalizedName = normalizeIssueToken(lead.name);
+    const normalizedCompany = normalizeIssueToken(lead.company);
+    if (!normalizedName || !normalizedCompany) continue;
+    const groupKey = `${normalizedName}:${normalizedCompany}`;
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, []);
+    }
+    groups.get(groupKey).push(lead);
+  }
+
+  const byLeadId = new Map();
+  for (const [groupKey, members] of groups.entries()) {
+    if (members.length <= 1) continue;
+    members.sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime());
+    const leadIds = members.map((member) => member.id);
+    const suggestedPrimaryLeadId = leadIds[0];
+    for (const member of members) {
+      byLeadId.set(member.id, {
+        groupKey,
+        leadIds,
+        suggestedPrimaryLeadId,
+      });
+    }
+  }
+
+  return byLeadId;
+}
+
+async function upsertDataQualityIssues(userId, issues) {
+  if (!issues.length) return;
+
+  for (const issue of issues) {
+    await pool.query(
+      `INSERT INTO data_quality_issues
+        (user_id, lead_id, issue_type, issue_key, severity, status, is_blocking, details, detected_at, updated_at, resolved_at)
+       VALUES
+        ($1, $2, $3, $4, $5, 'open', $6, $7::jsonb, NOW(), NOW(), NULL)
+       ON CONFLICT (user_id, issue_key)
+       DO UPDATE SET
+         lead_id = EXCLUDED.lead_id,
+         issue_type = EXCLUDED.issue_type,
+         severity = EXCLUDED.severity,
+         status = 'open',
+         is_blocking = EXCLUDED.is_blocking,
+         details = EXCLUDED.details,
+         detected_at = NOW(),
+         updated_at = NOW(),
+         resolved_at = NULL`,
+      [
+        userId,
+        issue.leadId || null,
+        issue.issueType,
+        issue.issueKey,
+        issue.severity || 'medium',
+        Boolean(issue.isBlocking),
+        JSON.stringify(issue.details || {}),
+      ]
+    );
+  }
+}
+
+async function syncDataQualityIssuesForUser(userId) {
+  const leadsRes = await pool.query(
+    `SELECT id, name, email, linkedin_url, company, title, source_confidence, created_at, updated_at
+     FROM outbound_leads
+     WHERE user_id = $1`,
+    [userId]
+  );
+  const leads = leadsRes.rows;
+  const duplicateGroupByLead = buildDuplicateGroupIndex(leads);
+
+  const detectedIssues = [];
+  for (const lead of leads) {
+    const duplicateGroup = duplicateGroupByLead.get(lead.id) || null;
+    detectedIssues.push(...buildLeadDataQualityIssueCandidates(lead, { duplicateGroup }));
+  }
+
+  await upsertDataQualityIssues(userId, detectedIssues);
+
+  const activeIssueKeys = detectedIssues.map((issue) => issue.issueKey);
+  await pool.query(
+    `UPDATE data_quality_issues
+     SET status = 'resolved',
+         resolved_at = NOW(),
+         updated_at = NOW()
+     WHERE user_id = $1
+       AND status = 'open'
+       AND NOT (issue_key = ANY($2::text[]))`,
+    [userId, activeIssueKeys]
+  );
+}
+
+function mapDataQualityIssueRow(row) {
+  return {
+    id: row.id,
+    leadId: row.lead_id,
+    issueType: row.issue_type,
+    issueKey: row.issue_key,
+    severity: row.severity,
+    status: row.status,
+    isBlocking: Boolean(row.is_blocking),
+    details: row.details || {},
+    detectedAt: row.detected_at,
+    resolvedAt: row.resolved_at,
+    updatedAt: row.updated_at,
+    lead: row.lead_id
+      ? {
+          id: row.lead_id,
+          name: row.lead_name,
+          email: row.lead_email,
+          company: row.lead_company,
+          title: row.lead_title,
+          status: row.lead_status,
+        }
+      : null,
+  };
 }
 
 function deriveAttributionStage(eventType, metadata = {}) {
@@ -1760,35 +2007,169 @@ router.get('/leads/import/:jobId/status', async (req, res) => {
  */
 router.get('/leads', async (req, res) => {
   const { status, minScore = 0, search = '', limit = 100 } = req.query;
+  await syncDataQualityIssuesForUser(req.user.id);
+
   const params = [req.user.id, Number(minScore)];
   let sql = `
-    SELECT *
-    FROM outbound_leads
-    WHERE user_id = $1
-      AND total_score >= $2
+    SELECT
+      l.*,
+      COALESCE(issue_counts.open_issue_count, 0)::int AS open_issue_count,
+      COALESCE(issue_counts.open_blocking_issue_count, 0)::int AS open_blocking_issue_count
+    FROM outbound_leads l
+    LEFT JOIN (
+      SELECT
+        lead_id,
+        COUNT(*) FILTER (WHERE status = 'open')::int AS open_issue_count,
+        COUNT(*) FILTER (WHERE status = 'open' AND is_blocking = TRUE)::int AS open_blocking_issue_count
+      FROM data_quality_issues
+      WHERE user_id = $1
+      GROUP BY lead_id
+    ) issue_counts ON issue_counts.lead_id = l.id
+    WHERE l.user_id = $1
+      AND l.total_score >= $2
   `;
 
   if (status) {
     params.push(status);
-    sql += ` AND status = $${params.length}`;
+    sql += ` AND l.status = $${params.length}`;
   }
 
   if (search) {
     params.push(`%${search}%`);
     const idx = params.length;
     sql += ` AND (
-      name ILIKE $${idx}
-      OR COALESCE(company, '') ILIKE $${idx}
-      OR COALESCE(title, '') ILIKE $${idx}
-      OR COALESCE(email, '') ILIKE $${idx}
+      l.name ILIKE $${idx}
+      OR COALESCE(l.company, '') ILIKE $${idx}
+      OR COALESCE(l.title, '') ILIKE $${idx}
+      OR COALESCE(l.email, '') ILIKE $${idx}
     )`;
   }
 
   params.push(Math.min(500, Math.max(1, Number(limit))));
-  sql += ` ORDER BY total_score DESC, created_at DESC LIMIT $${params.length}`;
+  sql += ` ORDER BY l.total_score DESC, l.created_at DESC LIMIT $${params.length}`;
 
   const result = await pool.query(sql, params);
   return res.json({ total: result.rows.length, leads: result.rows });
+});
+
+/**
+ * GET /api/outbound/data-quality/issues
+ * Query: status=open|resolved|dismissed, issueType, limit
+ */
+router.get('/data-quality/issues', async (req, res) => {
+  const status = String(req.query.status || 'open').trim().toLowerCase();
+  const issueType = String(req.query.issueType || '').trim().toLowerCase();
+  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
+
+  if (status && !VALID_DATA_QUALITY_STATUSES.has(status)) {
+    return res.status(400).json({ error: 'Invalid data quality status filter.' });
+  }
+  if (issueType && !VALID_DATA_QUALITY_ISSUE_TYPES.has(issueType)) {
+    return res.status(400).json({ error: 'Invalid data quality issueType filter.' });
+  }
+
+  await syncDataQualityIssuesForUser(req.user.id);
+
+  const params = [req.user.id];
+  const filters = ['i.user_id = $1'];
+  if (status) {
+    params.push(status);
+    filters.push(`i.status = $${params.length}`);
+  }
+  if (issueType) {
+    params.push(issueType);
+    filters.push(`i.issue_type = $${params.length}`);
+  }
+  params.push(limit);
+
+  const [issuesRes, summaryRes] = await Promise.all([
+    pool.query(
+      `SELECT
+         i.*,
+         l.name AS lead_name,
+         l.email AS lead_email,
+         l.company AS lead_company,
+         l.title AS lead_title,
+         l.status AS lead_status
+       FROM data_quality_issues i
+       LEFT JOIN outbound_leads l ON l.id = i.lead_id
+       WHERE ${filters.join(' AND ')}
+       ORDER BY
+         CASE i.severity
+           WHEN 'high' THEN 1
+           WHEN 'medium' THEN 2
+           ELSE 3
+         END,
+         i.updated_at DESC
+       LIMIT $${params.length}`,
+      params
+    ),
+    pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'open')::int AS open_count,
+         COUNT(*) FILTER (WHERE status = 'open' AND is_blocking = TRUE)::int AS open_blocking_count,
+         COUNT(*) FILTER (WHERE status = 'resolved')::int AS resolved_count,
+         COUNT(*) FILTER (WHERE status = 'dismissed')::int AS dismissed_count
+       FROM data_quality_issues
+       WHERE user_id = $1`,
+      [req.user.id]
+    ),
+  ]);
+
+  return res.json({
+    total: issuesRes.rows.length,
+    issues: issuesRes.rows.map(mapDataQualityIssueRow),
+    summary: summaryRes.rows[0] || {
+      open_count: 0,
+      open_blocking_count: 0,
+      resolved_count: 0,
+      dismissed_count: 0,
+    },
+  });
+});
+
+/**
+ * PATCH /api/outbound/data-quality/issues/:id/status
+ * Body: { status: 'open'|'resolved'|'dismissed' }
+ */
+router.patch('/data-quality/issues/:id/status', async (req, res) => {
+  const status = String(req.body.status || '').trim().toLowerCase();
+  if (!VALID_DATA_QUALITY_STATUSES.has(status)) {
+    return res.status(400).json({ error: 'Invalid status value.' });
+  }
+
+  const updatedRes = await pool.query(
+    `UPDATE data_quality_issues
+     SET status = $1,
+         resolved_at = CASE WHEN $1 IN ('resolved', 'dismissed') THEN NOW() ELSE NULL END,
+         updated_at = NOW()
+     WHERE id = $2
+       AND user_id = $3
+     RETURNING *`,
+    [status, req.params.id, req.user.id]
+  );
+
+  if (!updatedRes.rows.length) {
+    return res.status(404).json({ error: 'Data quality issue not found.' });
+  }
+
+  logAction(req.user.id, req.user.email, 'outbound_data_quality_issue_status_updated', 'data_quality_issue', req.params.id, null, {
+    status,
+  });
+
+  const issueRow = updatedRes.rows[0];
+  const leadRes = issueRow.lead_id
+    ? await pool.query(
+        `SELECT id AS lead_id, name AS lead_name, email AS lead_email, company AS lead_company, title AS lead_title, status AS lead_status
+         FROM outbound_leads
+         WHERE id = $1
+           AND user_id = $2
+         LIMIT 1`,
+        [issueRow.lead_id, req.user.id]
+      )
+    : { rows: [] };
+
+  return res.json(mapDataQualityIssueRow({ ...issueRow, ...(leadRes.rows[0] || {}) }));
 });
 
 /**
@@ -1901,7 +2282,18 @@ router.post('/sequences/:id/enroll', async (req, res) => {
   }
 
   const leadRes = await pool.query(
-    `SELECT id, name, status, suppression_reason
+    `SELECT
+       id,
+       name,
+       email,
+       linkedin_url,
+       company,
+       title,
+       source_confidence,
+       status,
+       suppression_reason,
+       created_at,
+       updated_at
      FROM outbound_leads
      WHERE id = $1
        AND user_id = $2`,
@@ -1914,6 +2306,43 @@ router.post('/sequences/:id/enroll', async (req, res) => {
   const lead = leadRes.rows[0];
   if (lead.status === 'suppressed' || lead.suppression_reason) {
     return res.status(409).json({ error: 'Suppressed leads cannot be enrolled in sequences.' });
+  }
+
+  let duplicateGroup = null;
+  const normalizedName = normalizeIssueToken(lead.name);
+  const normalizedCompany = normalizeIssueToken(lead.company);
+  if (normalizedName && normalizedCompany) {
+    const duplicateRes = await pool.query(
+      `SELECT ARRAY_AGG(id ORDER BY updated_at DESC, created_at DESC) AS lead_ids
+       FROM outbound_leads
+       WHERE user_id = $1
+         AND LOWER(REGEXP_REPLACE(COALESCE(name, ''), '[^a-z0-9]+', '', 'g')) = $2
+         AND LOWER(REGEXP_REPLACE(COALESCE(company, ''), '[^a-z0-9]+', '', 'g')) = $3`,
+      [req.user.id, normalizedName, normalizedCompany]
+    );
+    const duplicateLeadIds = duplicateRes.rows[0]?.lead_ids || [];
+    if (duplicateLeadIds.length > 1) {
+      duplicateGroup = {
+        groupKey: `${normalizedName}:${normalizedCompany}`,
+        leadIds: duplicateLeadIds,
+        suggestedPrimaryLeadId: duplicateLeadIds[0],
+      };
+    }
+  }
+
+  const leadIssues = buildLeadDataQualityIssueCandidates(lead, { duplicateGroup });
+  await upsertDataQualityIssues(req.user.id, leadIssues);
+  const blockingIssues = leadIssues.filter((issue) => DATA_QUALITY_BLOCKING_TYPES.has(issue.issueType));
+  if (blockingIssues.length) {
+    return res.status(409).json({
+      error: 'Lead failed data quality guardrails before enrollment.',
+      code: 'data_quality_block',
+      blockers: blockingIssues.map((issue) => ({
+        issueType: issue.issueType,
+        severity: issue.severity,
+        details: issue.details || {},
+      })),
+    });
   }
 
   const openRes = await pool.query(

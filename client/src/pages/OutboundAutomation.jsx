@@ -124,6 +124,10 @@ export default function OutboundAutomation() {
   const [loadingForecast, setLoadingForecast] = useState(false)
   const [attributionSummary, setAttributionSummary] = useState(null)
   const [loadingAttribution, setLoadingAttribution] = useState(false)
+  const [dataQualityIssues, setDataQualityIssues] = useState([])
+  const [dataQualitySummary, setDataQualitySummary] = useState(null)
+  const [loadingDataQuality, setLoadingDataQuality] = useState(false)
+  const [dataQualityStatusFilter, setDataQualityStatusFilter] = useState('open')
   const [goalForm, setGoalForm] = useState({
     targetMeetings: 10,
     targetOpportunities: 3,
@@ -286,6 +290,23 @@ export default function OutboundAutomation() {
     }
   }, [authHeaders, token, forecastPeriod])
 
+  const fetchDataQualityIssues = useCallback(async () => {
+    if (!token) return
+    setLoadingDataQuality(true)
+    try {
+      const { data } = await axios.get(
+        `/api/outbound/data-quality/issues?status=${encodeURIComponent(dataQualityStatusFilter)}&limit=200`,
+        authHeaders
+      )
+      setDataQualityIssues(Array.isArray(data.issues) ? data.issues : [])
+      setDataQualitySummary(data.summary || null)
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load data quality issues.')
+    } finally {
+      setLoadingDataQuality(false)
+    }
+  }, [authHeaders, token, dataQualityStatusFilter])
+
   useEffect(() => {
     fetchLeads()
   }, [fetchLeads])
@@ -317,6 +338,10 @@ export default function OutboundAutomation() {
   useEffect(() => {
     fetchAttributionSummary()
   }, [fetchAttributionSummary])
+
+  useEffect(() => {
+    fetchDataQualityIssues()
+  }, [fetchDataQualityIssues])
 
   useEffect(() => {
     if (!ruleTestLeadId && leads.length > 0) {
@@ -354,7 +379,7 @@ export default function OutboundAutomation() {
       const { data } = await axios.post('/api/outbound/leads/import/csv', form, authHeaders)
       setImportResult(data)
       setMessage(`Import complete: ${data.importedRows} imported, ${data.duplicateRows} duplicate, ${data.failedRows} failed.`)
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
     })
   }
 
@@ -362,7 +387,7 @@ export default function OutboundAutomation() {
     await runAction(`score-${leadId}`, async () => {
       await axios.post(`/api/outbound/leads/${leadId}/score`, {}, authHeaders)
       setMessage('Lead rescored.')
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
     })
   }
 
@@ -388,7 +413,7 @@ export default function OutboundAutomation() {
 
       setSessionDrafts((prev) => [nextDraft, ...prev.filter((item) => item.id !== nextDraft.id)])
       setMessage(`${channel === 'email' ? 'Email' : 'LinkedIn'} draft generated.`)
-      await Promise.all([fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
+      await Promise.all([fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
     })
   }
 
@@ -409,7 +434,7 @@ export default function OutboundAutomation() {
       )
 
       setMessage('Draft approved.')
-      await Promise.all([fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
+      await Promise.all([fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
     })
   }
 
@@ -438,7 +463,7 @@ export default function OutboundAutomation() {
       )
 
       setMessage('LinkedIn task marked complete.')
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
     })
   }
 
@@ -458,7 +483,7 @@ export default function OutboundAutomation() {
       )
 
       setMessage('Email draft marked as sent.')
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
     })
   }
 
@@ -512,7 +537,7 @@ export default function OutboundAutomation() {
       const { data } = await axios.post('/api/outbound/campaigns', payload, authHeaders)
       setCampaignForm((prev) => ({ ...prev, name: '' }))
       setMessage(`Campaign created: ${data.name} (${data.addedMembers} members).`)
-      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
+      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
     })
   }
 
@@ -520,7 +545,7 @@ export default function OutboundAutomation() {
     await runAction(`campaign-status-${campaignId}-${status}`, async () => {
       await axios.patch(`/api/outbound/campaigns/${campaignId}/status`, { status }, authHeaders)
       setMessage(`Campaign status updated to ${status}.`)
-      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary()])
+      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
     })
   }
 
@@ -544,6 +569,7 @@ export default function OutboundAutomation() {
         fetchAnalytics(),
         fetchForecastSummary(),
         fetchAttributionSummary(),
+        fetchDataQualityIssues(),
       ])
     })
   }
@@ -565,6 +591,7 @@ export default function OutboundAutomation() {
         fetchAnalytics(),
         fetchForecastSummary(),
         fetchAttributionSummary(),
+        fetchDataQualityIssues(),
       ])
     })
   }
@@ -682,6 +709,7 @@ export default function OutboundAutomation() {
         fetchSequenceEnrollments(),
         fetchForecastSummary(),
         fetchAttributionSummary(),
+        fetchDataQualityIssues(),
       ])
     })
   }
@@ -702,7 +730,7 @@ export default function OutboundAutomation() {
         authHeaders
       )
       setMessage('Forecast goals saved.')
-      await Promise.all([fetchForecastSummary(), fetchAttributionSummary()])
+      await Promise.all([fetchForecastSummary(), fetchAttributionSummary(), fetchDataQualityIssues()])
     })
   }
 
@@ -733,7 +761,20 @@ export default function OutboundAutomation() {
         fetchSequenceEnrollments(),
         fetchForecastSummary(),
         fetchAttributionSummary(),
+        fetchDataQualityIssues(),
       ])
+    })
+  }
+
+  const handleDataQualityIssueStatus = async (issueId, status) => {
+    await runAction(`data-quality-${issueId}-${status}`, async () => {
+      await axios.patch(
+        `/api/outbound/data-quality/issues/${issueId}/status`,
+        { status },
+        authHeaders
+      )
+      setMessage(`Data quality issue marked as ${status}.`)
+      await Promise.all([fetchDataQualityIssues(), fetchLeads()])
     })
   }
 
@@ -749,6 +790,9 @@ export default function OutboundAutomation() {
   const attributionSources = Array.isArray(attributionSummary?.bySource) ? attributionSummary.bySource : []
   const attributionSequences = Array.isArray(attributionSummary?.bySequence) ? attributionSummary.bySequence : []
   const attributionPersonas = Array.isArray(attributionSummary?.byPersona) ? attributionSummary.byPersona : []
+  const dataQualityOpenCount = toInt(dataQualitySummary?.open_count)
+  const dataQualityOpenBlockingCount = toInt(dataQualitySummary?.open_blocking_count)
+  const dataQualityResolvedCount = toInt(dataQualitySummary?.resolved_count)
   const openEnrollmentByLead = useMemo(() => {
     const map = {}
     for (const enrollment of sequenceEnrollments) {
@@ -793,6 +837,7 @@ export default function OutboundAutomation() {
               fetchWorkflowRules()
               fetchForecastSummary()
               fetchAttributionSummary()
+              fetchDataQualityIssues()
             }}
             className="text-sm bg-teal text-white px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
           >
@@ -1128,6 +1173,135 @@ export default function OutboundAutomation() {
               </div>
             </div>
           </>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">Data Quality Command Center</h3>
+            <p className="text-xs text-brand-gray mt-0.5">
+              Duplicate queue, stale records, and pre-enrollment required-field guardrails.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={dataQualityStatusFilter}
+              onChange={(event) => setDataQualityStatusFilter(event.target.value)}
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs text-gray-700"
+            >
+              <option value="open">Open</option>
+              <option value="resolved">Resolved</option>
+              <option value="dismissed">Dismissed</option>
+            </select>
+            <button
+              onClick={fetchDataQualityIssues}
+              className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
+            >
+              Refresh Queue
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Open Issues</p>
+            <p className="text-lg font-bold text-navy">{dataQualityOpenCount}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Blocking Enrollment</p>
+            <p className="text-lg font-bold text-rose-700">{dataQualityOpenBlockingCount}</p>
+          </div>
+          <div className="bg-gray-50 rounded-lg p-3">
+            <p className="text-xs text-brand-gray">Resolved</p>
+            <p className="text-lg font-bold text-emerald-700">{dataQualityResolvedCount}</p>
+          </div>
+        </div>
+
+        {loadingDataQuality ? (
+          <p className="text-sm text-brand-gray">Loading data quality issues...</p>
+        ) : dataQualityIssues.length === 0 ? (
+          <p className="text-sm text-brand-gray">No issues for this filter.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
+                  <th className="py-2 pr-3">Issue</th>
+                  <th className="py-2 pr-3">Lead</th>
+                  <th className="py-2 pr-3">Severity</th>
+                  <th className="py-2 pr-3">Status</th>
+                  <th className="py-2 pr-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {dataQualityIssues.map((issue) => (
+                  <tr key={issue.id}>
+                    <td className="py-2 pr-3">
+                      <p className="font-semibold text-navy">{issue.issueType}</p>
+                      <p className="text-xs text-brand-gray">{issue.details?.message || 'No details'}</p>
+                    </td>
+                    <td className="py-2 pr-3">
+                      {issue.lead ? (
+                        <>
+                          <p className="text-navy">{issue.lead.name}</p>
+                          <p className="text-xs text-brand-gray">{issue.lead.email || issue.lead.company || 'No identifier'}</p>
+                        </>
+                      ) : (
+                        <span className="text-xs text-brand-gray">No lead attached</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                          issue.severity === 'high'
+                            ? 'bg-rose-100 text-rose-700'
+                            : issue.severity === 'medium'
+                            ? 'bg-amber-100 text-amber-700'
+                            : 'bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        {issue.severity}
+                      </span>
+                      {issue.isBlocking ? <p className="text-[11px] text-rose-700 mt-1">Blocks enrollment</p> : null}
+                    </td>
+                    <td className="py-2 pr-3 text-xs text-gray-700">{issue.status}</td>
+                    <td className="py-2 pr-3">
+                      <div className="flex flex-wrap gap-2">
+                        {issue.status !== 'resolved' && (
+                          <button
+                            onClick={() => handleDataQualityIssueStatus(issue.id, 'resolved')}
+                            disabled={busyKey === `data-quality-${issue.id}-resolved`}
+                            className="text-xs border border-emerald-200 text-emerald-700 rounded px-2 py-1 hover:bg-emerald-50 disabled:opacity-60"
+                          >
+                            Resolve
+                          </button>
+                        )}
+                        {issue.status !== 'dismissed' && (
+                          <button
+                            onClick={() => handleDataQualityIssueStatus(issue.id, 'dismissed')}
+                            disabled={busyKey === `data-quality-${issue.id}-dismissed`}
+                            className="text-xs border border-gray-200 text-gray-700 rounded px-2 py-1 hover:bg-gray-50 disabled:opacity-60"
+                          >
+                            Dismiss
+                          </button>
+                        )}
+                        {issue.status !== 'open' && (
+                          <button
+                            onClick={() => handleDataQualityIssueStatus(issue.id, 'open')}
+                            disabled={busyKey === `data-quality-${issue.id}-open`}
+                            className="text-xs border border-blue-200 text-blue-700 rounded px-2 py-1 hover:bg-blue-50 disabled:opacity-60"
+                          >
+                            Reopen
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -1644,6 +1818,12 @@ export default function OutboundAutomation() {
                     <td className="py-3 pr-3">
                       <p className="font-semibold text-navy">{lead.name}</p>
                       <p className="text-xs text-brand-gray">{lead.email || 'No email'}</p>
+                      {toInt(lead.open_issue_count) > 0 ? (
+                        <p className="text-xs text-amber-700 mt-1">
+                          Data quality issues: {toInt(lead.open_issue_count)}
+                          {toInt(lead.open_blocking_issue_count) > 0 ? ` (${toInt(lead.open_blocking_issue_count)} blocking)` : ''}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="py-3 pr-3">
                       <p className="text-navy">{lead.company || 'Unknown company'}</p>
@@ -1691,16 +1871,23 @@ export default function OutboundAutomation() {
                               disabled={
                                 busyKey === `enroll-sequence-${lead.id}` ||
                                 !selectedSequenceByLead[lead.id] ||
-                                Boolean(openEnrollmentByLead[lead.id])
+                                Boolean(openEnrollmentByLead[lead.id]) ||
+                                toInt(lead.open_blocking_issue_count) > 0
                               }
                               className="text-xs border border-indigo-200 text-indigo-700 rounded px-2 py-1 hover:bg-indigo-50 disabled:opacity-60"
                               title={
                                 openEnrollmentByLead[lead.id]
                                   ? `Already enrolled in ${openEnrollmentByLead[lead.id].sequence_name}`
+                                  : toInt(lead.open_blocking_issue_count) > 0
+                                  ? 'Fix blocking data quality issues before enrollment.'
                                   : ''
                               }
                             >
-                              {openEnrollmentByLead[lead.id] ? 'Enrolled' : 'Enroll'}
+                              {openEnrollmentByLead[lead.id]
+                                ? 'Enrolled'
+                                : toInt(lead.open_blocking_issue_count) > 0
+                                ? 'Blocked'
+                                : 'Enroll'}
                             </button>
                           </>
                         )}

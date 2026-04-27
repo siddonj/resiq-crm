@@ -237,14 +237,14 @@ Current lead generation logic creates synthetic Reddit/LinkedIn outputs, which i
 
 ### Progress status (as of April 27, 2026)
 
-- Phase 21 completion: 55%
+- Phase 21 completion: 65%
 - Measurement basis (weighted by planned capabilities):
   - Sequence state machine v2: 35%
   - Workflow rules engine: 30%
   - Scoring v2 + explainability: 45%
   - Forecast + goals: 40%
   - Attribution + source ROI: 35%
-  - Data quality command center: 0%
+  - Data quality command center: 40%
   - Multifamily custom objects: 0%
 
 Phase 21 slice delivered now:
@@ -361,6 +361,34 @@ Additional Phase 21 slice delivered now (Slice 5):
   - lead outcome -> opportunity trigger
   - attribution summary fetch + response validation
   - attribution table readiness check
+
+Additional Phase 21 slice delivered now (Slice 6):
+
+- Added data quality command center data model:
+  - `data_quality_issues`
+- Added data quality issue detection and sync logic:
+  - missing contact channel
+  - missing company/title
+  - low source confidence
+  - stale lead record flags
+  - potential duplicate groups by normalized name + company
+- Added data quality APIs:
+  - `GET /api/outbound/data-quality/issues`
+  - `PATCH /api/outbound/data-quality/issues/:id/status`
+- Added enrollment guardrails:
+  - sequence enrollment now blocks when required contact channel data is missing
+  - blocking responses include `code: data_quality_block` and blocker details
+- Added lead-level issue visibility:
+  - outbound leads payload now includes open issue and open blocking issue counts
+- Added Data Quality Command Center UI section in `/outbound-automation`:
+  - open/blocking/resolved counters
+  - issue queue filter (open/resolved/dismissed)
+  - resolve/dismiss/reopen controls
+  - enrollment button states reflect blocking data quality issues
+- Expanded smoke test coverage:
+  - data quality table readiness check
+  - low-quality lead import and queue validation
+  - enrollment guardrail conflict validation for missing contact channel
 
 ## 7. Data Model Additions
 
@@ -504,5 +532,5 @@ Recommended next build steps:
 - Add persistent Draft Inbox and LinkedIn Task Board endpoints/UI
 - Add outbound workflow tests in CI
 - Add tenant branding/profile screens for white-label packaging
-- Continue Phase 21 with slice 6:
-  - data quality command center (duplicate merge queue + required-field enrollment guardrails)
+- Continue Phase 21 with slice 7:
+  - multifamily custom object model (`portfolio`, `property`, `tech_stack`, `initiative`) and associations
