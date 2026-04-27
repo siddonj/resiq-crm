@@ -53,6 +53,11 @@ const LEAD_OUTCOME_EVENT_MAP = {
     eventType: 'meeting_booked',
     stopReason: 'Auto-stopped after meeting booked',
   },
+  opportunity: {
+    leadStatus: 'opportunity',
+    eventType: 'opportunity_created',
+    stopReason: 'Auto-stopped after opportunity created',
+  },
   hard_bounce: {
     leadStatus: 'disqualified',
     eventType: 'hard_bounce',
@@ -96,6 +101,12 @@ const VALID_RULE_ACTION_TYPES = new Set([
   'enroll_sequence',
 ]);
 const VALID_RULE_RUN_STATUSES = new Set(['success', 'failed', 'skipped']);
+const VALID_FORECAST_PERIOD_TYPES = new Set(['weekly', 'monthly']);
+const FORECAST_BUCKET_WEIGHTS = {
+  closed: 1,
+  commitOnly: 0.7,
+  bestCaseOnly: 0.4,
+};
 
 function parseCSVRow(line) {
   const result = [];
@@ -366,6 +377,62 @@ function sanitizeUuidList(values) {
   return (Array.isArray(values) ? values : [])
     .map((value) => String(value || '').trim())
     .filter((value) => uuidRegex.test(value));
+}
+
+function round2(value) {
+  return Number(Number(value || 0).toFixed(2));
+}
+
+function toPeriodDateString(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getCurrentPeriodWindow(periodType) {
+  const now = new Date();
+  const utcToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+  if (periodType === 'weekly') {
+    const mondayOffset = (utcToday.getUTCDay() + 6) % 7;
+    const periodStart = new Date(utcToday);
+    periodStart.setUTCDate(periodStart.getUTCDate() - mondayOffset);
+    const periodEnd = new Date(periodStart);
+    periodEnd.setUTCDate(periodEnd.getUTCDate() + 6);
+
+    return {
+      periodType,
+      periodStart: toPeriodDateString(periodStart),
+      periodEnd: toPeriodDateString(periodEnd),
+    };
+  }
+
+  const periodStart = new Date(Date.UTC(utcToday.getUTCFullYear(), utcToday.getUTCMonth(), 1));
+  const periodEnd = new Date(Date.UTC(utcToday.getUTCFullYear(), utcToday.getUTCMonth() + 1, 0));
+
+  return {
+    periodType: 'monthly',
+    periodStart: toPeriodDateString(periodStart),
+    periodEnd: toPeriodDateString(periodEnd),
+  };
+}
+
+function calculatePeriodProgress(periodStart, periodEnd) {
+  const start = new Date(`${periodStart}T00:00:00.000Z`);
+  const end = new Date(`${periodEnd}T00:00:00.000Z`);
+  const now = new Date();
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+  const totalDays = Math.max(1, Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1);
+  const elapsedRaw = Math.floor((today - start) / (1000 * 60 * 60 * 24)) + 1;
+  const elapsedDays = Math.max(0, Math.min(totalDays, elapsedRaw));
+  const remainingDays = Math.max(0, totalDays - elapsedDays);
+  const completionRatio = totalDays > 0 ? elapsedDays / totalDays : 0;
+
+  return {
+    totalDays,
+    elapsedDays,
+    remainingDays,
+    completionRatio: round2(completionRatio),
+  };
 }
 
 async function recordSequenceTransition({
@@ -899,6 +966,214 @@ async function runWorkflowRulesForEvent({
   }
 
   return outputs;
+}
+
+async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
+  const normalizedPeriodType = VALID_FORECAST_PERIOD_TYPES.has(periodType) ? periodType : 'monthly';
+  const period = getCurrentPeriodWindow(normalizedPeriodType);
+  const progress = calculatePeriodProgress(period.periodStart, period.periodEnd);
+
+  const [bucketRes, activityRes, revenueRes, avgDealRes, goalRes] = await Promise.all([
+    pool.query(
+      `SELECT
+         COALESCE(SUM(CASE WHEN status = 'opportunity' THEN 1 ELSE 0 END), 0)::int AS closed_count,
+         COALESCE(SUM(CASE WHEN status = 'meeting' THEN 1 ELSE 0 END), 0)::int AS commit_only_count,
+         COALESCE(SUM(CASE WHEN status IN ('contacted', 'replied') THEN 1 ELSE 0 END), 0)::int AS best_case_only_count
+       FROM outbound_leads
+       WHERE user_id = $1`,
+      [userId]
+    ),
+    pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE event_type = 'meeting_booked')::int AS meetings_actual,
+         COUNT(*) FILTER (
+           WHERE event_type = 'opportunity_created'
+              OR (event_type = 'campaign_member_status_changed' AND COALESCE(metadata->>'memberStatus', '') = 'opportunity')
+         )::int AS opportunities_actual
+       FROM lead_source_events
+       WHERE user_id = $1
+         AND created_at >= $2::date
+         AND created_at < ($3::date + INTERVAL '1 day')`,
+      [userId, period.periodStart, period.periodEnd]
+    ),
+    pool.query(
+      `SELECT
+         COALESCE(SUM(value), 0)::numeric(14,2) AS revenue_actual,
+         COUNT(*)::int AS deals_won_actual
+       FROM deals
+       WHERE user_id = $1
+         AND stage = 'closed_won'
+         AND COALESCE(close_date::timestamptz, updated_at, created_at) >= $2::date
+         AND COALESCE(close_date::timestamptz, updated_at, created_at) < ($3::date + INTERVAL '1 day')`,
+      [userId, period.periodStart, period.periodEnd]
+    ),
+    pool.query(
+      `SELECT
+         COALESCE(AVG(value), 0)::numeric(14,2) AS avg_closed_won_value
+       FROM deals
+       WHERE user_id = $1
+         AND stage = 'closed_won'
+         AND value IS NOT NULL
+         AND value > 0`,
+      [userId]
+    ),
+    pool.query(
+      `SELECT *
+       FROM sales_goals
+       WHERE user_id = $1
+         AND period_type = $2
+         AND period_start = $3::date
+         AND period_end = $4::date
+       LIMIT 1`,
+      [userId, period.periodType, period.periodStart, period.periodEnd]
+    ),
+  ]);
+
+  const bucketRow = bucketRes.rows[0] || {};
+  const activityRow = activityRes.rows[0] || {};
+  const revenueRow = revenueRes.rows[0] || {};
+  const avgDealRow = avgDealRes.rows[0] || {};
+  const goal = goalRes.rows[0] || null;
+
+  const closedCount = Number(bucketRow.closed_count || 0);
+  const commitOnlyCount = Number(bucketRow.commit_only_count || 0);
+  const bestCaseOnlyCount = Number(bucketRow.best_case_only_count || 0);
+  const commitCount = closedCount + commitOnlyCount;
+  const bestCaseCount = commitCount + bestCaseOnlyCount;
+
+  const averageClosedWonDealValue = Number(avgDealRow.avg_closed_won_value || 0);
+  const baselineValue =
+    averageClosedWonDealValue > 0
+      ? averageClosedWonDealValue
+      : goal?.target_opportunities > 0 && Number(goal.target_revenue || 0) > 0
+      ? Number(goal.target_revenue) / Number(goal.target_opportunities)
+      : 25000;
+
+  const closedValue = round2(closedCount * baselineValue * FORECAST_BUCKET_WEIGHTS.closed);
+  const commitValue = round2(
+    closedValue + commitOnlyCount * baselineValue * FORECAST_BUCKET_WEIGHTS.commitOnly
+  );
+  const bestCaseValue = round2(
+    commitValue + bestCaseOnlyCount * baselineValue * FORECAST_BUCKET_WEIGHTS.bestCaseOnly
+  );
+  const totalForecastValue = bestCaseValue;
+
+  const meetingsActual = Number(activityRow.meetings_actual || 0);
+  const opportunitiesActual = Number(activityRow.opportunities_actual || 0);
+  const revenueActual = Number(revenueRow.revenue_actual || 0);
+  const dealsWonActual = Number(revenueRow.deals_won_actual || 0);
+
+  const projectionScale = progress.elapsedDays > 0 ? progress.totalDays / progress.elapsedDays : 0;
+  const meetingsProjected = round2(meetingsActual * projectionScale);
+  const opportunitiesProjected = round2(opportunitiesActual * projectionScale);
+  const revenueProjected = round2(revenueActual * projectionScale);
+
+  const targetMeetings = goal ? Number(goal.target_meetings || 0) : 0;
+  const targetOpportunities = goal ? Number(goal.target_opportunities || 0) : 0;
+  const targetRevenue = goal ? Number(goal.target_revenue || 0) : 0;
+
+  const goalGap = goal
+    ? {
+        meetingsGap: round2(targetMeetings - meetingsProjected),
+        opportunitiesGap: round2(targetOpportunities - opportunitiesProjected),
+        revenueGap: round2(targetRevenue - revenueProjected),
+      }
+    : null;
+
+  const metadata = {
+    baselineValue: round2(baselineValue),
+    averageClosedWonDealValue: round2(averageClosedWonDealValue),
+    projected: {
+      meetings: meetingsProjected,
+      opportunities: opportunitiesProjected,
+      revenue: revenueProjected,
+    },
+    actual: {
+      meetings: meetingsActual,
+      opportunities: opportunitiesActual,
+      revenue: round2(revenueActual),
+      dealsWon: dealsWonActual,
+    },
+    progress,
+  };
+
+  await pool.query(
+    `INSERT INTO pipeline_forecasts
+      (user_id, period_type, period_start, period_end, snapshot_date,
+       commit_count, best_case_count, closed_count,
+       commit_value, best_case_value, closed_value, total_forecast_value, metadata)
+     VALUES ($1, $2, $3::date, $4::date, CURRENT_DATE, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+     ON CONFLICT (user_id, period_type, period_start, period_end, snapshot_date)
+     DO UPDATE SET
+       commit_count = EXCLUDED.commit_count,
+       best_case_count = EXCLUDED.best_case_count,
+       closed_count = EXCLUDED.closed_count,
+       commit_value = EXCLUDED.commit_value,
+       best_case_value = EXCLUDED.best_case_value,
+       closed_value = EXCLUDED.closed_value,
+       total_forecast_value = EXCLUDED.total_forecast_value,
+       metadata = EXCLUDED.metadata`,
+    [
+      userId,
+      period.periodType,
+      period.periodStart,
+      period.periodEnd,
+      commitCount,
+      bestCaseCount,
+      closedCount,
+      commitValue,
+      bestCaseValue,
+      closedValue,
+      totalForecastValue,
+      JSON.stringify(metadata),
+    ]
+  );
+
+  return {
+    period: {
+      type: period.periodType,
+      start: period.periodStart,
+      end: period.periodEnd,
+    },
+    buckets: {
+      closed: { count: closedCount, value: closedValue },
+      commit: { count: commitCount, value: commitValue },
+      bestCase: { count: bestCaseCount, value: bestCaseValue },
+      totalForecastValue,
+    },
+    actuals: {
+      meetings: meetingsActual,
+      opportunities: opportunitiesActual,
+      revenue: round2(revenueActual),
+      dealsWon: dealsWonActual,
+    },
+    projected: {
+      meetings: meetingsProjected,
+      opportunities: opportunitiesProjected,
+      revenue: revenueProjected,
+    },
+    goals: goal
+      ? {
+          id: goal.id,
+          targetMeetings,
+          targetOpportunities,
+          targetRevenue: round2(targetRevenue),
+          notes: goal.notes,
+          updatedAt: goal.updated_at,
+        }
+      : null,
+    gapToGoal: goalGap,
+    progress,
+    assumptions: {
+      baselineDealValue: round2(baselineValue),
+      averageClosedWonDealValue: round2(averageClosedWonDealValue),
+      bucketWeights: {
+        closed: FORECAST_BUCKET_WEIGHTS.closed,
+        commitOnly: FORECAST_BUCKET_WEIGHTS.commitOnly,
+        bestCaseOnly: FORECAST_BUCKET_WEIGHTS.bestCaseOnly,
+      },
+    },
+  };
 }
 
 router.use(auth);
@@ -2030,6 +2305,16 @@ router.patch('/campaigns/:campaignId/members/:memberId/status', async (req, res)
         memberStatus,
       },
     });
+  } else if (leadId && memberStatus === 'opportunity') {
+    await logLeadEvent({
+      userId: req.user.id,
+      leadId,
+      eventType: 'opportunity_created',
+      metadata: {
+        campaignId: req.params.campaignId,
+        memberId: req.params.memberId,
+      },
+    });
   } else if (leadId && memberStatus === 'meeting') {
     await logLeadEvent({
       userId: req.user.id,
@@ -2264,7 +2549,7 @@ router.post('/leads/:id/outcome', async (req, res) => {
 
   if (!config) {
     return res.status(400).json({
-      error: 'Invalid outcome. Use replied, meeting, or hard_bounce.',
+      error: 'Invalid outcome. Use replied, meeting, opportunity, or hard_bounce.',
     });
   }
 
@@ -2802,6 +3087,94 @@ router.get('/audit/export', async (req, res) => {
     count: result.rows.length,
     auditLogs: result.rows,
   });
+});
+
+/**
+ * PUT /api/outbound/forecast/goals
+ * Body: { periodType, targetMeetings, targetOpportunities, targetRevenue, notes }
+ */
+router.put('/forecast/goals', async (req, res) => {
+  const periodType = String(req.body.periodType || 'monthly').trim().toLowerCase();
+  if (!VALID_FORECAST_PERIOD_TYPES.has(periodType)) {
+    return res.status(400).json({ error: 'periodType must be weekly or monthly.' });
+  }
+
+  const targetMeetings = Math.max(0, Number(req.body.targetMeetings || 0));
+  const targetOpportunities = Math.max(0, Number(req.body.targetOpportunities || 0));
+  const targetRevenue = Math.max(0, Number(req.body.targetRevenue || 0));
+  const notes = req.body.notes == null ? null : String(req.body.notes).trim();
+
+  const period = getCurrentPeriodWindow(periodType);
+  const goalRes = await pool.query(
+    `INSERT INTO sales_goals
+      (user_id, period_type, period_start, period_end, target_meetings, target_opportunities, target_revenue, notes, updated_at)
+     VALUES ($1, $2, $3::date, $4::date, $5, $6, $7, $8, NOW())
+     ON CONFLICT (user_id, period_type, period_start, period_end)
+     DO UPDATE SET
+       target_meetings = EXCLUDED.target_meetings,
+       target_opportunities = EXCLUDED.target_opportunities,
+       target_revenue = EXCLUDED.target_revenue,
+       notes = EXCLUDED.notes,
+       updated_at = NOW()
+     RETURNING *`,
+    [
+      req.user.id,
+      period.periodType,
+      period.periodStart,
+      period.periodEnd,
+      targetMeetings,
+      targetOpportunities,
+      targetRevenue,
+      notes,
+    ]
+  );
+
+  const goal = goalRes.rows[0];
+  logAction(
+    req.user.id,
+    req.user.email,
+    'outbound_forecast_goal_upserted',
+    'sales_goal',
+    goal.id,
+    period.periodType,
+    {
+      periodStart: period.periodStart,
+      periodEnd: period.periodEnd,
+      targetMeetings,
+      targetOpportunities,
+      targetRevenue: round2(targetRevenue),
+    }
+  );
+
+  const summary = await buildOutboundForecastSummary(req.user.id, periodType);
+  return res.json({
+    goal: {
+      id: goal.id,
+      periodType: goal.period_type,
+      periodStart: goal.period_start,
+      periodEnd: goal.period_end,
+      targetMeetings: Number(goal.target_meetings || 0),
+      targetOpportunities: Number(goal.target_opportunities || 0),
+      targetRevenue: round2(Number(goal.target_revenue || 0)),
+      notes: goal.notes,
+      updatedAt: goal.updated_at,
+    },
+    summary,
+  });
+});
+
+/**
+ * GET /api/outbound/forecast/summary
+ * Query: period=weekly|monthly
+ */
+router.get('/forecast/summary', async (req, res) => {
+  const periodType = String(req.query.period || 'monthly').trim().toLowerCase();
+  if (!VALID_FORECAST_PERIOD_TYPES.has(periodType)) {
+    return res.status(400).json({ error: 'period must be weekly or monthly.' });
+  }
+
+  const summary = await buildOutboundForecastSummary(req.user.id, periodType);
+  return res.json(summary);
 });
 
 /**

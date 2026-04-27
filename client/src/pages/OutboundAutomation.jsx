@@ -55,6 +55,15 @@ function toInt(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+function formatCurrency(value) {
+  const number = Number(value || 0)
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(number)
+}
+
 function downloadBlobFile(blob, filename) {
   const objectUrl = window.URL.createObjectURL(blob)
   const anchor = document.createElement('a')
@@ -110,6 +119,15 @@ export default function OutboundAutomation() {
   const [loadingWorkflowRules, setLoadingWorkflowRules] = useState(false)
   const [ruleTestLeadId, setRuleTestLeadId] = useState('')
   const [ruleTestResultById, setRuleTestResultById] = useState({})
+  const [forecastPeriod, setForecastPeriod] = useState('monthly')
+  const [forecastSummary, setForecastSummary] = useState(null)
+  const [loadingForecast, setLoadingForecast] = useState(false)
+  const [goalForm, setGoalForm] = useState({
+    targetMeetings: 10,
+    targetOpportunities: 3,
+    targetRevenue: 75000,
+    notes: '',
+  })
   const [workflowForm, setWorkflowForm] = useState({
     name: '',
     triggerEvent: 'draft_sent',
@@ -231,6 +249,28 @@ export default function OutboundAutomation() {
     }
   }, [authHeaders, token])
 
+  const fetchForecastSummary = useCallback(async () => {
+    if (!token) return
+    setLoadingForecast(true)
+    try {
+      const { data } = await axios.get(`/api/outbound/forecast/summary?period=${forecastPeriod}`, authHeaders)
+      setForecastSummary(data)
+      if (data?.goals) {
+        setGoalForm((prev) => ({
+          ...prev,
+          targetMeetings: toInt(data.goals.targetMeetings, prev.targetMeetings),
+          targetOpportunities: toInt(data.goals.targetOpportunities, prev.targetOpportunities),
+          targetRevenue: toInt(data.goals.targetRevenue, prev.targetRevenue),
+          notes: data.goals.notes || '',
+        }))
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load forecast summary.')
+    } finally {
+      setLoadingForecast(false)
+    }
+  }, [authHeaders, token, forecastPeriod])
+
   useEffect(() => {
     fetchLeads()
   }, [fetchLeads])
@@ -254,6 +294,10 @@ export default function OutboundAutomation() {
   useEffect(() => {
     fetchWorkflowRules()
   }, [fetchWorkflowRules])
+
+  useEffect(() => {
+    fetchForecastSummary()
+  }, [fetchForecastSummary])
 
   useEffect(() => {
     if (!ruleTestLeadId && leads.length > 0) {
@@ -291,7 +335,7 @@ export default function OutboundAutomation() {
       const { data } = await axios.post('/api/outbound/leads/import/csv', form, authHeaders)
       setImportResult(data)
       setMessage(`Import complete: ${data.importedRows} imported, ${data.duplicateRows} duplicate, ${data.failedRows} failed.`)
-      await Promise.all([fetchLeads(), fetchAnalytics()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
     })
   }
 
@@ -299,7 +343,7 @@ export default function OutboundAutomation() {
     await runAction(`score-${leadId}`, async () => {
       await axios.post(`/api/outbound/leads/${leadId}/score`, {}, authHeaders)
       setMessage('Lead rescored.')
-      await Promise.all([fetchLeads(), fetchAnalytics()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
     })
   }
 
@@ -325,7 +369,7 @@ export default function OutboundAutomation() {
 
       setSessionDrafts((prev) => [nextDraft, ...prev.filter((item) => item.id !== nextDraft.id)])
       setMessage(`${channel === 'email' ? 'Email' : 'LinkedIn'} draft generated.`)
-      await fetchAnalytics()
+      await Promise.all([fetchAnalytics(), fetchForecastSummary()])
     })
   }
 
@@ -346,7 +390,7 @@ export default function OutboundAutomation() {
       )
 
       setMessage('Draft approved.')
-      await fetchAnalytics()
+      await Promise.all([fetchAnalytics(), fetchForecastSummary()])
     })
   }
 
@@ -375,7 +419,7 @@ export default function OutboundAutomation() {
       )
 
       setMessage('LinkedIn task marked complete.')
-      await Promise.all([fetchLeads(), fetchAnalytics()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
     })
   }
 
@@ -395,7 +439,7 @@ export default function OutboundAutomation() {
       )
 
       setMessage('Email draft marked as sent.')
-      await Promise.all([fetchLeads(), fetchAnalytics()])
+      await Promise.all([fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
     })
   }
 
@@ -449,7 +493,7 @@ export default function OutboundAutomation() {
       const { data } = await axios.post('/api/outbound/campaigns', payload, authHeaders)
       setCampaignForm((prev) => ({ ...prev, name: '' }))
       setMessage(`Campaign created: ${data.name} (${data.addedMembers} members).`)
-      await Promise.all([fetchCampaigns(), fetchAnalytics()])
+      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary()])
     })
   }
 
@@ -457,7 +501,7 @@ export default function OutboundAutomation() {
     await runAction(`campaign-status-${campaignId}-${status}`, async () => {
       await axios.patch(`/api/outbound/campaigns/${campaignId}/status`, { status }, authHeaders)
       setMessage(`Campaign status updated to ${status}.`)
-      await Promise.all([fetchCampaigns(), fetchAnalytics()])
+      await Promise.all([fetchCampaigns(), fetchAnalytics(), fetchForecastSummary()])
     })
   }
 
@@ -475,7 +519,7 @@ export default function OutboundAutomation() {
         authHeaders
       )
       setMessage('Lead enrolled in sequence.')
-      await Promise.all([fetchSequenceEnrollments(), fetchLeads(), fetchAnalytics()])
+      await Promise.all([fetchSequenceEnrollments(), fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
     })
   }
 
@@ -490,7 +534,7 @@ export default function OutboundAutomation() {
         authHeaders
       )
       setMessage(`Sequence enrollment ${state}.`)
-      await Promise.all([fetchSequenceEnrollments(), fetchLeads(), fetchAnalytics()])
+      await Promise.all([fetchSequenceEnrollments(), fetchLeads(), fetchAnalytics(), fetchForecastSummary()])
     })
   }
 
@@ -600,7 +644,33 @@ export default function OutboundAutomation() {
           : `Rule dry-run completed (${data.result?.status || 'unknown'}).`
       )
 
-      await Promise.all([fetchWorkflowRules(), fetchLeads(), fetchAnalytics(), fetchSequenceEnrollments()])
+      await Promise.all([
+        fetchWorkflowRules(),
+        fetchLeads(),
+        fetchAnalytics(),
+        fetchSequenceEnrollments(),
+        fetchForecastSummary(),
+      ])
+    })
+  }
+
+  const handleSaveGoal = async (event) => {
+    event.preventDefault()
+
+    await runAction(`goal-save-${forecastPeriod}`, async () => {
+      await axios.put(
+        '/api/outbound/forecast/goals',
+        {
+          periodType: forecastPeriod,
+          targetMeetings: toInt(goalForm.targetMeetings),
+          targetOpportunities: toInt(goalForm.targetOpportunities),
+          targetRevenue: toInt(goalForm.targetRevenue),
+          notes: goalForm.notes || '',
+        },
+        authHeaders
+      )
+      setMessage('Forecast goals saved.')
+      await fetchForecastSummary()
     })
   }
 
@@ -624,7 +694,13 @@ export default function OutboundAutomation() {
       )
 
       setMessage(suppressed ? 'Lead suppressed.' : 'Lead unsuppressed.')
-      await Promise.all([fetchLeads(), fetchAnalytics(), fetchCampaigns(), fetchSequenceEnrollments()])
+      await Promise.all([
+        fetchLeads(),
+        fetchAnalytics(),
+        fetchCampaigns(),
+        fetchSequenceEnrollments(),
+        fetchForecastSummary(),
+      ])
     })
   }
 
@@ -632,6 +708,10 @@ export default function OutboundAutomation() {
   const emailLimit = analytics?.dailySendLimits?.email
   const linkedinLimit = analytics?.dailySendLimits?.linkedin
   const campaignStats = analytics?.campaigns || {}
+  const forecastBuckets = forecastSummary?.buckets || {}
+  const forecastGoals = forecastSummary?.goals || null
+  const forecastGap = forecastSummary?.gapToGoal || null
+  const forecastProgress = forecastSummary?.progress || null
   const openEnrollmentByLead = useMemo(() => {
     const map = {}
     for (const enrollment of sequenceEnrollments) {
@@ -674,6 +754,7 @@ export default function OutboundAutomation() {
               fetchSequences()
               fetchSequenceEnrollments()
               fetchWorkflowRules()
+              fetchForecastSummary()
             }}
             className="text-sm bg-teal text-white px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
           >
@@ -737,6 +818,161 @@ export default function OutboundAutomation() {
           </p>
           <p className="text-xs text-brand-gray">Remaining: {toInt(linkedinLimit?.remaining)}</p>
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">Forecast + Goals</h3>
+            <p className="text-xs text-brand-gray mt-0.5">
+              Commit, best-case, and closed forecast buckets with period goal tracking.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setForecastPeriod('weekly')}
+              className={`text-xs px-3 py-1.5 rounded-lg border ${
+                forecastPeriod === 'weekly'
+                  ? 'bg-teal text-white border-teal'
+                  : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              Weekly
+            </button>
+            <button
+              onClick={() => setForecastPeriod('monthly')}
+              className={`text-xs px-3 py-1.5 rounded-lg border ${
+                forecastPeriod === 'monthly'
+                  ? 'bg-teal text-white border-teal'
+                  : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              Monthly
+            </button>
+          </div>
+        </div>
+
+        {loadingForecast ? (
+          <p className="text-sm text-brand-gray">Loading forecast summary...</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-xs text-brand-gray">Closed Bucket</p>
+                <p className="text-xl font-bold text-navy">{formatCurrency(forecastBuckets.closed?.value)}</p>
+                <p className="text-xs text-brand-gray">{toInt(forecastBuckets.closed?.count)} leads</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-xs text-brand-gray">Commit Bucket</p>
+                <p className="text-xl font-bold text-navy">{formatCurrency(forecastBuckets.commit?.value)}</p>
+                <p className="text-xs text-brand-gray">{toInt(forecastBuckets.commit?.count)} leads</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-4">
+                <p className="text-xs text-brand-gray">Best-Case Bucket</p>
+                <p className="text-xl font-bold text-navy">{formatCurrency(forecastBuckets.bestCase?.value)}</p>
+                <p className="text-xs text-brand-gray">{toInt(forecastBuckets.bestCase?.count)} leads</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-100 rounded-lg p-4">
+              <p className="text-xs text-brand-gray">Total Forecast Value</p>
+              <p className="text-2xl font-bold text-navy">{formatCurrency(forecastBuckets.totalForecastValue)}</p>
+              {forecastProgress ? (
+                <p className="text-xs text-brand-gray mt-1">
+                  {toInt(forecastProgress.elapsedDays)} of {toInt(forecastProgress.totalDays)} days elapsed
+                </p>
+              ) : null}
+            </div>
+
+            <form onSubmit={handleSaveGoal} className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <input
+                type="number"
+                min="0"
+                value={goalForm.targetMeetings}
+                onChange={(event) => setGoalForm((prev) => ({ ...prev, targetMeetings: toInt(event.target.value) }))}
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                placeholder="Target meetings"
+              />
+              <input
+                type="number"
+                min="0"
+                value={goalForm.targetOpportunities}
+                onChange={(event) =>
+                  setGoalForm((prev) => ({ ...prev, targetOpportunities: toInt(event.target.value) }))
+                }
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                placeholder="Target opportunities"
+              />
+              <input
+                type="number"
+                min="0"
+                value={goalForm.targetRevenue}
+                onChange={(event) => setGoalForm((prev) => ({ ...prev, targetRevenue: toInt(event.target.value) }))}
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                placeholder="Target revenue"
+              />
+              <input
+                type="text"
+                value={goalForm.notes}
+                onChange={(event) => setGoalForm((prev) => ({ ...prev, notes: event.target.value }))}
+                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                placeholder="Goal notes"
+              />
+              <button
+                type="submit"
+                disabled={busyKey === `goal-save-${forecastPeriod}`}
+                className="bg-navy text-white rounded-lg px-3 py-2 text-sm font-semibold hover:bg-navy/90 disabled:opacity-60"
+              >
+                {busyKey === `goal-save-${forecastPeriod}` ? 'Saving...' : 'Save Goals'}
+              </button>
+            </form>
+
+            {forecastGoals ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="bg-white border border-gray-100 rounded-lg p-3">
+                  <p className="text-xs text-brand-gray">
+                    Meetings: {toInt(forecastSummary?.projected?.meetings)} / {toInt(forecastGoals.targetMeetings)}
+                  </p>
+                  <p
+                    className={`text-xs mt-1 ${
+                      (forecastGap?.meetingsGap || 0) <= 0 ? 'text-emerald-600' : 'text-amber-700'
+                    }`}
+                  >
+                    Gap: {toInt(forecastGap?.meetingsGap)}
+                  </p>
+                </div>
+                <div className="bg-white border border-gray-100 rounded-lg p-3">
+                  <p className="text-xs text-brand-gray">
+                    Opportunities: {toInt(forecastSummary?.projected?.opportunities)} /{' '}
+                    {toInt(forecastGoals.targetOpportunities)}
+                  </p>
+                  <p
+                    className={`text-xs mt-1 ${
+                      (forecastGap?.opportunitiesGap || 0) <= 0 ? 'text-emerald-600' : 'text-amber-700'
+                    }`}
+                  >
+                    Gap: {toInt(forecastGap?.opportunitiesGap)}
+                  </p>
+                </div>
+                <div className="bg-white border border-gray-100 rounded-lg p-3">
+                  <p className="text-xs text-brand-gray">
+                    Revenue: {formatCurrency(forecastSummary?.projected?.revenue)} /{' '}
+                    {formatCurrency(forecastGoals.targetRevenue)}
+                  </p>
+                  <p
+                    className={`text-xs mt-1 ${
+                      (forecastGap?.revenueGap || 0) <= 0 ? 'text-emerald-600' : 'text-amber-700'
+                    }`}
+                  >
+                    Gap: {formatCurrency(forecastGap?.revenueGap)}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-brand-gray">Set goals for this period to unlock gap-to-goal tracking.</p>
+            )}
+          </>
+        )}
       </div>
 
       <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">

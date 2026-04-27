@@ -302,6 +302,31 @@ async function listWorkflowRules(token) {
   return response.data.rules;
 }
 
+async function upsertForecastGoals(token, payload) {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/forecast/goals`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  assert(response.ok, `upsert forecast goals failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
+async function getForecastSummary(token, period = 'monthly') {
+  const response = await fetchJson(`${BASE_URL}/api/outbound/forecast/summary?period=${encodeURIComponent(period)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  assert(response.ok, `get forecast summary failed: ${JSON.stringify(response.data)}`);
+  return response.data;
+}
+
 async function listCampaigns(token) {
   const response = await fetchJson(`${BASE_URL}/api/outbound/campaigns?limit=20`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -482,6 +507,8 @@ async function run() {
       'outbound_sequence_enrollment_transitions',
       'workflow_rules',
       'workflow_rule_runs',
+      'sales_goals',
+      'pipeline_forecasts',
     ],
     60000
   );
@@ -645,6 +672,29 @@ async function run() {
     `expected workflow rule to update next_recommended_action, got ${updatedLeadAfterRule.next_recommended_action}`
   );
 
+  const monthlyGoal = await upsertForecastGoals(auth.token, {
+    periodType: 'monthly',
+    targetMeetings: 8,
+    targetOpportunities: 3,
+    targetRevenue: 60000,
+    notes: 'Smoke test monthly goal',
+  });
+  assert(monthlyGoal.goal, 'expected goal payload from upsert forecast goals');
+  assert(monthlyGoal.summary, 'expected summary payload from upsert forecast goals');
+
+  const forecastSummary = await getForecastSummary(auth.token, 'monthly');
+  assert(forecastSummary.period?.type === 'monthly', 'expected monthly forecast summary period');
+  assert(forecastSummary.buckets, 'expected forecast summary buckets');
+  assert(
+    typeof forecastSummary.buckets.totalForecastValue === 'number',
+    'expected numeric totalForecastValue in forecast summary'
+  );
+  assert(forecastSummary.goals, 'expected goals in forecast summary after upsert');
+  assert(
+    Number(forecastSummary.goals.targetRevenue) === 60000,
+    `expected targetRevenue=60000, got ${forecastSummary.goals.targetRevenue}`
+  );
+
   const emailDraft = await generateDraft(auth.token, leadId, 'email');
   const linkedinDraft = await generateDraft(auth.token, leadId, 'linkedin');
   const sendBlockedBeforeApproval = await sendEmailDraft(auth.token, emailDraft.id);
@@ -678,6 +728,15 @@ async function run() {
     dryRunStatus: workflowDryRun?.result?.status,
     liveRunStatus: workflowLiveRun?.result?.status,
     nextRecommendedAction: updatedLeadAfterRule.next_recommended_action,
+  });
+
+  steps.push({
+    step: 'forecast_goals',
+    ok: true,
+    periodType: forecastSummary.period?.type,
+    totalForecastValue: forecastSummary.buckets?.totalForecastValue,
+    targetRevenue: forecastSummary.goals?.targetRevenue,
+    projectedRevenue: forecastSummary.projected?.revenue,
   });
 
   steps.push({
