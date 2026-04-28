@@ -29,33 +29,44 @@ const upload = multer({
 
 // Parse uploaded document and extract proposal data using AI
 // POST /api/proposals/parse-doc
-router.post('/parse-doc', auth, upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-
-  if (!process.env.OPENAI_API_KEY?.trim()) {
-    return res.status(503).json({ error: 'AI is not configured. Set OPENAI_API_KEY on the server to enable this feature.' });
-  }
-
-  try {
-    // Extract raw text from the uploaded document
-    let rawText = '';
-    if (req.file.mimetype === 'text/plain' || req.file.originalname.endsWith('.txt')) {
-      rawText = req.file.buffer.toString('utf8');
-    } else {
-      const result = await mammoth.extractRawText({ buffer: req.file.buffer });
-      rawText = result.value;
+router.post('/parse-doc', auth, (req, res) => {
+  upload.single('file')(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'File too large. Maximum size is 10MB.' });
+      }
+      return res.status(400).json({ error: err.message });
+    }
+    if (err) {
+      return res.status(400).json({ error: err.message || 'Invalid file upload' });
     }
 
-    if (!rawText.trim()) {
-      return res.status(422).json({ error: 'Could not extract text from the uploaded file.' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    if (!process.env.OPENAI_API_KEY?.trim()) {
+      return res.status(503).json({ error: 'AI is not configured. Set OPENAI_API_KEY on the server to enable this feature.' });
     }
 
-    // Truncate to first 12,000 characters to stay within token limits
-    const truncated = rawText.slice(0, 12000);
+    try {
+      // Extract raw text from the uploaded document
+      let rawText = '';
+      if (req.file.mimetype === 'text/plain' || req.file.originalname.endsWith('.txt')) {
+        rawText = req.file.buffer.toString('utf8');
+      } else {
+        const result = await mammoth.extractRawText({ buffer: req.file.buffer });
+        rawText = result.value;
+      }
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      if (!rawText.trim()) {
+        return res.status(422).json({ error: 'Could not extract text from the uploaded file.' });
+      }
 
-    const systemPrompt = `You are an expert at reading proposal documents and extracting structured data.
+      // Truncate to first 12,000 characters to stay within token limits
+      const truncated = rawText.slice(0, 12000);
+
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+      const systemPrompt = `You are an expert at reading proposal documents and extracting structured data.
 Given the raw text of a proposal document, extract the following and respond ONLY with valid JSON — no markdown, no explanation:
 {
   "title": "string — the proposal title or subject",
@@ -72,52 +83,59 @@ Rules:
 - If a field is unknown, use an empty string or 0.
 - Keep section content concise but complete.`;
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Here is the proposal document text:\n\n${truncated}` },
-      ],
-      response_format: { type: 'json_object' },
-    });
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `Here is the proposal document text:\n\n${truncated}` },
+        ],
+        response_format: { type: 'json_object' },
+      });
 
-    let extracted;
-    try {
-      extracted = JSON.parse(completion.choices[0].message.content);
-    } catch {
-      return res.status(500).json({ error: 'AI returned an invalid response. Please try again.' });
+      let extracted;
+      try {
+        extracted = JSON.parse(completion.choices[0].message.content);
+      } catch {
+        return res.status(500).json({ error: 'AI returned an invalid response. Please try again.' });
+      }
+
+      // Normalise line_items — ensure every item has required numeric fields and an id
+      if (Array.isArray(extracted.line_items)) {
+        extracted.line_items = extracted.line_items.map(item => {
+          const quantity = Number(item.quantity);
+          const rate = Number(item.rate);
+          const tax = Number(item.tax);
+          const discount = Number(item.discount);
+          return {
+            id: randomUUID(),
+            description: item.description || '',
+            quantity: Number.isFinite(quantity) ? quantity : 1,
+            rate: Number.isFinite(rate) ? rate : 0,
+            tax: Number.isFinite(tax) ? tax : 0,
+            discount: Number.isFinite(discount) ? discount : 0,
+          };
+        });
+      } else {
+        extracted.line_items = [];
+      }
+
+      // Normalise sections — ensure every section has an id
+      if (Array.isArray(extracted.sections)) {
+        extracted.sections = extracted.sections.map((s, i) => ({
+          id: s.id || `section-${i}`,
+          title: s.title || '',
+          content: s.content || '',
+        }));
+      } else {
+        extracted.sections = [];
+      }
+
+      res.json(extracted);
+    } catch (err) {
+      console.error('[parse-doc] Error:', err);
+      res.status(500).json({ error: 'Failed to parse document.' });
     }
-
-    // Normalise line_items — ensure every item has required numeric fields and an id
-    if (Array.isArray(extracted.line_items)) {
-      extracted.line_items = extracted.line_items.map(item => ({
-        id: randomUUID(),
-        description: item.description || '',
-        quantity: Number(item.quantity) || 1,
-        rate: Number(item.rate) || 0,
-        tax: Number(item.tax) || 0,
-        discount: Number(item.discount) || 0,
-      }));
-    } else {
-      extracted.line_items = [];
-    }
-
-    // Normalise sections — ensure every section has an id
-    if (Array.isArray(extracted.sections)) {
-      extracted.sections = extracted.sections.map((s, i) => ({
-        id: s.id || `section-${i}`,
-        title: s.title || '',
-        content: s.content || '',
-      }));
-    } else {
-      extracted.sections = [];
-    }
-
-    res.json(extracted);
-  } catch (err) {
-    console.error('[parse-doc] Error:', err);
-    res.status(500).json({ error: 'Failed to parse document: ' + (err.message || 'Unknown error') });
-  }
+  });
 });
 
 // List proposals

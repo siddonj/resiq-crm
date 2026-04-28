@@ -193,13 +193,14 @@ function ProposalModal({ form, setForm, deals, editingId, saving, formError, onS
                   accept=".docx,.txt"
                   className="hidden"
                   onChange={handleFileUpload}
+                  disabled={parseLoading}
                   id="proposal-doc-upload"
                 />
                 <label
                   htmlFor="proposal-doc-upload"
                   className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition-colors ${
                     parseLoading
-                      ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                      ? 'bg-gray-200 text-gray-400 cursor-not-allowed pointer-events-none'
                       : 'bg-teal text-white hover:bg-teal/90'
                   }`}
                 >
