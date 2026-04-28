@@ -1,10 +1,123 @@
 const express = require('express');
+const multer = require('multer');
+const mammoth = require('mammoth');
 const pool = require('../models/db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 const trackingService = require('../services/trackingService');
 
 const router = express.Router();
+
+// Multer: memory storage, max 10 MB, docx/txt only
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = [
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
+    ];
+    if (allowed.includes(file.mimetype) || file.originalname.endsWith('.docx') || file.originalname.endsWith('.txt')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only .docx and .txt files are supported'));
+    }
+  },
+});
+
+// Parse uploaded document and extract proposal data using AI
+// POST /api/proposals/parse-doc
+router.post('/parse-doc', auth, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  if (!process.env.OPENAI_API_KEY?.trim()) {
+    return res.status(503).json({ error: 'AI is not configured. Set OPENAI_API_KEY on the server to enable this feature.' });
+  }
+
+  try {
+    // Extract raw text from the uploaded document
+    let rawText = '';
+    if (req.file.mimetype === 'text/plain' || req.file.originalname.endsWith('.txt')) {
+      rawText = req.file.buffer.toString('utf8');
+    } else {
+      const result = await mammoth.extractRawText({ buffer: req.file.buffer });
+      rawText = result.value;
+    }
+
+    if (!rawText.trim()) {
+      return res.status(422).json({ error: 'Could not extract text from the uploaded file.' });
+    }
+
+    // Truncate to first 12 000 characters to stay within token limits
+    const truncated = rawText.slice(0, 12000);
+
+    const OpenAI = require('openai');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const systemPrompt = `You are an expert at reading proposal documents and extracting structured data.
+Given the raw text of a proposal document, extract the following and respond ONLY with valid JSON — no markdown, no explanation:
+{
+  "title": "string — the proposal title or subject",
+  "sections": [
+    { "id": "string (slug)", "title": "string", "content": "string" }
+  ],
+  "line_items": [
+    { "description": "string", "quantity": number, "rate": number, "tax": 0, "discount": 0 }
+  ]
+}
+Rules:
+- sections should capture Scope of Work, Deliverables, Terms, Executive Summary, etc.
+- line_items should capture any pricing, fees, or services with amounts. If no explicit quantity/rate, use quantity=1 and set rate to the total amount.
+- If a field is unknown, use an empty string or 0.
+- Keep section content concise but complete.`;
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Here is the proposal document text:\n\n${truncated}` },
+      ],
+      response_format: { type: 'json_object' },
+    });
+
+    let extracted;
+    try {
+      extracted = JSON.parse(completion.choices[0].message.content);
+    } catch {
+      return res.status(500).json({ error: 'AI returned an invalid response. Please try again.' });
+    }
+
+    // Normalise line_items — ensure every item has required numeric fields and an id
+    if (Array.isArray(extracted.line_items)) {
+      extracted.line_items = extracted.line_items.map(item => ({
+        id: Math.random().toString(36).slice(2),
+        description: item.description || '',
+        quantity: Number(item.quantity) || 1,
+        rate: Number(item.rate) || 0,
+        tax: Number(item.tax) || 0,
+        discount: Number(item.discount) || 0,
+      }));
+    } else {
+      extracted.line_items = [];
+    }
+
+    // Normalise sections — ensure every section has an id
+    if (Array.isArray(extracted.sections)) {
+      extracted.sections = extracted.sections.map((s, i) => ({
+        id: s.id || `section-${i}`,
+        title: s.title || '',
+        content: s.content || '',
+      }));
+    } else {
+      extracted.sections = [];
+    }
+
+    res.json(extracted);
+  } catch (err) {
+    console.error('[parse-doc] Error:', err);
+    res.status(500).json({ error: 'Failed to parse document: ' + (err.message || 'Unknown error') });
+  }
+});
 
 // List proposals
 router.get('/', auth, async (req, res) => {
