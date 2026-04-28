@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
@@ -116,7 +116,12 @@ function generateHTML(proposal, deal, authorName) {
 
 // ── Proposal edit/create modal ───────────────────────────────────────────────
 
-function ProposalModal({ form, setForm, deals, editingId, saving, formError, onSubmit, onClose }) {
+function ProposalModal({ form, setForm, deals, editingId, saving, formError, onSubmit, onClose, token }) {
+  const [parseLoading, setParseLoading] = useState(false)
+  const [parseError, setParseError] = useState('')
+  const [parseSuccess, setParseSuccess] = useState(false)
+  const fileInputRef = useRef(null)
+
   const updateSection = (idx, field, value) => {
     const sections = form.sections.map((s, i) => i === idx ? { ...s, [field]: value } : s)
     setForm(f => ({ ...f, sections }))
@@ -128,6 +133,35 @@ function ProposalModal({ form, setForm, deals, editingId, saving, formError, onS
 
   const updateItem = (id, field, value) => {
     setForm(f => ({ ...f, line_items: f.line_items.map(i => i.id === id ? { ...i, [field]: value } : i) }))
+  }
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setParseLoading(true)
+    setParseError('')
+    setParseSuccess(false)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await axios.post('/api/proposals/parse-doc', formData, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' },
+      })
+      const { title, sections, line_items } = res.data
+      setForm(f => ({
+        ...f,
+        title: title || f.title,
+        sections: sections?.length ? sections : f.sections,
+        line_items: line_items?.length ? line_items : f.line_items,
+      }))
+      setParseSuccess(true)
+    } catch (err) {
+      setParseError(err.response?.data?.error || 'Failed to parse document. Please try again.')
+    } finally {
+      setParseLoading(false)
+      // Reset so the same file can be re-uploaded
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
   }
 
   const total = proposalTotal(form.line_items)
@@ -144,6 +178,51 @@ function ProposalModal({ form, setForm, deals, editingId, saving, formError, onS
           {formError && (
             <div className="px-4 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">{formError}</div>
           )}
+
+          {/* Upload Document Section */}
+          <div className="border border-dashed border-gray-200 rounded-xl p-4 bg-gray-50">
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-navy"><span aria-hidden="true">📎</span> Upload Proposal Document</p>
+                <p className="text-xs text-gray-400 mt-0.5">Upload a .docx or .txt file — AI will extract the title, sections, and pricing</p>
+              </div>
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".docx,.txt"
+                  className="hidden"
+                  onChange={handleFileUpload}
+                  disabled={parseLoading}
+                  id="proposal-doc-upload"
+                />
+                <label
+                  htmlFor="proposal-doc-upload"
+                  className={`inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition-colors ${
+                    parseLoading
+                      ? 'bg-gray-200 text-gray-400 cursor-not-allowed pointer-events-none'
+                      : 'bg-teal text-white hover:bg-teal/90'
+                  }`}
+                >
+                  {parseLoading ? (
+                    <>
+                      <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                      </svg>
+                      Extracting…
+                    </>
+                  ) : 'Choose File'}
+                </label>
+              </div>
+            </div>
+            {parseError && (
+              <p className="mt-2 text-xs text-red-500">{parseError}</p>
+            )}
+            {parseSuccess && (
+              <p className="mt-2 text-xs text-green-600">✓ Document parsed successfully — form pre-filled below</p>
+            )}
+          </div>
           
           <AskAIBtn 
             toolName="Proposals" 
@@ -647,6 +726,7 @@ export default function Proposals() {
           formError={formError}
           onSubmit={handleSubmit}
           onClose={() => setShowModal(false)}
+          token={token}
         />
       )}
 
