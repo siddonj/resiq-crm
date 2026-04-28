@@ -1,6 +1,8 @@
 const express = require('express');
 const multer = require('multer');
 const mammoth = require('mammoth');
+const { randomUUID } = require('crypto');
+const OpenAI = require('openai');
 const pool = require('../models/db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
@@ -48,10 +50,9 @@ router.post('/parse-doc', auth, upload.single('file'), async (req, res) => {
       return res.status(422).json({ error: 'Could not extract text from the uploaded file.' });
     }
 
-    // Truncate to first 12 000 characters to stay within token limits
+    // Truncate to first 12,000 characters to stay within token limits
     const truncated = rawText.slice(0, 12000);
 
-    const OpenAI = require('openai');
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
     const systemPrompt = `You are an expert at reading proposal documents and extracting structured data.
@@ -90,7 +91,7 @@ Rules:
     // Normalise line_items — ensure every item has required numeric fields and an id
     if (Array.isArray(extracted.line_items)) {
       extracted.line_items = extracted.line_items.map(item => ({
-        id: Math.random().toString(36).slice(2),
+        id: randomUUID(),
         description: item.description || '',
         quantity: Number(item.quantity) || 1,
         rate: Number(item.rate) || 0,

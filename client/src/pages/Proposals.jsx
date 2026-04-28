@@ -183,7 +183,7 @@ function ProposalModal({ form, setForm, deals, editingId, saving, formError, onS
           <div className="border border-dashed border-gray-200 rounded-xl p-4 bg-gray-50">
             <div className="flex items-center gap-3">
               <div className="flex-1">
-                <p className="text-sm font-medium text-navy">📎 Upload Proposal Document</p>
+                <p className="text-sm font-medium text-navy"><span aria-hidden="true">📎</span> Upload Proposal Document</p>
                 <p className="text-xs text-gray-400 mt-0.5">Upload a .docx or .txt file — AI will extract the title, sections, and pricing</p>
               </div>
               <div>
