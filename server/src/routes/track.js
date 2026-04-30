@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const pool = require('../models/db');
+const requireAuth = require('../middleware/auth');
 
 // Helper to generate tracking ID
 function generateTrackingId() {
@@ -105,12 +106,13 @@ router.get('/link', async (req, res) => {
 });
 
 // API: Create tracking record for an asset (proposal, invoice, etc)
-router.post('/create', async (req, res) => {
+router.post('/create', requireAuth, async (req, res) => {
   try {
-    const { userId, contactId, assetType, assetId } = req.body;
+    const { contactId, assetType, assetId } = req.body;
+    const userId = req.user.id;
 
-    if (!userId || !assetType || !assetId) {
-      return res.status(400).json({ error: 'Missing required fields: userId, assetType, assetId' });
+    if (!assetType || !assetId) {
+      return res.status(400).json({ error: 'Missing required fields: assetType, assetId' });
     }
 
     const trackingId = generateTrackingId();
@@ -133,15 +135,15 @@ router.post('/create', async (req, res) => {
 });
 
 // API: Get engagement history for a contact
-router.get('/contact/:contactId', async (req, res) => {
+router.get('/contact/:contactId', requireAuth, async (req, res) => {
   try {
     const { contactId } = req.params;
     
     const result = await pool.query(
       `SELECT * FROM engagement_tracking 
-       WHERE contact_id = $1 
+       WHERE contact_id = $1 AND user_id = $2
        ORDER BY created_at DESC`,
-      [contactId]
+      [contactId, req.user.id]
     );
 
     res.json(result.rows);
@@ -152,15 +154,15 @@ router.get('/contact/:contactId', async (req, res) => {
 });
 
 // API: Get engagement stats for an asset
-router.get('/asset/:assetType/:assetId', async (req, res) => {
+router.get('/asset/:assetType/:assetId', requireAuth, async (req, res) => {
   try {
     const { assetType, assetId } = req.params;
     
     const result = await pool.query(
       `SELECT * FROM engagement_tracking 
-       WHERE asset_type = $1 AND asset_id = $2
+       WHERE asset_type = $1 AND asset_id = $2 AND user_id = $3
        ORDER BY created_at DESC`,
-      [assetType, assetId]
+      [assetType, assetId, req.user.id]
     );
 
     const opens = result.rows.filter(r => r.opened_at).length;
