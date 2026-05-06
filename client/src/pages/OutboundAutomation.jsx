@@ -1,6 +1,70 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import axios from 'axios'
+import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from '../context/AuthContext'
+import {
+  toInt,
+  formatCurrency,
+  renderStatusBadge,
+  downloadBlobFile,
+  MULTIFAMILY_OBJECT_TYPES,
+} from '../features/outbound/utils/formatting.jsx'
+import LeadTable from '../features/outbound/components/LeadTable'
+import {
+  useOutboundAnalytics,
+  useOutboundLeads,
+  useDraftInbox,
+  useLinkedinTaskBoard,
+  useSavedViews,
+  useSlaAlerts,
+  useCampaigns,
+  useSequences,
+  useSequenceEnrollments,
+  useWorkflowRules,
+  useForecastSummary,
+  useAttributionSummary,
+  useDataQualityIssues,
+  useDataQualityMergeOperations,
+  useMultifamilyObjects,
+  useMultifamilySummary,
+  useMultifamilyEntities,
+  useObjectAssociations,
+  useWorkspaceConfig,
+  useEscalationRules,
+  useNotifications,
+  useRescoreLead,
+  useBulkAction,
+  useSuppressLead,
+  useImportCsv,
+  useGenerateDraft,
+  useApproveDraft,
+  useSendDraft,
+  useCompleteLinkedinTask,
+  useRebalanceLinkedinTasks,
+  useCreateSavedView,
+  useDeleteSavedView,
+  useCreateEscalation,
+  useToggleEscalation,
+  useRunEscalations,
+  useCreateCampaign,
+  useUpdateCampaignStatus,
+  useEnrollInSequence,
+  useChangeSequenceState,
+  useBulkSequenceEnroll,
+  useBulkSequenceUnenroll,
+  useCreateWorkflowRule,
+  useToggleWorkflowRule,
+  useTestWorkflowRule,
+  useSaveForecastGoals,
+  useUpdateDataQualityIssueStatus,
+  useMergeDuplicateIssue,
+  useCreateMultifamilyObject,
+  useAssociateToObject,
+  useBulkAssociateExplorerEntities,
+  useBulkMultifamilyTag,
+  useSaveWorkspaceConfig,
+  useMarkNotificationRead,
+  useMarkAllNotificationsRead,
+} from '../features/outbound/hooks/useOutboundQueries'
 
 const LEAD_STATUSES = [
   { value: '', label: 'All statuses' },
@@ -16,12 +80,6 @@ const LEAD_STATUSES = [
 ]
 
 const SOURCE_TYPES = ['csv', 'manual', 'api', 'other']
-const MULTIFAMILY_OBJECT_TYPES = [
-  { value: 'portfolio', label: 'Portfolio' },
-  { value: 'property', label: 'Property' },
-  { value: 'tech_stack', label: 'Tech Stack' },
-  { value: 'initiative', label: 'Initiative' },
-]
 const MULTIFAMILY_EXPLORER_ENTITY_TYPES = [
   { value: 'contact', label: 'Contacts' },
   { value: 'deal', label: 'Deals' },
@@ -61,109 +119,26 @@ const CONDITION_OPERATORS = [
   { value: 'contains', label: 'Contains' },
 ]
 
-function toInt(value, fallback = 0) {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : fallback
-}
-
-function formatCurrency(value) {
-  const number = Number(value || 0)
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 0,
-  }).format(number)
-}
-
-function downloadBlobFile(blob, filename) {
-  const objectUrl = window.URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = objectUrl
-  anchor.download = filename
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  window.URL.revokeObjectURL(objectUrl)
-}
-
-function renderStatusBadge(status) {
-  const normalized = String(status || 'new')
-  const classes = {
-    new: 'bg-slate-100 text-slate-700',
-    qualified: 'bg-blue-100 text-blue-700',
-    queued: 'bg-indigo-100 text-indigo-700',
-    contacted: 'bg-amber-100 text-amber-700',
-    replied: 'bg-emerald-100 text-emerald-700',
-    meeting: 'bg-teal-100 text-teal-700',
-    opportunity: 'bg-green-100 text-green-700',
-    disqualified: 'bg-rose-100 text-rose-700',
-    suppressed: 'bg-zinc-100 text-zinc-700',
-  }
-
-  return (
-    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${classes[normalized] || classes.new}`}>
-      {normalized}
-    </span>
-  )
-}
-
 export default function OutboundAutomation() {
   const { token } = useAuth()
-  const [analytics, setAnalytics] = useState(null)
-  const [leads, setLeads] = useState([])
-  const [loadingLeads, setLoadingLeads] = useState(false)
-  const [loadingAnalytics, setLoadingAnalytics] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [busyKey, setBusyKey] = useState('')
   const [csvFile, setCsvFile] = useState(null)
   const [importResult, setImportResult] = useState(null)
   const [, setSessionDrafts] = useState([])
-  const [draftInbox, setDraftInbox] = useState([])
-  const [draftInboxSummary, setDraftInboxSummary] = useState(null)
-  const [loadingDraftInbox, setLoadingDraftInbox] = useState(false)
-  const [linkedinTaskBoard, setLinkedinTaskBoard] = useState(null)
-  const [loadingLinkedinTaskBoard, setLoadingLinkedinTaskBoard] = useState(false)
-  const [savedViews, setSavedViews] = useState([])
-  const [loadingSavedViews, setLoadingSavedViews] = useState(false)
   const [savedViewName, setSavedViewName] = useState('')
   const [selectedSavedViewId, setSelectedSavedViewId] = useState('')
-  const [slaAlerts, setSlaAlerts] = useState([])
-  const [slaSummary, setSlaSummary] = useState(null)
-  const [loadingSlaAlerts, setLoadingSlaAlerts] = useState(false)
-  const [campaigns, setCampaigns] = useState([])
-  const [loadingCampaigns, setLoadingCampaigns] = useState(false)
-  const [sequences, setSequences] = useState([])
-  const [loadingSequences, setLoadingSequences] = useState(false)
-  const [sequenceEnrollments, setSequenceEnrollments] = useState([])
-  const [loadingSequenceEnrollments, setLoadingSequenceEnrollments] = useState(false)
-  const [selectedSequenceByLead, setSelectedSequenceByLead] = useState({})
-  const [workflowRules, setWorkflowRules] = useState([])
-  const [loadingWorkflowRules, setLoadingWorkflowRules] = useState(false)
   const [ruleTestLeadId, setRuleTestLeadId] = useState('')
   const [ruleTestResultById, setRuleTestResultById] = useState({})
   const [forecastPeriod, setForecastPeriod] = useState('monthly')
-  const [forecastSummary, setForecastSummary] = useState(null)
-  const [loadingForecast, setLoadingForecast] = useState(false)
-  const [attributionSummary, setAttributionSummary] = useState(null)
-  const [loadingAttribution, setLoadingAttribution] = useState(false)
-  const [dataQualityIssues, setDataQualityIssues] = useState([])
-  const [dataQualitySummary, setDataQualitySummary] = useState(null)
-  const [loadingDataQuality, setLoadingDataQuality] = useState(false)
-  const [dataQualityMergeOperations, setDataQualityMergeOperations] = useState([])
-  const [loadingDataQualityMergeOperations, setLoadingDataQualityMergeOperations] = useState(false)
   const [dataQualityStatusFilter, setDataQualityStatusFilter] = useState('open')
-  const [multifamilyObjects, setMultifamilyObjects] = useState([])
-  const [multifamilySummary, setMultifamilySummary] = useState(null)
-  const [loadingMultifamily, setLoadingMultifamily] = useState(false)
   const [leadObjectSelection, setLeadObjectSelection] = useState({})
   const [multifamilyExplorer, setMultifamilyExplorer] = useState({
     objectId: '',
     entityType: 'contact',
     search: '',
   })
-  const [multifamilyEntities, setMultifamilyEntities] = useState([])
-  const [loadingMultifamilyEntities, setLoadingMultifamilyEntities] = useState(false)
   const [multifamilyEntitySelection, setMultifamilyEntitySelection] = useState({})
   const [selectedObjectAssociations, setSelectedObjectAssociations] = useState([])
   const [loadingSelectedObjectAssociations, setLoadingSelectedObjectAssociations] = useState(false)
@@ -213,8 +188,6 @@ export default function OutboundAutomation() {
     includeEmail: true,
     includeLinkedIn: true,
   })
-  const [workspaceConfig, setWorkspaceConfig] = useState(null)
-  const [loadingWorkspaceConfig, setLoadingWorkspaceConfig] = useState(false)
   const [workspaceConfigForm, setWorkspaceConfigForm] = useState({
     senderName: '',
     emailSignature: '',
@@ -225,375 +198,130 @@ export default function OutboundAutomation() {
     slaPausedStaleDays: 3,
     slaHighScoreNotContactedDays: 2,
   })
-  const [escalationRules, setEscalationRules] = useState([])
-  const [loadingEscalations, setLoadingEscalations] = useState(false)
   const [newEscalationType, setNewEscalationType] = useState('draft_stale')
-  const [notifications, setNotifications] = useState([])
-  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0)
-  const [loadingNotifications, setLoadingNotifications] = useState(false)
   const [bulkAdvancedForm, setBulkAdvancedForm] = useState({
     sequenceId: '',
     multifamilyObjectId: '',
     campaignMemberStatus: 'contacted',
   })
+  const [selectedSequenceByLead, setSelectedSequenceByLead] = useState({})
 
-  const authHeaders = useMemo(
-    () => ({
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }),
-    [token]
-  )
+  // React Query hooks
+  const analyticsQuery = useOutboundAnalytics(token)
+  const leadsQuery = useOutboundLeads(token, filters)
+  const draftInboxQuery = useDraftInbox(token)
+  const linkedinTaskBoardQuery = useLinkedinTaskBoard(token)
+  const savedViewsQuery = useSavedViews(token)
+  const slaAlertsQuery = useSlaAlerts(token)
+  const campaignsQuery = useCampaigns(token)
+  const sequencesQuery = useSequences(token)
+  const sequenceEnrollmentsQuery = useSequenceEnrollments(token)
+  const workflowRulesQuery = useWorkflowRules(token)
+  const forecastQuery = useForecastSummary(token, forecastPeriod)
+  const attributionQuery = useAttributionSummary(token, forecastPeriod)
+  const dataQualityQuery = useDataQualityIssues(token, dataQualityStatusFilter)
+  const mergeOpsQuery = useDataQualityMergeOperations(token)
+  const mfObjectsQuery = useMultifamilyObjects(token)
+  const mfSummaryQuery = useMultifamilySummary(token)
+  const mfEntitiesQuery = useMultifamilyEntities(token, multifamilyExplorer.entityType, multifamilyExplorer.search)
+  const objectAssociationsQuery = useObjectAssociations(token, multifamilyExplorer.objectId, multifamilyExplorer.entityType)
+  const workspaceConfigQuery = useWorkspaceConfig(token)
+  const escalationRulesQuery = useEscalationRules(token)
+  const notificationsQuery = useNotifications(token)
 
-  const fetchAnalytics = useCallback(async () => {
-    if (!token) return
-    setLoadingAnalytics(true)
-    try {
-      const { data } = await axios.get('/api/outbound/analytics/summary', authHeaders)
-      setAnalytics(data)
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load outbound analytics.')
-    } finally {
-      setLoadingAnalytics(false)
+  // Derived state from queries
+  const analytics = analyticsQuery.data ?? null
+  const leads = leadsQuery.data?.pages?.flatMap((page) => page.leads) ?? []
+  const hasMoreLeads = Boolean(leadsQuery.hasNextPage)
+  const fetchNextLeads = leadsQuery.fetchNextPage
+  const loadingLeads = leadsQuery.isLoading
+  const loadingAnalytics = analyticsQuery.isLoading
+  const draftInbox = draftInboxQuery.data?.drafts ?? []
+  const draftInboxSummary = draftInboxQuery.data?.summary ?? null
+  const loadingDraftInbox = draftInboxQuery.isLoading
+  const linkedinTaskBoard = linkedinTaskBoardQuery.data ?? null
+  const loadingLinkedinTaskBoard = linkedinTaskBoardQuery.isLoading
+  const savedViews = savedViewsQuery.data ?? []
+  const loadingSavedViews = savedViewsQuery.isLoading
+  const slaAlerts = slaAlertsQuery.data?.alerts ?? []
+  const slaSummary = slaAlertsQuery.data?.summary ?? null
+  const loadingSlaAlerts = slaAlertsQuery.isLoading
+  const campaigns = campaignsQuery.data ?? []
+  const loadingCampaigns = campaignsQuery.isLoading
+  const sequences = sequencesQuery.data ?? []
+  const loadingSequences = sequencesQuery.isLoading
+  const sequenceEnrollments = sequenceEnrollmentsQuery.data ?? []
+  const loadingSequenceEnrollments = sequenceEnrollmentsQuery.isLoading
+  const workflowRules = workflowRulesQuery.data ?? []
+  const loadingWorkflowRules = workflowRulesQuery.isLoading
+  const forecastSummary = forecastQuery.data ?? null
+  const loadingForecast = forecastQuery.isLoading
+  const attributionSummary = attributionQuery.data ?? null
+  const loadingAttribution = attributionQuery.isLoading
+  const dataQualityIssues = dataQualityQuery.data?.issues ?? []
+  const dataQualitySummary = dataQualityQuery.data?.summary ?? null
+  const loadingDataQuality = dataQualityQuery.isLoading
+  const dataQualityMergeOperations = mergeOpsQuery.data ?? []
+  const loadingDataQualityMergeOperations = mergeOpsQuery.isLoading
+  const multifamilyObjects = mfObjectsQuery.data ?? []
+  const loadingMultifamily = mfObjectsQuery.isLoading
+  const multifamilySummary = mfSummaryQuery.data ?? null
+  const multifamilyEntities = mfEntitiesQuery.data ?? []
+  const loadingMultifamilyEntities = mfEntitiesQuery.isLoading
+  const workspaceConfig = workspaceConfigQuery.data ?? null
+  const loadingWorkspaceConfig = workspaceConfigQuery.isLoading
+  const escalationRules = escalationRulesQuery.data ?? []
+  const loadingEscalations = escalationRulesQuery.isLoading
+  const notifications = notificationsQuery.data?.notifications ?? []
+  const notificationUnreadCount = toInt(notificationsQuery.data?.unreadCount)
+  const loadingNotifications = notificationsQuery.isLoading
+
+  // Effects for derived local state
+  useEffect(() => {
+    if (workspaceConfigQuery.data) {
+      const data = workspaceConfigQuery.data
+      setWorkspaceConfigForm({
+        senderName: data.senderName || '',
+        emailSignature: data.emailSignature || '',
+        dailyEmailLimit: data.dailyEmailLimit ?? 50,
+        dailyLinkedinLimit: data.dailyLinkedinLimit ?? 20,
+        slaDraftStaleHours: data.slaDraftStaleHours ?? 24,
+        slaLinkedinOverdueHours: data.slaLinkedinOverdueHours ?? 24,
+        slaPausedStaleDays: data.slaPausedStaleDays ?? 3,
+        slaHighScoreNotContactedDays: data.slaHighScoreNotContactedDays ?? 2,
+      })
     }
-  }, [authHeaders, token])
-
-  const fetchLeads = useCallback(async () => {
-    if (!token) return
-    setLoadingLeads(true)
-    try {
-      const params = new URLSearchParams()
-      if (filters.status) params.append('status', filters.status)
-      if (filters.search) params.append('search', filters.search)
-      if (filters.objectType) params.append('objectType', filters.objectType)
-      if (filters.objectId) params.append('objectId', filters.objectId)
-      params.append('minScore', String(filters.minScore))
-      params.append('limit', String(filters.limit))
-
-      const { data } = await axios.get(`/api/outbound/leads?${params.toString()}`, authHeaders)
-      setLeads(Array.isArray(data.leads) ? data.leads : [])
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load outbound leads.')
-    } finally {
-      setLoadingLeads(false)
-    }
-  }, [authHeaders, filters, token])
-
-  const fetchDraftInbox = useCallback(async () => {
-    if (!token) return
-    setLoadingDraftInbox(true)
-    try {
-      const { data } = await axios.get('/api/outbound/drafts/inbox?limit=200', authHeaders)
-      setDraftInbox(Array.isArray(data.drafts) ? data.drafts : [])
-      setDraftInboxSummary(data.summary || null)
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load draft inbox.')
-    } finally {
-      setLoadingDraftInbox(false)
-    }
-  }, [authHeaders, token])
-
-  const fetchLinkedinTaskBoard = useCallback(async () => {
-    if (!token) return
-    setLoadingLinkedinTaskBoard(true)
-    try {
-      const { data } = await axios.get('/api/outbound/linkedin/tasks/board?limit=200', authHeaders)
-      setLinkedinTaskBoard(data || null)
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load LinkedIn task board.')
-    } finally {
-      setLoadingLinkedinTaskBoard(false)
-    }
-  }, [authHeaders, token])
-
-  const fetchSavedViews = useCallback(async () => {
-    if (!token) return
-    setLoadingSavedViews(true)
-    try {
-      const { data } = await axios.get('/api/outbound/saved-views?scope=outbound_leads', authHeaders)
-      const views = Array.isArray(data.views) ? data.views : []
-      setSavedViews(views)
-      if (!selectedSavedViewId) {
-        const defaultView = views.find((view) => view.isDefault) || views[0]
-        if (defaultView) {
-          setSelectedSavedViewId(defaultView.id)
-        }
-      }
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load saved views.')
-    } finally {
-      setLoadingSavedViews(false)
-    }
-  }, [authHeaders, selectedSavedViewId, token])
-
-  const fetchSlaAlerts = useCallback(async () => {
-    if (!token) return
-    setLoadingSlaAlerts(true)
-    try {
-      const { data } = await axios.get('/api/outbound/sla/alerts', authHeaders)
-      setSlaAlerts(Array.isArray(data.alerts) ? data.alerts : [])
-      setSlaSummary(data.summary || null)
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load SLA alerts.')
-    } finally {
-      setLoadingSlaAlerts(false)
-    }
-  }, [authHeaders, token])
-
-  const fetchCampaigns = useCallback(async () => {
-    if (!token) return
-    setLoadingCampaigns(true)
-    try {
-      const { data } = await axios.get('/api/outbound/campaigns?limit=100', authHeaders)
-      setCampaigns(Array.isArray(data.campaigns) ? data.campaigns : [])
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load campaigns.')
-    } finally {
-      setLoadingCampaigns(false)
-    }
-  }, [authHeaders, token])
-
-  const fetchSequences = useCallback(async () => {
-    if (!token) return
-    setLoadingSequences(true)
-    try {
-      const { data } = await axios.get('/api/outbound/sequences', authHeaders)
-      setSequences(Array.isArray(data.sequences) ? data.sequences : [])
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load sequences.')
-    } finally {
-      setLoadingSequences(false)
-    }
-  }, [authHeaders, token])
-
-  const fetchSequenceEnrollments = useCallback(async () => {
-    if (!token) return
-    setLoadingSequenceEnrollments(true)
-    try {
-      const { data } = await axios.get('/api/outbound/sequences/enrollments?limit=200', authHeaders)
-      setSequenceEnrollments(Array.isArray(data.enrollments) ? data.enrollments : [])
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load sequence enrollments.')
-    } finally {
-      setLoadingSequenceEnrollments(false)
-    }
-  }, [authHeaders, token])
-
-  const fetchWorkflowRules = useCallback(async () => {
-    if (!token) return
-    setLoadingWorkflowRules(true)
-    try {
-      const { data } = await axios.get('/api/outbound/workflows/rules?includeDisabled=true', authHeaders)
-      setWorkflowRules(Array.isArray(data.rules) ? data.rules : [])
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load workflow rules.')
-    } finally {
-      setLoadingWorkflowRules(false)
-    }
-  }, [authHeaders, token])
-
-  const fetchForecastSummary = useCallback(async () => {
-    if (!token) return
-    setLoadingForecast(true)
-    try {
-      const { data } = await axios.get(`/api/outbound/forecast/summary?period=${forecastPeriod}`, authHeaders)
-      setForecastSummary(data)
-      if (data?.goals) {
-        setGoalForm((prev) => ({
-          ...prev,
-          targetMeetings: toInt(data.goals.targetMeetings, prev.targetMeetings),
-          targetOpportunities: toInt(data.goals.targetOpportunities, prev.targetOpportunities),
-          targetRevenue: toInt(data.goals.targetRevenue, prev.targetRevenue),
-          notes: data.goals.notes || '',
-        }))
-      }
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load forecast summary.')
-    } finally {
-      setLoadingForecast(false)
-    }
-  }, [authHeaders, token, forecastPeriod])
-
-  const fetchAttributionSummary = useCallback(async () => {
-    if (!token) return
-    setLoadingAttribution(true)
-    try {
-      const { data } = await axios.get(`/api/outbound/attribution/summary?period=${forecastPeriod}`, authHeaders)
-      setAttributionSummary(data)
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load attribution summary.')
-    } finally {
-      setLoadingAttribution(false)
-    }
-  }, [authHeaders, token, forecastPeriod])
-
-  const fetchDataQualityIssues = useCallback(async () => {
-    if (!token) return
-    setLoadingDataQuality(true)
-    try {
-      const { data } = await axios.get(
-        `/api/outbound/data-quality/issues?status=${encodeURIComponent(dataQualityStatusFilter)}&limit=200`,
-        authHeaders
-      )
-      setDataQualityIssues(Array.isArray(data.issues) ? data.issues : [])
-      setDataQualitySummary(data.summary || null)
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load data quality issues.')
-    } finally {
-      setLoadingDataQuality(false)
-    }
-  }, [authHeaders, token, dataQualityStatusFilter])
-
-  const fetchDataQualityMergeOperations = useCallback(async () => {
-    if (!token) return
-    setLoadingDataQualityMergeOperations(true)
-    try {
-      const { data } = await axios.get('/api/outbound/data-quality/merge-operations?limit=50', authHeaders)
-      setDataQualityMergeOperations(Array.isArray(data.mergeOperations) ? data.mergeOperations : [])
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load merge operations.')
-    } finally {
-      setLoadingDataQualityMergeOperations(false)
-    }
-  }, [authHeaders, token])
-
-  const fetchMultifamilyObjects = useCallback(async () => {
-    if (!token) return
-    setLoadingMultifamily(true)
-    try {
-      const [objectsRes, summaryRes] = await Promise.all([
-        axios.get('/api/outbound/multifamily/objects', authHeaders),
-        axios.get('/api/outbound/multifamily/summary', authHeaders),
-      ])
-      setMultifamilyObjects(Array.isArray(objectsRes.data.objects) ? objectsRes.data.objects : [])
-      setMultifamilySummary(summaryRes.data || null)
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load multifamily objects.')
-    } finally {
-      setLoadingMultifamily(false)
-    }
-  }, [authHeaders, token])
-
-  const fetchMultifamilyEntities = useCallback(async () => {
-    if (!token) return
-    setLoadingMultifamilyEntities(true)
-    try {
-      const params = new URLSearchParams()
-      params.append('entityType', multifamilyExplorer.entityType)
-      params.append('limit', '100')
-      if (multifamilyExplorer.search) {
-        params.append('search', multifamilyExplorer.search)
-      }
-
-      const { data } = await axios.get(`/api/outbound/multifamily/entities?${params.toString()}`, authHeaders)
-      setMultifamilyEntities(Array.isArray(data.entities) ? data.entities : [])
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load multifamily explorer entities.')
-    } finally {
-      setLoadingMultifamilyEntities(false)
-    }
-  }, [authHeaders, multifamilyExplorer.entityType, multifamilyExplorer.search, token])
-
-  const fetchSelectedObjectAssociations = useCallback(async () => {
-    if (!token || !multifamilyExplorer.objectId) {
-      setSelectedObjectAssociations([])
-      return
-    }
-
-    setLoadingSelectedObjectAssociations(true)
-    try {
-      const params = new URLSearchParams()
-      params.append('entityType', multifamilyExplorer.entityType)
-      const { data } = await axios.get(
-        `/api/outbound/multifamily/objects/${multifamilyExplorer.objectId}/associations?${params.toString()}`,
-        authHeaders
-      )
-      setSelectedObjectAssociations(Array.isArray(data.associations) ? data.associations : [])
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load object associations.')
-    } finally {
-      setLoadingSelectedObjectAssociations(false)
-    }
-  }, [authHeaders, multifamilyExplorer.entityType, multifamilyExplorer.objectId, token])
+  }, [workspaceConfigQuery.data])
 
   useEffect(() => {
-    fetchLeads()
-  }, [fetchLeads])
-
-  useEffect(() => {
-    fetchDraftInbox()
-  }, [fetchDraftInbox])
-
-  useEffect(() => {
-    fetchLinkedinTaskBoard()
-  }, [fetchLinkedinTaskBoard])
-
-  useEffect(() => {
-    fetchSavedViews()
-  }, [fetchSavedViews])
-
-  useEffect(() => {
-    fetchSlaAlerts()
-  }, [fetchSlaAlerts])
-
-  useEffect(() => {
-    fetchAnalytics()
-  }, [fetchAnalytics])
-
-  useEffect(() => {
-    fetchCampaigns()
-  }, [fetchCampaigns])
-
-  useEffect(() => {
-    fetchSequences()
-  }, [fetchSequences])
-
-  useEffect(() => {
-    fetchSequenceEnrollments()
-  }, [fetchSequenceEnrollments])
-
-  useEffect(() => {
-    fetchWorkflowRules()
-  }, [fetchWorkflowRules])
-
-  useEffect(() => {
-    fetchForecastSummary()
-  }, [fetchForecastSummary])
-
-  useEffect(() => {
-    fetchAttributionSummary()
-  }, [fetchAttributionSummary])
-
-  useEffect(() => {
-    fetchDataQualityIssues()
-  }, [fetchDataQualityIssues])
-
-  useEffect(() => {
-    fetchDataQualityMergeOperations()
-  }, [fetchDataQualityMergeOperations])
-
-  useEffect(() => {
-    fetchMultifamilyObjects()
-  }, [fetchMultifamilyObjects])
-
-  useEffect(() => {
-    const hasSelectedObject = multifamilyObjects.some((object) => object.id === multifamilyExplorer.objectId)
-    if ((!multifamilyExplorer.objectId || !hasSelectedObject) && multifamilyObjects.length > 0) {
-      setMultifamilyExplorer((prev) => ({
+    if (forecastQuery.data?.goals) {
+      const g = forecastQuery.data.goals
+      setGoalForm((prev) => ({
         ...prev,
-        objectId: multifamilyObjects[0].id,
+        targetMeetings: toInt(g.targetMeetings, prev.targetMeetings),
+        targetOpportunities: toInt(g.targetOpportunities, prev.targetOpportunities),
+        targetRevenue: toInt(g.targetRevenue, prev.targetRevenue),
+        notes: g.notes || '',
       }))
     }
+  }, [forecastQuery.data])
+
+  useEffect(() => {
+    setSelectedLeadMap((prev) => {
+      const next = {}
+      for (const lead of leads) {
+        if (prev[lead.id]) next[lead.id] = true
+      }
+      return next
+    })
+  }, [leads])
+
+  useEffect(() => {
+    const hasSelected = multifamilyObjects.some((o) => o.id === multifamilyExplorer.objectId)
+    if ((!multifamilyExplorer.objectId || !hasSelected) && multifamilyObjects.length > 0) {
+      setMultifamilyExplorer((prev) => ({ ...prev, objectId: multifamilyObjects[0].id }))
+    }
   }, [multifamilyExplorer.objectId, multifamilyObjects])
-
-  useEffect(() => {
-    fetchMultifamilyEntities()
-  }, [fetchMultifamilyEntities])
-
-  useEffect(() => {
-    fetchSelectedObjectAssociations()
-  }, [fetchSelectedObjectAssociations])
 
   useEffect(() => {
     setMultifamilyEntitySelection({})
@@ -606,76 +334,72 @@ export default function OutboundAutomation() {
   }, [leads, ruleTestLeadId])
 
   useEffect(() => {
-    fetchWorkspaceConfig()
-  }, [fetchWorkspaceConfig])
+    const saved = savedViewsQuery.data ?? []
+    if (!selectedSavedViewId && saved.length > 0) {
+      const defaultView = saved.find((v) => v.isDefault) || saved[0]
+      if (defaultView) setSelectedSavedViewId(defaultView.id)
+    }
+  }, [savedViewsQuery.data, selectedSavedViewId])
 
   useEffect(() => {
-    fetchEscalationRules()
-  }, [fetchEscalationRules])
-
-  useEffect(() => {
-    fetchNotifications()
-  }, [fetchNotifications])
-
-  useEffect(() => {
-    setSelectedLeadMap((prev) => {
-      const next = {}
-      for (const lead of leads) {
-        if (prev[lead.id]) next[lead.id] = true
-      }
-      return next
-    })
-  }, [leads])
-
-  const fetchWorkspaceConfig = useCallback(async () => {
-    if (!token) return
-    setLoadingWorkspaceConfig(true)
-    try {
-      const { data } = await axios.get('/api/outbound/workspace/config', authHeaders)
-      setWorkspaceConfig(data)
-      setWorkspaceConfigForm({
-        senderName: data.senderName || '',
-        emailSignature: data.emailSignature || '',
-        dailyEmailLimit: data.dailyEmailLimit ?? 50,
-        dailyLinkedinLimit: data.dailyLinkedinLimit ?? 20,
-        slaDraftStaleHours: data.slaDraftStaleHours ?? 24,
-        slaLinkedinOverdueHours: data.slaLinkedinOverdueHours ?? 24,
-        slaPausedStaleDays: data.slaPausedStaleDays ?? 3,
-        slaHighScoreNotContactedDays: data.slaHighScoreNotContactedDays ?? 2,
-      })
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load workspace config.')
-    } finally {
-      setLoadingWorkspaceConfig(false)
+    if (objectAssociationsQuery.data) {
+      setSelectedObjectAssociations(objectAssociationsQuery.data.associations ?? [])
     }
-  }, [authHeaders, token])
+  }, [objectAssociationsQuery.data])
 
-  const fetchEscalationRules = useCallback(async () => {
-    if (!token) return
-    setLoadingEscalations(true)
-    try {
-      const { data } = await axios.get('/api/outbound/sla/escalations', authHeaders)
-      setEscalationRules(Array.isArray(data) ? data : [])
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load escalation rules.')
-    } finally {
-      setLoadingEscalations(false)
-    }
-  }, [authHeaders, token])
+  // Mutations
+  const rescoreLead = useRescoreLead(token)
+  const bulkAction = useBulkAction(token)
+  const suppressLead = useSuppressLead(token)
+  const importCsv = useImportCsv(token)
+  const generateDraft = useGenerateDraft(token)
+  const approveDraft = useApproveDraft(token)
+  const sendDraft = useSendDraft(token)
+  const completeLinkedinTask = useCompleteLinkedinTask(token)
+  const rebalanceLinkedinTasks = useRebalanceLinkedinTasks(token)
+  const createSavedView = useCreateSavedView(token)
+  const deleteSavedView = useDeleteSavedView(token)
+  const createEscalation = useCreateEscalation(token)
+  const toggleEscalation = useToggleEscalation(token)
+  const runEscalations = useRunEscalations(token)
+  const createCampaign = useCreateCampaign(token)
+  const updateCampaignStatus = useUpdateCampaignStatus(token)
+  const enrollInSequence = useEnrollInSequence(token)
+  const changeSequenceState = useChangeSequenceState(token)
+  const bulkSequenceEnroll = useBulkSequenceEnroll(token)
+  const bulkSequenceUnenroll = useBulkSequenceUnenroll(token)
+  const createWorkflowRule = useCreateWorkflowRule(token)
+  const toggleWorkflowRule = useToggleWorkflowRule(token)
+  const testWorkflowRule = useTestWorkflowRule(token)
+  const saveForecastGoals = useSaveForecastGoals(token)
+  const updateDataQualityIssueStatus = useUpdateDataQualityIssueStatus(token)
+  const mergeDuplicateIssue = useMergeDuplicateIssue(token)
+  const createMultifamilyObject = useCreateMultifamilyObject(token)
+  const associateToObject = useAssociateToObject(token)
+  const bulkAssociateExplorerEntities = useBulkAssociateExplorerEntities(token)
+  const bulkMultifamilyTag = useBulkMultifamilyTag(token)
+  const saveWorkspaceConfig = useSaveWorkspaceConfig(token)
+  const markNotificationRead = useMarkNotificationRead(token)
+  const markAllNotificationsRead = useMarkAllNotificationsRead(token)
 
-  const fetchNotifications = useCallback(async () => {
-    if (!token) return
-    setLoadingNotifications(true)
-    try {
-      const { data } = await axios.get('/api/outbound/notifications', authHeaders)
-      setNotifications(Array.isArray(data.notifications) ? data.notifications : [])
-      setNotificationUnreadCount(toInt(data.unreadCount))
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load notifications.')
-    } finally {
-      setLoadingNotifications(false)
-    }
-  }, [authHeaders, token])
+  const qc = useQueryClient()
+  const refreshLeads = () => qc.invalidateQueries({ queryKey: ['outbound', 'leads'] })
+  const refreshDraftInbox = () => qc.invalidateQueries({ queryKey: ['outbound', 'draftInbox'] })
+  const refreshLinkedinTaskBoard = () => qc.invalidateQueries({ queryKey: ['outbound', 'linkedinTaskBoard'] })
+  const refreshSavedViews = () => qc.invalidateQueries({ queryKey: ['outbound', 'savedViews'] })
+  const refreshSlaAlerts = () => qc.invalidateQueries({ queryKey: ['outbound', 'slaAlerts'] })
+  const refreshAnalytics = () => qc.invalidateQueries({ queryKey: ['outbound', 'analytics'] })
+  const refreshCampaigns = () => qc.invalidateQueries({ queryKey: ['outbound', 'campaigns'] })
+  const refreshSequences = () => qc.invalidateQueries({ queryKey: ['outbound', 'sequences'] })
+  const refreshSequenceEnrollments = () => qc.invalidateQueries({ queryKey: ['outbound', 'sequenceEnrollments'] })
+  const refreshWorkflowRules = () => qc.invalidateQueries({ queryKey: ['outbound', 'workflowRules'] })
+  const refreshForecastSummary = () => qc.invalidateQueries({ queryKey: ['outbound', 'forecast'] })
+  const refreshAttributionSummary = () => qc.invalidateQueries({ queryKey: ['outbound', 'attribution'] })
+  const refreshDataQualityIssues = () => qc.invalidateQueries({ queryKey: ['outbound', 'dataQualityIssues'] })
+  const refreshDataQualityMergeOperations = () => qc.invalidateQueries({ queryKey: ['outbound', 'dataQualityMergeOps'] })
+  const refreshMultifamilyObjects = () => qc.invalidateQueries({ queryKey: ['outbound', 'multifamilyObjects'] })
+  const refreshMultifamilyEntities = () => qc.invalidateQueries({ queryKey: ['outbound', 'multifamilyEntities'] })
+  const refreshNotifications = () => qc.invalidateQueries({ queryKey: ['outbound', 'notifications'] })
 
   const runAction = async (key, fn) => {
     setBusyKey(key)
@@ -698,51 +422,22 @@ export default function OutboundAutomation() {
     }
 
     await runAction('import', async () => {
-      const form = new FormData()
-      form.append('file', csvFile)
-      form.append('sourceType', importConfig.sourceType)
-      form.append('sourceReference', importConfig.sourceReference)
-      form.append('sourceConfidence', String(importConfig.sourceConfidence))
-
-      const { data } = await axios.post('/api/outbound/leads/import/csv', form, authHeaders)
+      const { data } = await importCsv.mutateAsync({ file: csvFile, importConfig })
       setImportResult(data)
       setMessage(`Import complete: ${data.importedRows} imported, ${data.duplicateRows} duplicate, ${data.failedRows} failed.`)
-      await Promise.all([
-        fetchLeads(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
     })
   }
 
   const handleRescoreLead = async (leadId) => {
     await runAction(`score-${leadId}`, async () => {
-      await axios.post(`/api/outbound/leads/${leadId}/score`, {}, authHeaders)
+      await rescoreLead.mutateAsync(leadId)
       setMessage('Lead rescored.')
-      await Promise.all([
-        fetchLeads(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
     })
   }
 
   const handleGenerateDraft = async (lead, channel) => {
     await runAction(`draft-${channel}-${lead.id}`, async () => {
-      const { data } = await axios.post(
-        '/api/outbound/drafts/generate',
-        { leadId: lead.id, channel },
-        authHeaders
-      )
-
+      const { data } = await generateDraft.mutateAsync({ leadId: lead.id, channel })
       const nextDraft = {
         id: data.id,
         leadId: lead.id,
@@ -754,141 +449,41 @@ export default function OutboundAutomation() {
         linkedinTaskId: data.linkedinTaskId,
         linkedinTaskStatus: data.linkedinTaskStatus,
       }
-
       setSessionDrafts((prev) => [nextDraft, ...prev.filter((item) => item.id !== nextDraft.id)])
       setMessage(`${channel === 'email' ? 'Email' : 'LinkedIn'} draft generated.`)
-      await Promise.all([
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
     })
   }
 
   const handleApproveDraft = async (draftId) => {
     await runAction(`approve-${draftId}`, async () => {
-      const { data } = await axios.patch(`/api/outbound/drafts/${draftId}/approve`, {}, authHeaders)
-
-      setSessionDrafts((prev) =>
-        prev.map((item) =>
-          item.id === draftId
-            ? {
-                ...item,
-                status: data.status,
-                linkedinTaskStatus: item.channel === 'linkedin' ? 'approved' : item.linkedinTaskStatus,
-              }
-            : item
-        )
-      )
-
+      await approveDraft.mutateAsync(draftId)
       setMessage('Draft approved.')
-      await Promise.all([
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
     })
   }
 
   const handleCompleteLinkedInTask = async (draftOrTask) => {
     const taskId = draftOrTask.linkedinTaskId || draftOrTask.id
-    const draftId = draftOrTask.id && draftOrTask.linkedinTaskId ? draftOrTask.id : draftOrTask.draftId
-
     if (!taskId) {
       setError('No LinkedIn task id is available for this draft.')
       return
     }
-
     await runAction(`complete-task-${taskId}`, async () => {
-      await axios.post(
-        `/api/outbound/linkedin/tasks/${taskId}/complete`,
-        { notes: 'Completed from outbound automation page.' },
-        authHeaders
-      )
-
-      setSessionDrafts((prev) =>
-        prev.map((item) =>
-          item.id === draftId
-            ? {
-                ...item,
-                linkedinTaskStatus: 'completed',
-              }
-            : item
-        )
-      )
-
+      await completeLinkedinTask.mutateAsync({ taskId, notes: 'Completed from outbound automation page.' })
       setMessage('LinkedIn task marked complete.')
-      await Promise.all([
-        fetchLeads(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
     })
   }
 
   const handleSendEmailDraft = async (draft) => {
     await runAction(`send-email-${draft.id}`, async () => {
-      const { data } = await axios.post(`/api/outbound/drafts/${draft.id}/send`, {}, authHeaders)
-
-      setSessionDrafts((prev) =>
-        prev.map((item) =>
-          item.id === draft.id
-            ? {
-                ...item,
-                status: data?.draft?.status || 'sent',
-              }
-            : item
-        )
-      )
-
+      await sendDraft.mutateAsync(draft.id)
       setMessage('Email draft marked as sent.')
-      await Promise.all([
-        fetchLeads(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
-    })
-  }
-
-  const handleExport = async (type) => {
-    await runAction(`export-${type}`, async () => {
-      const endpoint =
-        type === 'events'
-          ? '/api/outbound/events/export?format=csv&days=30&limit=5000'
-          : '/api/outbound/audit/export?format=csv&days=30&limit=5000'
-
-      const response = await axios.get(endpoint, {
-        ...authHeaders,
-        responseType: 'blob',
-      })
-
-      const filename = type === 'events' ? 'outbound-events.csv' : 'outbound-audit.csv'
-      downloadBlobFile(response.data, filename)
-      setMessage(`${type === 'events' ? 'Event' : 'Audit'} export downloaded.`)
     })
   }
 
   const handleRebalanceLinkedinTasks = async () => {
     await runAction('linkedin-rebalance', async () => {
-      const { data } = await axios.post('/api/outbound/linkedin/tasks/rebalance', {}, authHeaders)
-      setMessage(
-        `LinkedIn queue rebalanced: ${toInt(data.rebalancedCount)} tasks across ${toInt(data.windowDays, 1)} day(s).`
-      )
-      await Promise.all([fetchLinkedinTaskBoard(), fetchDraftInbox()])
+      const { data } = await rebalanceLinkedinTasks.mutateAsync()
+      setMessage(`LinkedIn queue rebalanced: ${toInt(data?.rebalancedCount)} tasks across ${toInt(data?.windowDays, 1)} day(s).`)
     })
   }
 
@@ -898,7 +493,6 @@ export default function OutboundAutomation() {
       setError('Saved view not found.')
       return
     }
-
     const viewFilters = view.filters || {}
     const nextFilters = {
       status: viewFilters.status || '',
@@ -908,23 +502,9 @@ export default function OutboundAutomation() {
       objectId: viewFilters.objectId || '',
       limit: toInt(viewFilters.limit, 100),
     }
-
     setSelectedSavedViewId(view.id)
     setFilters(nextFilters)
-
-    await runAction(`saved-view-apply-${view.id}`, async () => {
-      const params = new URLSearchParams()
-      if (nextFilters.status) params.append('status', nextFilters.status)
-      if (nextFilters.search) params.append('search', nextFilters.search)
-      if (nextFilters.objectType) params.append('objectType', nextFilters.objectType)
-      if (nextFilters.objectId) params.append('objectId', nextFilters.objectId)
-      params.append('minScore', String(nextFilters.minScore))
-      params.append('limit', String(nextFilters.limit))
-
-      const { data } = await axios.get(`/api/outbound/leads?${params.toString()}`, authHeaders)
-      setLeads(Array.isArray(data.leads) ? data.leads : [])
-      setMessage(`Applied saved view: ${view.name}`)
-    })
+    setMessage(`Applied saved view: ${view.name}`)
   }
 
   const handleSaveCurrentView = async () => {
@@ -933,40 +513,30 @@ export default function OutboundAutomation() {
       setError('Saved view name is required.')
       return
     }
-
     await runAction('saved-view-create', async () => {
-      await axios.post(
-        '/api/outbound/saved-views',
-        {
-          scope: 'outbound_leads',
-          name,
-          filters,
-          isDefault: false,
-        },
-        authHeaders
-      )
+      await createSavedView.mutateAsync({
+        scope: 'outbound_leads',
+        name,
+        filters,
+        isDefault: false,
+      })
       setSavedViewName('')
-      await fetchSavedViews()
       setMessage('Saved outbound view created.')
     })
   }
 
   const handleDeleteSavedView = async (viewId) => {
     await runAction(`saved-view-delete-${viewId}`, async () => {
-      await axios.delete(`/api/outbound/saved-views/${viewId}`, authHeaders)
+      await deleteSavedView.mutateAsync(viewId)
       if (selectedSavedViewId === viewId) {
         setSelectedSavedViewId('')
       }
-      await fetchSavedViews()
       setMessage('Saved view deleted.')
     })
   }
 
   const handleToggleLeadSelected = (leadId, checked) => {
-    setSelectedLeadMap((prev) => ({
-      ...prev,
-      [leadId]: Boolean(checked),
-    }))
+    setSelectedLeadMap((prev) => ({ ...prev, [leadId]: Boolean(checked) }))
   }
 
   const handleToggleSelectAllVisibleLeads = (checked) => {
@@ -979,12 +549,13 @@ export default function OutboundAutomation() {
     })
   }
 
+  const selectedLeadIds = Object.keys(selectedLeadMap).filter((id) => selectedLeadMap[id])
+
   const handleRunBulkAction = async () => {
     if (!selectedLeadIds.length) {
       setError('Select at least one lead before running a bulk action.')
       return
     }
-
     const actionType = bulkActionForm.actionType
     const payload = {}
     if (actionType === 'set_status') {
@@ -998,74 +569,50 @@ export default function OutboundAutomation() {
       }
       payload.reason = reason
     }
-
     await runAction(`bulk-action-${actionType}`, async () => {
-      const { data } = await axios.post(
-        '/api/outbound/leads/bulk',
-        {
-          leadIds: selectedLeadIds,
-          actionType,
-          payload,
-        },
-        authHeaders
-      )
-
-      setMessage(`Bulk action "${actionType}" updated ${toInt(data.updatedCount)} lead(s).`)
+      await bulkAction.mutateAsync({ leadIds: selectedLeadIds, actionType, payload })
+      setMessage(`Bulk action "${actionType}" updated leads.`)
       setSelectedLeadMap({})
-      await Promise.all([
-        fetchLeads(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchSlaAlerts(),
-        fetchAnalytics(),
-        fetchSequenceEnrollments(),
-      ])
     })
   }
 
   const handleSaveWorkspaceConfig = async () => {
     await runAction('save-workspace-config', async () => {
-      const { data } = await axios.put('/api/outbound/workspace/config', workspaceConfigForm, authHeaders)
-      setWorkspaceConfig(data)
+      await saveWorkspaceConfig.mutateAsync(workspaceConfigForm)
       setMessage('Workspace configuration saved.')
     })
   }
 
   const handleCreateEscalation = async () => {
     await runAction('create-escalation', async () => {
-      await axios.post('/api/outbound/sla/escalations', { escalationType: newEscalationType }, authHeaders)
+      await createEscalation.mutateAsync(newEscalationType)
       setMessage(`Escalation rule for "${newEscalationType}" created.`)
-      await fetchEscalationRules()
     })
   }
 
   const handleToggleEscalation = async (rule) => {
     await runAction(`toggle-escalation-${rule.id}`, async () => {
-      await axios.patch(`/api/outbound/sla/escalations/${rule.id}`, { isEnabled: !rule.isEnabled }, authHeaders)
-      await fetchEscalationRules()
+      await toggleEscalation.mutateAsync({ ruleId: rule.id, isEnabled: !rule.isEnabled })
     })
   }
 
   const handleRunEscalations = async () => {
     await runAction('run-escalations', async () => {
-      const { data } = await axios.post('/api/outbound/sla/escalations/run', {}, authHeaders)
-      setMessage(`Escalations run: ${toInt(data.triggeredCount)} rule(s) triggered.`)
-      await fetchNotifications()
+      const { data } = await runEscalations.mutateAsync()
+      setMessage(`Escalations run: ${toInt(data?.triggeredCount)} rule(s) triggered.`)
     })
   }
 
   const handleMarkNotificationRead = async (notifId) => {
     await runAction(`mark-read-${notifId}`, async () => {
-      await axios.patch(`/api/outbound/notifications/${notifId}/read`, {}, authHeaders)
-      await fetchNotifications()
+      await markNotificationRead.mutateAsync(notifId)
     })
   }
 
   const handleMarkAllNotificationsRead = async () => {
     await runAction('mark-all-read', async () => {
-      const { data } = await axios.post('/api/outbound/notifications/read-all', {}, authHeaders)
-      setMessage(`Marked ${toInt(data.markedRead)} notification(s) as read.`)
-      await fetchNotifications()
+      const { data } = await markAllNotificationsRead.mutateAsync()
+      setMessage(`Marked ${toInt(data?.markedRead)} notification(s) as read.`)
     })
   }
 
@@ -1079,16 +626,12 @@ export default function OutboundAutomation() {
       return
     }
     await runAction('bulk-seq-enroll', async () => {
-      const { data } = await axios.post(
-        '/api/outbound/bulk/sequence-enroll',
-        { leadIds: selectedLeadIds, sequenceId: bulkAdvancedForm.sequenceId },
-        authHeaders
-      )
-      setMessage(
-        `Bulk enroll: ${toInt(data.enrolledCount)} enrolled, ${toInt(data.skippedCount)} skipped, ${toInt(data.errorCount)} errors.`
-      )
+      const { data } = await bulkSequenceEnroll.mutateAsync({
+        leadIds: selectedLeadIds,
+        sequenceId: bulkAdvancedForm.sequenceId,
+      })
+      setMessage(`Bulk enroll: ${toInt(data?.enrolledCount)} enrolled, ${toInt(data?.skippedCount)} skipped, ${toInt(data?.errorCount)} errors.`)
       setSelectedLeadMap({})
-      await Promise.all([fetchLeads(), fetchSequenceEnrollments()])
     })
   }
 
@@ -1098,16 +641,9 @@ export default function OutboundAutomation() {
       return
     }
     await runAction('bulk-seq-unenroll', async () => {
-      const { data } = await axios.post(
-        '/api/outbound/bulk/sequence-unenroll',
-        { leadIds: selectedLeadIds },
-        authHeaders
-      )
-      setMessage(
-        `Bulk unenroll: ${toInt(data.stoppedCount)} stopped, ${toInt(data.skippedCount)} skipped.`
-      )
+      const { data } = await bulkSequenceUnenroll.mutateAsync(selectedLeadIds)
+      setMessage(`Bulk unenroll: ${toInt(data?.stoppedCount)} stopped, ${toInt(data?.skippedCount)} skipped.`)
       setSelectedLeadMap({})
-      await Promise.all([fetchLeads(), fetchSequenceEnrollments()])
     })
   }
 
@@ -1121,12 +657,11 @@ export default function OutboundAutomation() {
       return
     }
     await runAction('bulk-mf-tag', async () => {
-      const { data } = await axios.post(
-        '/api/outbound/bulk/multifamily-tag',
-        { leadIds: selectedLeadIds, objectId: bulkAdvancedForm.multifamilyObjectId },
-        authHeaders
-      )
-      setMessage(`Bulk tag: ${toInt(data.taggedCount)} lead(s) tagged.`)
+      const { data } = await bulkMultifamilyTag.mutateAsync({
+        leadIds: selectedLeadIds,
+        objectId: bulkAdvancedForm.multifamilyObjectId,
+      })
+      setMessage(`Bulk tag: ${toInt(data?.taggedCount)} lead(s) tagged.`)
       setSelectedLeadMap({})
     })
   }
@@ -1137,17 +672,14 @@ export default function OutboundAutomation() {
       setError('Campaign name is required.')
       return
     }
-
     const channels = [
       campaignForm.includeEmail ? 'email' : null,
       campaignForm.includeLinkedIn ? 'linkedin' : null,
     ].filter(Boolean)
-
     if (channels.length === 0) {
       setError('Select at least one campaign channel.')
       return
     }
-
     await runAction('campaign-create', async () => {
       const payload = {
         name: campaignForm.name.trim(),
@@ -1161,35 +693,16 @@ export default function OutboundAutomation() {
         },
         leadIds: leads.map((lead) => lead.id),
       }
-
-      const { data } = await axios.post('/api/outbound/campaigns', payload, authHeaders)
+      const { data } = await createCampaign.mutateAsync(payload)
       setCampaignForm((prev) => ({ ...prev, name: '' }))
       setMessage(`Campaign created: ${data.name} (${data.addedMembers} members).`)
-      await Promise.all([
-        fetchCampaigns(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
     })
   }
 
   const handleCampaignStatus = async (campaignId, status) => {
     await runAction(`campaign-status-${campaignId}-${status}`, async () => {
-      await axios.patch(`/api/outbound/campaigns/${campaignId}/status`, { status }, authHeaders)
+      await updateCampaignStatus.mutateAsync({ campaignId, status })
       setMessage(`Campaign status updated to ${status}.`)
-      await Promise.all([
-        fetchCampaigns(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
     })
   }
 
@@ -1199,48 +712,20 @@ export default function OutboundAutomation() {
       setError('Select a sequence before enrolling.')
       return
     }
-
     await runAction(`enroll-sequence-${leadId}`, async () => {
-      await axios.post(
-        `/api/outbound/sequences/${sequenceId}/enroll`,
-        { leadId },
-        authHeaders
-      )
+      await enrollInSequence.mutateAsync({ sequenceId, leadId })
       setMessage('Lead enrolled in sequence.')
-      await Promise.all([
-        fetchSequenceEnrollments(),
-        fetchLeads(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
     })
   }
 
   const handleSequenceStateChange = async (enrollment, state) => {
     await runAction(`sequence-state-${enrollment.id}-${state}`, async () => {
-      await axios.patch(
-        `/api/outbound/sequences/enrollments/${enrollment.id}/state`,
-        {
-          state,
-          reason: state === 'paused' ? 'Paused from outbound automation UI' : undefined,
-        },
-        authHeaders
-      )
+      await changeSequenceState.mutateAsync({
+        enrollmentId: enrollment.id,
+        state,
+        reason: state === 'paused' ? 'Paused from outbound automation UI' : undefined,
+      })
       setMessage(`Sequence enrollment ${state}.`)
-      await Promise.all([
-        fetchSequenceEnrollments(),
-        fetchLeads(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
     })
   }
 
@@ -1248,7 +733,6 @@ export default function OutboundAutomation() {
     const cleanedType = String(type || '').trim()
     const cleanedValue = String(value || '').trim()
     if (!cleanedType) return null
-
     if (cleanedType === 'update_lead_status') return { type: cleanedType, config: { status: cleanedValue } }
     if (cleanedType === 'set_next_recommended_action') return { type: cleanedType, config: { value: cleanedValue } }
     if (cleanedType === 'create_reminder') return { type: cleanedType, config: { message: cleanedValue, dueDays: 1 } }
@@ -1257,7 +741,6 @@ export default function OutboundAutomation() {
     }
     if (cleanedType === 'log_event') return { type: cleanedType, config: { eventType: cleanedValue || 'workflow_rule_event' } }
     if (cleanedType === 'enroll_sequence') return { type: cleanedType, config: { sequenceId: cleanedValue } }
-
     return null
   }
 
@@ -1267,20 +750,17 @@ export default function OutboundAutomation() {
       setError('Workflow rule name is required.')
       return
     }
-
     const trueAction = buildRuleAction(workflowForm.trueActionType, workflowForm.trueActionValue)
     if (!trueAction) {
       setError('Primary (true) action is required.')
       return
     }
-
     const falseAction = buildRuleAction(workflowForm.falseActionType, workflowForm.falseActionValue)
     const rawConditionValue = String(workflowForm.conditionValue || '').trim()
     const parsedConditionValue =
-      rawConditionValue !== '' && /^-?\d+(\.\d+)?$/.test(rawConditionValue)
+      rawConditionValue !== '' && /^-?d+(.d+)?$/.test(rawConditionValue)
         ? Number(rawConditionValue)
         : rawConditionValue
-
     const payload = {
       name: workflowForm.name.trim(),
       triggerEvent: workflowForm.triggerEvent,
@@ -1301,92 +781,43 @@ export default function OutboundAutomation() {
       enabled: true,
       priority: 100,
     }
-
     await runAction('workflow-create', async () => {
-      await axios.post('/api/outbound/workflows/rules', payload, authHeaders)
+      await createWorkflowRule.mutateAsync(payload)
       setMessage('Workflow rule created.')
-      setWorkflowForm((prev) => ({
-        ...prev,
-        name: '',
-      }))
-      await fetchWorkflowRules()
+      setWorkflowForm((prev) => ({ ...prev, name: '' }))
     })
   }
 
   const handleToggleWorkflowRule = async (rule) => {
     await runAction(`workflow-toggle-${rule.id}`, async () => {
-      await axios.patch(
-        `/api/outbound/workflows/rules/${rule.id}`,
-        { enabled: !rule.enabled },
-        authHeaders
-      )
+      await toggleWorkflowRule.mutateAsync({ ruleId: rule.id, enabled: !rule.enabled })
       setMessage(`Workflow rule ${!rule.enabled ? 'enabled' : 'disabled'}.`)
-      await fetchWorkflowRules()
     })
   }
 
   const handleTestWorkflowRule = async (rule, applyActions) => {
     await runAction(`workflow-test-${rule.id}-${applyActions ? 'live' : 'dry'}`, async () => {
-      const { data } = await axios.post(
-        `/api/outbound/workflows/rules/${rule.id}/test`,
-        {
-          leadId: ruleTestLeadId || null,
-          applyActions,
-          eventData: {
-            source: 'outbound_ui',
-          },
-        },
-        authHeaders
-      )
-
-      setRuleTestResultById((prev) => ({
-        ...prev,
-        [rule.id]: data.result,
-      }))
-
-      setMessage(
-        applyActions
-          ? `Rule executed (${data.result?.status || 'unknown'}).`
-          : `Rule dry-run completed (${data.result?.status || 'unknown'}).`
-      )
-
-      await Promise.all([
-        fetchWorkflowRules(),
-        fetchLeads(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchSequenceEnrollments(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
+      const { data } = await testWorkflowRule.mutateAsync({
+        ruleId: rule.id,
+        leadId: ruleTestLeadId || null,
+        applyActions,
+      })
+      setRuleTestResultById((prev) => ({ ...prev, [rule.id]: data.result }))
+      setMessage(applyActions ? `Rule executed (${data.result?.status || 'unknown'}).` : `Rule dry-run completed (${data.result?.status || 'unknown'}).`)
     })
   }
 
   const handleSaveGoal = async (event) => {
     event.preventDefault()
-
     await runAction(`goal-save-${forecastPeriod}`, async () => {
-      await axios.put(
-        '/api/outbound/forecast/goals',
-        {
-          periodType: forecastPeriod,
-          targetMeetings: toInt(goalForm.targetMeetings),
-          targetOpportunities: toInt(goalForm.targetOpportunities),
-          targetRevenue: toInt(goalForm.targetRevenue),
-          notes: goalForm.notes || '',
-        },
-        authHeaders
-      )
+      await saveForecastGoals.mutateAsync({
+        periodType: forecastPeriod,
+        targetMeetings: toInt(goalForm.targetMeetings),
+        targetOpportunities: toInt(goalForm.targetOpportunities),
+        targetRevenue: toInt(goalForm.targetRevenue),
+        notes: goalForm.notes || '',
+      })
       setMessage('Forecast goals saved.')
-      await Promise.all([
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-      ])
     })
   }
 
@@ -1395,44 +826,18 @@ export default function OutboundAutomation() {
       const reason = suppressed
         ? window.prompt('Suppression reason (required):', lead.suppression_reason || 'Unsubscribe request') || ''
         : ''
-
       if (suppressed && !reason.trim()) {
         throw new Error('Suppression reason is required.')
       }
-
-      await axios.patch(
-        `/api/outbound/leads/${lead.id}/suppression`,
-        {
-          suppressed,
-          reason: suppressed ? reason.trim() : null,
-        },
-        authHeaders
-      )
-
+      await suppressLead.mutateAsync({ leadId: lead.id, suppressed, reason: suppressed ? reason.trim() : null })
       setMessage(suppressed ? 'Lead suppressed.' : 'Lead unsuppressed.')
-      await Promise.all([
-        fetchLeads(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchCampaigns(),
-        fetchSequenceEnrollments(),
-        fetchForecastSummary(),
-        fetchAttributionSummary(),
-        fetchDataQualityIssues(),
-      ])
     })
   }
 
   const handleDataQualityIssueStatus = async (issueId, status) => {
     await runAction(`data-quality-${issueId}-${status}`, async () => {
-      await axios.patch(
-        `/api/outbound/data-quality/issues/${issueId}/status`,
-        { status },
-        authHeaders
-      )
+      await updateDataQualityIssueStatus.mutateAsync({ issueId, status })
       setMessage(`Data quality issue marked as ${status}.`)
-      await Promise.all([fetchDataQualityIssues(), fetchLeads(), fetchDraftInbox(), fetchLinkedinTaskBoard()])
     })
   }
 
@@ -1441,38 +846,17 @@ export default function OutboundAutomation() {
     const candidateLeadIds = Array.isArray(issue?.details?.candidateLeadIds)
       ? issue.details.candidateLeadIds.filter((leadId) => leadId && leadId !== suggestedPrimaryLeadId)
       : []
-
     if (!suggestedPrimaryLeadId || candidateLeadIds.length === 0) {
       setError('Duplicate issue does not contain merge candidates yet. Refresh the queue and try again.')
       return
     }
-
     await runAction(`data-quality-merge-${issue.id}`, async () => {
-      const { data } = await axios.post(
-        `/api/outbound/data-quality/issues/${issue.id}/merge`,
-        {
-          primaryLeadId: suggestedPrimaryLeadId,
-          duplicateLeadIds: candidateLeadIds,
-        },
-        authHeaders
-      )
-
-      setMessage(
-        `Merged ${toInt(data?.mergeOperation?.mergedLeadCount)} duplicate lead(s) into ${data?.primaryLead?.name || 'primary lead'}.`
-      )
-      await Promise.all([
-        fetchDataQualityIssues(),
-        fetchDataQualityMergeOperations(),
-        fetchLeads(),
-        fetchDraftInbox(),
-        fetchLinkedinTaskBoard(),
-        fetchAnalytics(),
-        fetchCampaigns(),
-        fetchSequenceEnrollments(),
-        fetchMultifamilyObjects(),
-        fetchMultifamilyEntities(),
-        fetchSelectedObjectAssociations(),
-      ])
+      const { data } = await mergeDuplicateIssue.mutateAsync({
+        issueId: issue.id,
+        primaryLeadId: suggestedPrimaryLeadId,
+        duplicateLeadIds: candidateLeadIds,
+      })
+      setMessage(`Merged ${toInt(data?.mergeOperation?.mergedLeadCount)} duplicate lead(s) into ${data?.primaryLead?.name || 'primary lead'}.`)
     })
   }
 
@@ -1483,21 +867,15 @@ export default function OutboundAutomation() {
       setError('Multifamily object name is required.')
       return
     }
-
     await runAction(`multifamily-create-${multifamilyForm.objectType}`, async () => {
-      await axios.post(
-        '/api/outbound/multifamily/objects',
-        {
-          objectType: multifamilyForm.objectType,
-          name,
-          description: multifamilyForm.description || '',
-          metadata: {},
-        },
-        authHeaders
-      )
+      await createMultifamilyObject.mutateAsync({
+        objectType: multifamilyForm.objectType,
+        name,
+        description: multifamilyForm.description || '',
+        metadata: {},
+      })
       setMultifamilyForm((prev) => ({ ...prev, name: '', description: '' }))
       setMessage('Multifamily object created.')
-      await fetchMultifamilyObjects()
     })
   }
 
@@ -1507,139 +885,60 @@ export default function OutboundAutomation() {
       setError('Select object type and object before associating.')
       return
     }
-
     await runAction(`multifamily-associate-${leadId}`, async () => {
-      await axios.post(
-        `/api/outbound/multifamily/objects/${selection.objectId}/associations`,
-        {
-          entityType: 'outbound_lead',
-          entityId: leadId,
-          metadata: { source: 'outbound_ui' },
-        },
-        authHeaders
-      )
+      await associateToObject.mutateAsync({
+        objectId: selection.objectId,
+        payload: { entityType: 'outbound_lead', entityId: leadId, metadata: { source: 'outbound_ui' } },
+      })
       setMessage('Lead associated to multifamily object.')
-      await Promise.all([fetchMultifamilyObjects(), fetchLeads()])
     })
   }
 
   const handleToggleMultifamilyEntitySelection = (entityKey, checked) => {
-    setMultifamilyEntitySelection((prev) => ({
-      ...prev,
-      [entityKey]: Boolean(checked),
-    }))
+    setMultifamilyEntitySelection((prev) => ({ ...prev, [entityKey]: Boolean(checked) }))
   }
 
   const handleBulkAssociateExplorerEntities = async () => {
     if (!multifamilyExplorer.objectId) {
-      setError('Select a multifamily object before tagging entities.')
+      setError('Select a multifamily object first.')
       return
     }
-
-    const selectedKeys = Object.entries(multifamilyEntitySelection)
-      .filter(([, selected]) => Boolean(selected))
-      .map(([entityKey]) => entityKey)
-
-    if (selectedKeys.length === 0) {
+    const selectedKeys = Object.keys(multifamilyEntitySelection).filter((k) => multifamilyEntitySelection[k])
+    if (!selectedKeys.length) {
       setError('Select at least one entity to associate.')
       return
     }
-
-    await runAction(`multifamily-bulk-${multifamilyExplorer.entityType}`, async () => {
-      const payload =
-        multifamilyExplorer.entityType === 'company'
-          ? {
-              entityType: 'company',
-              companyNames: selectedKeys,
-              metadata: { source: 'outbound_ui_bulk' },
-            }
-          : {
-              entityType: multifamilyExplorer.entityType,
-              entityIds: selectedKeys,
-              metadata: { source: 'outbound_ui_bulk' },
-            }
-
-      const { data } = await axios.post(
-        `/api/outbound/multifamily/objects/${multifamilyExplorer.objectId}/associations/bulk`,
-        payload,
-        authHeaders
-      )
-
-      setMessage(`Tagged ${toInt(data.upsertedCount)} ${multifamilyExplorer.entityType}(s) to selected object.`)
+    await runAction('bulk-mf-associate', async () => {
+      await bulkAssociateExplorerEntities.mutateAsync({
+        objectId: multifamilyExplorer.objectId,
+        payload: {
+          entityType: multifamilyExplorer.entityType,
+          entityIds: selectedKeys,
+          metadata: { source: 'outbound_ui' },
+        },
+      })
+      setMessage(`Associated ${selectedKeys.length} entities.`)
       setMultifamilyEntitySelection({})
-      await Promise.all([fetchMultifamilyObjects(), fetchMultifamilyEntities(), fetchSelectedObjectAssociations(), fetchLeads()])
     })
   }
 
-  const leadsStats = analytics?.leads || {}
-  const emailLimit = analytics?.dailySendLimits?.email
-  const linkedinLimit = analytics?.dailySendLimits?.linkedin
-  const campaignStats = analytics?.campaigns || {}
-  const forecastBuckets = forecastSummary?.buckets || {}
-  const forecastGoals = forecastSummary?.goals || null
-  const forecastGap = forecastSummary?.gapToGoal || null
-  const forecastProgress = forecastSummary?.progress || null
-  const attributionOverview = attributionSummary?.overview || {}
-  const attributionSources = Array.isArray(attributionSummary?.bySource) ? attributionSummary.bySource : []
-  const attributionSequences = Array.isArray(attributionSummary?.bySequence) ? attributionSummary.bySequence : []
-  const attributionPersonas = Array.isArray(attributionSummary?.byPersona) ? attributionSummary.byPersona : []
-  const draftInboxCounts = draftInboxSummary || {}
-  const linkedinWorkload = linkedinTaskBoard?.workload || {}
-  const linkedinBoardBuckets = linkedinTaskBoard?.board || {}
-  const linkedinApprovedTasks = Array.isArray(linkedinBoardBuckets.approved) ? linkedinBoardBuckets.approved : []
-  const linkedinDraftedTasks = Array.isArray(linkedinBoardBuckets.drafted) ? linkedinBoardBuckets.drafted : []
-  const linkedinPendingTasks = Array.isArray(linkedinBoardBuckets.pending) ? linkedinBoardBuckets.pending : []
-  const linkedinCompletedTasks = Array.isArray(linkedinBoardBuckets.completed) ? linkedinBoardBuckets.completed : []
-  const dataQualityOpenCount = toInt(dataQualitySummary?.open_count)
-  const dataQualityOpenBlockingCount = toInt(dataQualitySummary?.open_blocking_count)
-  const dataQualityResolvedCount = toInt(dataQualitySummary?.resolved_count)
-  const dataQualityMergeCount30d = toInt(dataQualitySummary?.merge_count_30d)
-  const slaCounts = slaSummary || {}
-  const selectedLeadIds = useMemo(
-    () =>
-      Object.entries(selectedLeadMap)
-        .filter(([, selected]) => Boolean(selected))
-        .map(([leadId]) => leadId),
-    [selectedLeadMap]
-  )
-  const allVisibleLeadsSelected = leads.length > 0 && leads.every((lead) => Boolean(selectedLeadMap[lead.id]))
-  const multifamilyObjectCounts = multifamilySummary?.objectCounts || {}
-  const multifamilyAssociationCounts = multifamilySummary?.associationCounts || {}
-  const multifamilyObjectsByType = useMemo(() => {
-    const map = {
-      portfolio: [],
-      property: [],
-      tech_stack: [],
-      initiative: [],
-    }
-    for (const object of multifamilyObjects) {
-      if (map[object.objectType]) {
-        map[object.objectType].push(object)
-      }
-    }
-    return map
-  }, [multifamilyObjects])
-  const selectedMultifamilyEntityKeys = useMemo(
-    () =>
-      Object.entries(multifamilyEntitySelection)
-        .filter(([, selected]) => Boolean(selected))
-        .map(([entityKey]) => entityKey),
-    [multifamilyEntitySelection]
-  )
-  const selectedMultifamilyObject = useMemo(
-    () => multifamilyObjects.find((object) => object.id === multifamilyExplorer.objectId) || null,
-    [multifamilyExplorer.objectId, multifamilyObjects]
-  )
-  const filterScopedObjects = filters.objectType ? multifamilyObjectsByType[filters.objectType] || [] : []
-  const openEnrollmentByLead = useMemo(() => {
-    const map = {}
-    for (const enrollment of sequenceEnrollments) {
-      if (enrollment.status === 'active' || enrollment.status === 'paused') {
-        map[enrollment.lead_id] = enrollment
-      }
-    }
-    return map
-  }, [sequenceEnrollments])
+  const handleExport = async (type) => {
+    // Keep axios import for blob exports until api layer supports it fully
+    const axios = (await import('axios')).default
+    await runAction(`export-${type}`, async () => {
+      const endpoint =
+        type === 'events'
+          ? '/api/outbound/events/export?format=csv&days=30&limit=5000'
+          : '/api/outbound/audit/export?format=csv&days=30&limit=5000'
+      const response = await axios.get(endpoint, {
+        headers: { Authorization: `Bearer ${token}` },
+        responseType: 'blob',
+      })
+      const filename = type === 'events' ? 'outbound-events.csv' : 'outbound-audit.csv'
+      downloadBlobFile(response.data, filename)
+      setMessage(`${type === 'events' ? 'Event' : 'Audit'} export downloaded.`)
+    })
+  }
 
   return (
     <div className="p-8 space-y-6">
@@ -1667,22 +966,22 @@ export default function OutboundAutomation() {
           </button>
           <button
             onClick={() => {
-              fetchLeads()
-              fetchDraftInbox()
-              fetchLinkedinTaskBoard()
-              fetchSavedViews()
-              fetchSlaAlerts()
-              fetchAnalytics()
-              fetchCampaigns()
-              fetchSequences()
-              fetchSequenceEnrollments()
-              fetchWorkflowRules()
-              fetchForecastSummary()
-              fetchAttributionSummary()
-              fetchDataQualityIssues()
-              fetchDataQualityMergeOperations()
-              fetchMultifamilyObjects()
-              fetchMultifamilyEntities()
+              refreshLeads()
+              refreshDraftInbox()
+              refreshLinkedinTaskBoard()
+              refreshSavedViews()
+              refreshSlaAlerts()
+              refreshAnalytics()
+              refreshCampaigns()
+              refreshSequences()
+              refreshSequenceEnrollments()
+              refreshWorkflowRules()
+              refreshForecastSummary()
+              refreshAttributionSummary()
+              refreshDataQualityIssues()
+              refreshDataQualityMergeOperations()
+              refreshMultifamilyObjects()
+              refreshMultifamilyEntities()
               fetchSelectedObjectAssociations()
             }}
             className="text-sm bg-teal text-white px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
@@ -1709,7 +1008,7 @@ export default function OutboundAutomation() {
             <p className="text-xs text-brand-gray mt-0.5">Save and reapply outbound filters instantly.</p>
           </div>
           <button
-            onClick={fetchSavedViews}
+            onClick={refreshSavedViews}
             className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
           >
             {loadingSavedViews ? 'Refreshing...' : 'Refresh Views'}
@@ -1770,7 +1069,7 @@ export default function OutboundAutomation() {
             <p className="text-xs text-brand-gray mt-0.5">Highlights overdue work and at-risk outreach tasks.</p>
           </div>
           <button
-            onClick={fetchSlaAlerts}
+            onClick={refreshSlaAlerts}
             className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
           >
             {loadingSlaAlerts ? 'Refreshing...' : 'Refresh Alerts'}
@@ -2143,8 +1442,8 @@ export default function OutboundAutomation() {
           </div>
           <button
             onClick={() => {
-              fetchMultifamilyObjects()
-              fetchMultifamilyEntities()
+              refreshMultifamilyObjects()
+              refreshMultifamilyEntities()
               fetchSelectedObjectAssociations()
             }}
             className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
@@ -2320,7 +1619,7 @@ export default function OutboundAutomation() {
               placeholder={`Search ${multifamilyExplorer.entityType}s`}
             />
             <button
-              onClick={fetchMultifamilyEntities}
+              onClick={refreshMultifamilyEntities}
               className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-700 hover:bg-gray-50"
             >
               Search
@@ -2399,7 +1698,7 @@ export default function OutboundAutomation() {
             <p className="text-xs font-semibold text-navy mb-2">
               Existing {multifamilyExplorer.entityType} associations for selected object
             </p>
-            {loadingSelectedObjectAssociations ? (
+            {objectAssociationsQuery.isLoading ? (
               <p className="text-xs text-brand-gray">Loading object associations...</p>
             ) : selectedObjectAssociations.length === 0 ? (
               <p className="text-xs text-brand-gray">No associations yet for this object/entity type.</p>
@@ -2437,7 +1736,7 @@ export default function OutboundAutomation() {
               <option value="dismissed">Dismissed</option>
             </select>
             <button
-              onClick={fetchDataQualityIssues}
+              onClick={refreshDataQualityIssues}
               className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
             >
               Refresh Queue
@@ -2563,7 +1862,7 @@ export default function OutboundAutomation() {
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs font-semibold text-navy">Recent Merge Operations</p>
             <button
-              onClick={fetchDataQualityMergeOperations}
+              onClick={refreshDataQualityMergeOperations}
               className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-700 hover:bg-gray-50"
             >
               Refresh Merges
@@ -3104,7 +2403,7 @@ export default function OutboundAutomation() {
           </select>
 
           <button
-            onClick={fetchLeads}
+            onClick={refreshLeads}
             className="border border-teal text-teal rounded-lg px-3 py-2 text-sm font-semibold hover:bg-teal/5"
           >
             Apply Filters
@@ -3210,204 +2509,45 @@ export default function OutboundAutomation() {
 
         {loadingLeads || loadingAnalytics ? (
           <div className="text-sm text-brand-gray">Loading outbound data...</div>
-        ) : leads.length === 0 ? (
-          <div className="text-sm text-brand-gray">No leads found with the current filters.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
-                  <th className="py-2 pr-3">
-                    <input
-                      type="checkbox"
-                      checked={allVisibleLeadsSelected}
-                      onChange={(event) => handleToggleSelectAllVisibleLeads(event.target.checked)}
-                    />
-                  </th>
-                  <th className="py-2 pr-3">Lead</th>
-                  <th className="py-2 pr-3">Company</th>
-                  <th className="py-2 pr-3">Score</th>
-                  <th className="py-2 pr-3">Status</th>
-                  <th className="py-2 pr-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {leads.map((lead) => (
-                  <tr key={lead.id}>
-                    <td className="py-3 pr-3 align-top">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(selectedLeadMap[lead.id])}
-                        onChange={(event) => handleToggleLeadSelected(lead.id, event.target.checked)}
-                      />
-                    </td>
-                    <td className="py-3 pr-3">
-                      <p className="font-semibold text-navy">{lead.name}</p>
-                      <p className="text-xs text-brand-gray">{lead.email || 'No email'}</p>
-                      {toInt(lead.open_issue_count) > 0 ? (
-                        <p className="text-xs text-amber-700 mt-1">
-                          Data quality issues: {toInt(lead.open_issue_count)}
-                          {toInt(lead.open_blocking_issue_count) > 0 ? ` (${toInt(lead.open_blocking_issue_count)} blocking)` : ''}
-                        </p>
-                      ) : null}
-                    </td>
-                    <td className="py-3 pr-3">
-                      <p className="text-navy">{lead.company || 'Unknown company'}</p>
-                      <p className="text-xs text-brand-gray">{lead.title || 'No title'}</p>
-                    </td>
-                    <td className="py-3 pr-3">
-                      <p className="font-semibold text-navy">{toInt(lead.total_score)}</p>
-                      <p className="text-xs text-brand-gray">
-                        Fit {toInt(lead.fit_score)} | Intent {toInt(lead.intent_score)}
-                      </p>
-                    </td>
-                    <td className="py-3 pr-3">{renderStatusBadge(lead.status)}</td>
-                    <td className="py-3 pr-3">
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          onClick={() => handleRescoreLead(lead.id)}
-                          disabled={busyKey === `score-${lead.id}`}
-                          className="text-xs border border-gray-200 rounded px-2 py-1 hover:bg-gray-50 disabled:opacity-60"
-                        >
-                          Rescore
-                        </button>
-                        {sequences.length > 0 && (
-                          <>
-                            <select
-                              value={selectedSequenceByLead[lead.id] || ''}
-                              onChange={(event) =>
-                                setSelectedSequenceByLead((prev) => ({
-                                  ...prev,
-                                  [lead.id]: event.target.value,
-                                }))
-                              }
-                              className="text-xs border border-gray-200 rounded px-2 py-1 text-gray-700"
-                            >
-                              <option value="">Select sequence</option>
-                              {sequences
-                                .filter((sequence) => toInt(sequence.step_count) > 0)
-                                .map((sequence) => (
-                                  <option key={sequence.id} value={sequence.id}>
-                                    {sequence.name}
-                                  </option>
-                                ))}
-                            </select>
-                            <button
-                              onClick={() => handleEnrollLeadInSequence(lead.id)}
-                              disabled={
-                                busyKey === `enroll-sequence-${lead.id}` ||
-                                !selectedSequenceByLead[lead.id] ||
-                                Boolean(openEnrollmentByLead[lead.id]) ||
-                                toInt(lead.open_blocking_issue_count) > 0
-                              }
-                              className="text-xs border border-indigo-200 text-indigo-700 rounded px-2 py-1 hover:bg-indigo-50 disabled:opacity-60"
-                              title={
-                                openEnrollmentByLead[lead.id]
-                                  ? `Already enrolled in ${openEnrollmentByLead[lead.id].sequence_name}`
-                                  : toInt(lead.open_blocking_issue_count) > 0
-                                  ? 'Fix blocking data quality issues before enrollment.'
-                                  : ''
-                              }
-                            >
-                              {openEnrollmentByLead[lead.id]
-                                ? 'Enrolled'
-                                : toInt(lead.open_blocking_issue_count) > 0
-                                ? 'Blocked'
-                                : 'Enroll'}
-                            </button>
-                          </>
-                        )}
-                        {multifamilyObjects.length > 0 && (
-                          <>
-                            <select
-                              value={leadObjectSelection[lead.id]?.objectType || 'portfolio'}
-                              onChange={(event) =>
-                                setLeadObjectSelection((prev) => ({
-                                  ...prev,
-                                  [lead.id]: {
-                                    objectType: event.target.value,
-                                    objectId: '',
-                                  },
-                                }))
-                              }
-                              className="text-xs border border-gray-200 rounded px-2 py-1 text-gray-700"
-                            >
-                              {MULTIFAMILY_OBJECT_TYPES.map((typeOption) => (
-                                <option key={typeOption.value} value={typeOption.value}>
-                                  {typeOption.label}
-                                </option>
-                              ))}
-                            </select>
-                            <select
-                              value={leadObjectSelection[lead.id]?.objectId || ''}
-                              onChange={(event) =>
-                                setLeadObjectSelection((prev) => ({
-                                  ...prev,
-                                  [lead.id]: {
-                                    objectType: prev[lead.id]?.objectType || 'portfolio',
-                                    objectId: event.target.value,
-                                  },
-                                }))
-                              }
-                              className="text-xs border border-gray-200 rounded px-2 py-1 text-gray-700"
-                            >
-                              <option value="">Select object</option>
-                              {(multifamilyObjectsByType[leadObjectSelection[lead.id]?.objectType || 'portfolio'] || []).map((object) => (
-                                <option key={object.id} value={object.id}>
-                                  {object.name}
-                                </option>
-                              ))}
-                            </select>
-                            <button
-                              onClick={() => handleAssociateObjectToLead(lead.id)}
-                              disabled={
-                                busyKey === `multifamily-associate-${lead.id}` ||
-                                !Boolean(leadObjectSelection[lead.id]?.objectId)
-                              }
-                              className="text-xs border border-slate-200 text-slate-700 rounded px-2 py-1 hover:bg-slate-50 disabled:opacity-60"
-                            >
-                              Tag
-                            </button>
-                          </>
-                        )}
-                        <button
-                          onClick={() => handleGenerateDraft(lead, 'email')}
-                          disabled={busyKey === `draft-email-${lead.id}`}
-                          className="text-xs border border-blue-200 text-blue-700 rounded px-2 py-1 hover:bg-blue-50 disabled:opacity-60"
-                        >
-                          Draft Email
-                        </button>
-                        <button
-                          onClick={() => handleGenerateDraft(lead, 'linkedin')}
-                          disabled={busyKey === `draft-linkedin-${lead.id}`}
-                          className="text-xs border border-amber-200 text-amber-700 rounded px-2 py-1 hover:bg-amber-50 disabled:opacity-60"
-                        >
-                          Draft LinkedIn
-                        </button>
-                        {lead.status === 'suppressed' ? (
-                          <button
-                            onClick={() => handleSuppression(lead, false)}
-                            disabled={busyKey === `suppression-${lead.id}-off`}
-                            className="text-xs border border-emerald-200 text-emerald-700 rounded px-2 py-1 hover:bg-emerald-50 disabled:opacity-60"
-                          >
-                            Unsuppress
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleSuppression(lead, true)}
-                            disabled={busyKey === `suppression-${lead.id}-on`}
-                            className="text-xs border border-rose-200 text-rose-700 rounded px-2 py-1 hover:bg-rose-50 disabled:opacity-60"
-                          >
-                            Suppress
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            <LeadTable
+              leads={leads}
+              selectedLeadMap={selectedLeadMap}
+              onToggleLeadSelected={handleToggleLeadSelected}
+              onToggleSelectAllVisibleLeads={handleToggleSelectAllVisibleLeads}
+              allVisibleLeadsSelected={allVisibleLeadsSelected}
+              sequences={sequences}
+              openEnrollmentByLead={openEnrollmentByLead}
+              selectedSequenceByLead={selectedSequenceByLead}
+              onSelectSequenceByLead={(leadId, sequenceId) =>
+                setSelectedSequenceByLead((prev) => ({ ...prev, [leadId]: sequenceId }))
+              }
+              multifamilyObjects={multifamilyObjects}
+              multifamilyObjectsByType={multifamilyObjectsByType}
+              leadObjectSelection={leadObjectSelection}
+              onLeadObjectSelectionChange={(leadId, selection) =>
+                setLeadObjectSelection((prev) => ({ ...prev, [leadId]: selection }))
+              }
+              busyKey={busyKey}
+              onRescoreLead={handleRescoreLead}
+              onEnrollLeadInSequence={handleEnrollLeadInSequence}
+              onAssociateObjectToLead={handleAssociateObjectToLead}
+              onGenerateDraft={handleGenerateDraft}
+              onSuppression={handleSuppression}
+            />
+            {hasMoreLeads && (
+              <div className="pt-4 text-center">
+                <button
+                  onClick={() => fetchNextLeads()}
+                  disabled={leadsQuery.isFetchingNextPage}
+                  className="text-sm border border-gray-200 rounded-lg px-4 py-2 text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+                >
+                  {leadsQuery.isFetchingNextPage ? 'Loading...' : 'Load more leads'}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -3418,7 +2558,7 @@ export default function OutboundAutomation() {
             <p className="text-xs text-brand-gray mt-0.5">Persistent draft queue across sessions and devices.</p>
           </div>
           <button
-            onClick={fetchDraftInbox}
+            onClick={refreshDraftInbox}
             className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
           >
             Refresh Inbox
@@ -3511,7 +2651,7 @@ export default function OutboundAutomation() {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={fetchLinkedinTaskBoard}
+              onClick={refreshLinkedinTaskBoard}
               className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
             >
               Refresh Board
@@ -3838,7 +2978,7 @@ export default function OutboundAutomation() {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={fetchNotifications}
+              onClick={refreshNotifications}
               className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
             >
               {loadingNotifications ? 'Refreshing...' : 'Refresh'}
