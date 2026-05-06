@@ -3107,7 +3107,7 @@ router.post('/data-quality/issues/:id/merge', async (req, res) => {
 
     await client.query(
       `UPDATE multifamily_object_associations
-       SET entity_id = $1,
+       SET entity_id = $1::uuid,
            target_key = $1::text,
            updated_at = NOW()
        WHERE user_id = $2
