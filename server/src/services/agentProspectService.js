@@ -19,10 +19,11 @@ function normalizeProspect(prospect = {}, index = 0) {
   };
 }
 
-async function importProspects({ userId, userEmail = 'Agent', prompt = '', prospects = [] }) {
+async function importProspects({ userId, auditActor = 'Agent', prompt = '', prospects = [] }) {
   const createdContacts = [];
+  const normalizedProspects = prospects.map((item, index) => normalizeProspect(item, index));
 
-  for (const prospect of prospects.map((item, index) => normalizeProspect(item, index))) {
+  for (const prospect of normalizedProspects) {
     const notesContext = prospect.notes || prompt;
     const contactResult = await pool.query(
       `INSERT INTO contacts (user_id, name, email, phone, company, type, service_line, notes) 
@@ -52,7 +53,7 @@ async function importProspects({ userId, userEmail = 'Agent', prompt = '', prosp
       ]
     );
 
-    logAction(userId, userEmail, 'create', 'contact', newContact.id, newContact.name);
+    logAction(userId, auditActor, 'create', 'contact', newContact.id, newContact.name);
     createdContacts.push(newContact);
   }
 

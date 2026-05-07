@@ -9,7 +9,7 @@ const formatServiceLine = (value) => {
 
 const withLocalIds = (prospects = []) => prospects.map((prospect, index) => ({
   ...prospect,
-  localId: `${prospect.email || prospect.company || prospect.name || 'prospect'}-${index}`,
+  localId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${index}-${prospect.email || prospect.company || prospect.name || 'prospect'}`,
 }))
 
 const toImportPayload = ({ name, email, phone, company, service_line, notes }) => ({

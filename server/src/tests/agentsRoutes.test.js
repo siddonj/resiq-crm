@@ -62,7 +62,7 @@ describe('agent prospect routes', () => {
     expect(res.status).toBe(201);
     expect(importProspects).toHaveBeenCalledWith({
       userId: 'user-1',
-      userEmail: 'owner@example.com',
+      auditActor: 'owner@example.com',
       prompt: 'Find property management companies',
       prospects,
     });
