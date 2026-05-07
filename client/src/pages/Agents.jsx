@@ -37,13 +37,14 @@ export default function Agents() {
 
   const handleProspect = async (e) => {
     e.preventDefault()
-    if (!prompt) return
+    const trimmedPrompt = prompt.trim()
+    if (!trimmedPrompt) return
     setLoading(true)
     setStatus('Agent is finding matching contacts...')
     setProspects([])
     setSelectedProspectIds([])
     try {
-      const { data } = await axios.post('/api/agents/prospect', { prompt: prompt.trim() }, authHeaders)
+      const { data } = await axios.post('/api/agents/prospect', { prompt: trimmedPrompt }, authHeaders)
       const generatedProspects = withLocalIds(data.prospects || [])
       setProspects(generatedProspects)
       setSelectedProspectIds(generatedProspects.map(prospect => prospect.localId))
@@ -61,6 +62,7 @@ export default function Agents() {
   }
 
   const handleImportSelected = async () => {
+    const trimmedPrompt = prompt.trim()
     const selectedSet = new Set(selectedProspectIds)
     const selectedProspects = prospects
       .filter(prospect => selectedSet.has(prospect.localId))
@@ -74,7 +76,7 @@ export default function Agents() {
     setImporting(true)
     try {
       const { data } = await axios.post('/api/agents/prospect/import', {
-        prompt: prompt.trim(),
+        prompt: trimmedPrompt,
         prospects: selectedProspects,
       }, authHeaders)
       const remainingProspects = prospects.filter(prospect => !selectedSet.has(prospect.localId))

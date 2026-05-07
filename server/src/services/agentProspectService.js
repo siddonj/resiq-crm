@@ -22,7 +22,7 @@ function normalizeProspect(prospect = {}, index = 0) {
 async function importProspects({ userId, userEmail = 'Agent', prompt = '', prospects = [] }) {
   const createdContacts = [];
 
-  for (const prospect of prospects.map(normalizeProspect)) {
+  for (const prospect of prospects.map((item, index) => normalizeProspect(item, index))) {
     const notesContext = prospect.notes || prompt;
     const contactResult = await pool.query(
       `INSERT INTO contacts (user_id, name, email, phone, company, type, service_line, notes) 
