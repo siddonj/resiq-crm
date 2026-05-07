@@ -1,6 +1,7 @@
 const express = require('express');
 const auth = require('../middleware/auth');
-const { agentQueue } = require('../workers/agentWorker');
+const { generateProspects } = require('../services/agentService');
+const { importProspects } = require('../services/agentProspectService');
 
 const router = express.Router();
 
@@ -16,7 +17,7 @@ function aiConfigMissingResponse(res) {
 
 // Trigger a new AI prospecting job
 router.post('/prospect', auth, async (req, res) => {
-  const { prompt } = req.body;
+  const prompt = typeof req.body.prompt === 'string' ? req.body.prompt.trim() : '';
   if (!prompt) {
     return res.status(400).json({ error: 'Prompt is required' });
   }
@@ -26,16 +27,37 @@ router.post('/prospect', auth, async (req, res) => {
   }
 
   try {
-    // Add job to Bull queue
-    await agentQueue.add('prospect', {
-      prompt,
+    const prospects = await generateProspects(prompt);
+    res.json({ prospects });
+  } catch (error) {
+    console.error('Error generating agent prospects:', error);
+    res.status(500).json({ error: 'Failed to generate agent prospects' });
+  }
+});
+
+router.post('/prospect/import', auth, async (req, res) => {
+  const prompt = typeof req.body.prompt === 'string' ? req.body.prompt.trim() : '';
+  const prospects = Array.isArray(req.body.prospects) ? req.body.prospects : [];
+
+  if (prospects.length === 0) {
+    return res.status(400).json({ error: 'At least one prospect is required' });
+  }
+
+  try {
+    const contacts = await importProspects({
       userId: req.user.id,
+      userEmail: req.user.email,
+      prompt,
+      prospects,
     });
 
-    res.json({ message: 'Prospecting agent started successfully in the background.' });
+    res.status(201).json({
+      importedCount: contacts.length,
+      contacts,
+    });
   } catch (error) {
-    console.error('Error queueing agent task:', error);
-    res.status(500).json({ error: 'Failed to start agent task' });
+    console.error('Error importing selected agent prospects:', error);
+    res.status(500).json({ error: 'Failed to import selected prospects' });
   }
 });
 
