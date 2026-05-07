@@ -70,6 +70,9 @@ jobs:
           OUTBOUND_DAILY_LINKEDIN_SEND_LIMIT=100
           EOF
 
+      - name: Run database migrations
+        run: npm run migrate
+
       - name: Static checks
         run: |
           node --check server/src/routes/outboundAutomation.js
