@@ -24,7 +24,7 @@ function initAgentWorker() {
       // 2. Iterate and save to DB
       await importProspects({
         userId,
-        userEmail: 'Agent',
+        userEmail: 'AI Agent Background Worker',
         prompt,
         prospects,
       });

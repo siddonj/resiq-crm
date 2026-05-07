@@ -11,7 +11,7 @@ function normalizeProspect(prospect = {}, index = 0) {
       : company || `AI Prospect ${index + 1}`,
     email,
     phone: typeof prospect.phone === 'string' ? prospect.phone.trim() : '',
-    company,
+    company: company || 'Unknown Company',
     service_line: typeof prospect.service_line === 'string' && prospect.service_line.trim()
       ? prospect.service_line.trim()
       : null,
@@ -32,7 +32,7 @@ async function importProspects({ userId, userEmail = 'Agent', prompt = '', prosp
         prospect.name,
         prospect.email,
         prospect.phone,
-        prospect.company || 'Unknown Company',
+        prospect.company,
         prospect.service_line,
         notesContext ? `AI Sourced Prospect. Context: ${notesContext}` : 'AI Sourced Prospect.',
       ]

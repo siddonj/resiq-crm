@@ -12,6 +12,15 @@ const withLocalIds = (prospects = []) => prospects.map((prospect, index) => ({
   localId: `${prospect.email || prospect.company || prospect.name || 'prospect'}-${index}`,
 }))
 
+const toImportPayload = ({ name, email, phone, company, service_line, notes }) => ({
+  name,
+  email,
+  phone,
+  company,
+  service_line,
+  notes,
+})
+
 export default function Agents() {
   const { token } = useAuth()
   const [prompt, setPrompt] = useState('')
@@ -66,7 +75,7 @@ export default function Agents() {
     const selectedSet = new Set(selectedProspectIds)
     const selectedProspects = prospects
       .filter(prospect => selectedSet.has(prospect.localId))
-      .map(({ localId, ...prospect }) => prospect)
+      .map(toImportPayload)
 
     if (selectedProspects.length === 0) {
       setStatus('Select at least one contact to add.')
