@@ -159,10 +159,34 @@ router.post('/', async (req, res) => {
        RETURNING *`,
       [name.trim(), description || null, team_id || null, req.user.id]
     );
+    const project = rows[0];
 
-    logAction(req.user.id, req.user.email, 'create', 'project', rows[0].id, rows[0].name);
+    // Create default columns
+    const defaultColumns = [
+      { name: 'Status', key: 'status', type: 'dropdown', config: { options: ['To Do', 'In Progress', 'Done'] }, position: 0 },
+      { name: 'Priority', key: 'priority', type: 'dropdown', config: { options: ['Low', 'Medium', 'High'] }, position: 1 },
+      { name: 'Due Date', key: 'due_date', type: 'date', config: {}, position: 2 },
+      { name: 'Assignee', key: 'assignee', type: 'person', config: {}, position: 3 },
+      { name: 'Progress', key: 'progress', type: 'progress', config: { min: 0, max: 100 }, position: 4 },
+    ];
+    for (const col of defaultColumns) {
+      await pool.query(
+        `INSERT INTO project_columns (project_id, name, key, type, config, position, is_required)
+         VALUES ($1, $2, $3, $4, $5, $6, FALSE)`,
+        [project.id, col.name, col.key, col.type, JSON.stringify(col.config), col.position]
+      );
+    }
 
-    res.status(201).json(rows[0]);
+    // Create default grid view
+    await pool.query(
+      `INSERT INTO project_views (project_id, name, type, config, created_by, is_default)
+       VALUES ($1, $2, $3, $4, $5, TRUE)`,
+      [project.id, 'Default Grid', 'grid', '{}', req.user.id]
+    );
+
+    logAction(req.user.id, req.user.email, 'create', 'project', project.id, project.name);
+
+    res.status(201).json(project);
   } catch (err) {
     console.error('Error creating project:', err);
     res.status(500).json({ error: 'Server error' });
