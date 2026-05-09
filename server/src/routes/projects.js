@@ -48,13 +48,13 @@ async function fetchProjectBundle(projectId) {
       [projectId]
     ),
     pool.query(
-      `SELECT pm.*, u.email, u.first_name, u.last_name,
-              t.name AS team_name
-       FROM project_members pm
-       LEFT JOIN users u ON u.id = pm.user_id
-       LEFT JOIN teams t ON t.id = pm.team_id
-       WHERE pm.project_id = $1
-       ORDER BY pm.added_at ASC`,
+       `SELECT pm.*, u.email, u.name AS user_name,
+               t.name AS team_name
+        FROM project_members pm
+        LEFT JOIN users u ON u.id = pm.user_id
+        LEFT JOIN teams t ON t.id = pm.team_id
+        WHERE pm.project_id = $1
+        ORDER BY pm.added_at ASC`,
       [projectId]
     ),
   ]);
@@ -377,11 +377,11 @@ router.delete('/:id/tasks/:taskId', async (req, res) => {
 router.get('/:id/tasks/:taskId/comments', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT ptc.*, u.email, u.first_name, u.last_name
-       FROM project_task_comments ptc
-       JOIN users u ON u.id = ptc.user_id
-       WHERE ptc.task_id = $1
-       ORDER BY ptc.created_at ASC`,
+       `SELECT ptc.*, u.email, u.name AS user_name
+        FROM project_task_comments ptc
+        JOIN users u ON u.id = ptc.user_id
+        WHERE ptc.task_id = $1
+        ORDER BY ptc.created_at ASC`,
       [req.params.taskId]
     );
     res.json(rows);
@@ -404,10 +404,10 @@ router.post('/:id/tasks/:taskId/comments', async (req, res) => {
     );
     // Re-fetch with user info
     const [result] = await pool.query(
-      `SELECT ptc.*, u.email, u.first_name, u.last_name
-       FROM project_task_comments ptc
-       JOIN users u ON u.id = ptc.user_id
-       WHERE ptc.id = $1`,
+       `SELECT ptc.*, u.email, u.name AS user_name
+        FROM project_task_comments ptc
+        JOIN users u ON u.id = ptc.user_id
+        WHERE ptc.id = $1`,
       [rows[0].id]
     );
     logAction(req.user.id, req.user.email, 'create', 'task_comment', rows[0].id, content.slice(0, 80));
@@ -496,11 +496,11 @@ router.delete('/:id/tasks/:taskId/attachments/:attId', async (req, res) => {
 router.get('/:id/tasks/:taskId/assignees', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT pta.*, u.email, u.first_name, u.last_name
-       FROM project_task_assignees pta
-       JOIN users u ON u.id = pta.user_id
-       WHERE pta.task_id = $1
-       ORDER BY pta.created_at ASC`,
+       `SELECT pta.*, u.email, u.name AS user_name
+        FROM project_task_assignees pta
+        JOIN users u ON u.id = pta.user_id
+        WHERE pta.task_id = $1
+        ORDER BY pta.created_at ASC`,
       [req.params.taskId]
     );
     res.json(rows);
@@ -711,13 +711,13 @@ router.delete('/:id/views/:viewId', async (req, res) => {
 router.get('/:id/members', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT pm.*, u.email, u.first_name, u.last_name,
-              t.name AS team_name
-       FROM project_members pm
-       LEFT JOIN users u ON u.id = pm.user_id
-       LEFT JOIN teams t ON t.id = pm.team_id
-       WHERE pm.project_id = $1
-       ORDER BY pm.added_at ASC`,
+       `SELECT pm.*, u.email, u.name AS user_name,
+               t.name AS team_name
+        FROM project_members pm
+        LEFT JOIN users u ON u.id = pm.user_id
+        LEFT JOIN teams t ON t.id = pm.team_id
+        WHERE pm.project_id = $1
+        ORDER BY pm.added_at ASC`,
       [req.params.id]
     );
     res.json(rows);

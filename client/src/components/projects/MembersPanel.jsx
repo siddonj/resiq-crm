@@ -109,7 +109,7 @@ export default function MembersPanel({ projectId, members = [], users = [], team
               <option value="">Select user</option>
               {availableUsers.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.first_name ? `${u.first_name} ${u.last_name || ''}` : u.email}
+                   {u.name || u.email}
                 </option>
               ))}
             </select>
@@ -150,7 +150,7 @@ export default function MembersPanel({ projectId, members = [], users = [], team
         ) : (
           members.map((m) => {
             const displayName = m.user_id
-              ? (m.first_name ? `${m.first_name} ${m.last_name || ''}` : m.email || m.user_id)
+              ? (m.user_name || m.email || m.user_id)
               : m.team_name || m.team_id
             const isTeam = !!m.team_id
             const canManage = currentUserId !== m.user_id && !isTeam

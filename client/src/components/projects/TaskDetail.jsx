@@ -354,7 +354,7 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], on
                     <div key={c.id} className="p-2 bg-gray-50 rounded">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-medium text-gray-700">
-                          {c.first_name ? `${c.first_name} ${c.last_name || ''}` : c.email}
+                           {c.user_name || c.email}
                         </span>
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-gray-500">{new Date(c.created_at).toLocaleString()}</span>
@@ -411,7 +411,7 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], on
                 >
                   <option value="">Select user</option>
                   {users.map((u) => (
-                    <option key={u.id} value={u.id}>{u.first_name ? `${u.first_name} ${u.last_name || ''}` : u.email}</option>
+                     <option key={u.id} value={u.id}>{u.name || u.email}</option>
                   ))}
                 </select>
                 <select
@@ -438,7 +438,7 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], on
                 <div className="space-y-1">
                   {assignees.map((a) => (
                     <div key={a.id} className="flex items-center justify-between py-1 px-2 bg-gray-50 rounded text-sm">
-                      <span>{a.first_name ? `${a.first_name} ${a.last_name || ''}` : a.email}</span>
+                       <span>{a.user_name || a.email}</span>
                       <div className="flex items-center gap-2">
                         <span className={`text-xs rounded-full px-2 py-0.5 ${
                           a.role === 'responsible' ? 'bg-blue-100 text-blue-700' :
