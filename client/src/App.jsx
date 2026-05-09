@@ -27,6 +27,8 @@ import RedditLeads from './pages/RedditLeads'
 import MultiSourceLeads from './pages/MultiSourceLeads'
 import Analytics from './pages/Analytics'
 import OutboundAutomation from './pages/OutboundAutomation'
+import Projects from './pages/Projects'
+import ProjectDetail from './pages/ProjectDetail'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -54,6 +56,8 @@ function AppRoutes() {
         <Route path="settings" element={<Settings />} />
         <Route path="teams" element={<Teams />} />
         <Route path="audit-logs" element={<AuditLogs />} />
+        <Route path="projects" element={<Projects />} />
+        <Route path="projects/:projectId" element={<ProjectDetail />} />
         <Route path="users" element={<Users />} />
         <Route path="reminders" element={<Reminders />} />
         <Route path="agents" element={<Agents />} />

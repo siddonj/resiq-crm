@@ -16,6 +16,7 @@ const dealsRoutes = require('./routes/deals');
 const workflowsRoutes = require('./routes/workflows');
 const sequencesRoutes = require('./routes/sequences');
 const integrationsRoutes = require('./routes/integrations');
+const projectsRoutes = require('./routes/projects');
 const analyticsRoutes = require('./routes/analytics');
 const usersRoutes = require('./routes/users');
 const teamsRoutes = require('./routes/teams');
@@ -128,6 +129,7 @@ app.use('/api/deals', dealsRoutes);
 app.use('/api/workflows', workflowsRoutes);
 app.use('/api/sequences', sequencesRoutes);
 app.use('/api/integrations', integrationsRoutes);
+app.use('/api/projects', projectsRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/teams', teamsRoutes);
@@ -261,6 +263,7 @@ if (process.env.NODE_ENV === 'production') {
     res.status(404).json({ error: 'API route not found' });
   });
 
+  app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
   const clientDist = path.join(__dirname, '../../client/dist');
   app.use(express.static(clientDist));
   app.get('*', (req, res) => {

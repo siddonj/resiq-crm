@@ -30,6 +30,7 @@ const navTabs = [
     id: 'operations',
     label: 'Operations',
     items: [
+      { to: '/projects', label: 'Projects' },
       { to: '/proposals', label: 'Proposals' },
       { to: '/invoices', label: 'Invoices' },
       { to: '/time-tracking', label: 'Time Tracking' },
