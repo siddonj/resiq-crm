@@ -56,46 +56,26 @@ async function wouldCreateCycle(projectId, taskId, newParentId) {
   return false;
 }
 
-async function fetchProjectBundle(projectId) {
-  const [projectRes, columnsRes, tasksRes, membersRes] = await Promise.all([
-    pool.query('SELECT * FROM projects WHERE id = $1', [projectId]),
-    pool.query(
-      `SELECT * FROM project_columns WHERE project_id = $1 ORDER BY position ASC, created_at ASC`,
-      [projectId]
-    ),
-    pool.query(
-      `SELECT t.*,
-              COALESCE(sc.subtask_count, 0) AS subtask_count
-       FROM project_tasks t
-       LEFT JOIN (
-         SELECT parent_id, COUNT(*) AS subtask_count
-         FROM project_tasks
-         WHERE project_id = $1 AND parent_id IS NOT NULL
-         GROUP BY parent_id
-       ) sc ON sc.parent_id = t.id
-       WHERE t.project_id = $1
-       ORDER BY t.position ASC, t.created_at ASC`,
-      [projectId]
-    ),
-    pool.query(
-       `SELECT pm.*, u.email, u.name AS user_name,
-               t.name AS team_name
-        FROM project_members pm
-        LEFT JOIN users u ON u.id = pm.user_id
-        LEFT JOIN teams t ON t.id = pm.team_id
-        WHERE pm.project_id = $1
-        ORDER BY pm.added_at ASC`,
-      [projectId]
-    ),
-  ]);
+async function getTasksInTreeOrder(projectId) {
+  const { rows } = await pool.query(
+    `SELECT t.*,
+            COALESCE(sc.subtask_count, 0) AS subtask_count
+     FROM project_tasks t
+     LEFT JOIN (
+       SELECT parent_id, COUNT(*) AS subtask_count
+       FROM project_tasks
+       WHERE project_id = $1 AND parent_id IS NOT NULL
+       GROUP BY parent_id
+     ) sc ON sc.parent_id = t.id
+     WHERE t.project_id = $1
+     ORDER BY t.position ASC, t.created_at ASC`,
+    [projectId]
+  );
 
-  if (!projectRes.rows[0]) return null;
-
-  // Build tree order: parents first, then children recursively
   const taskMap = new Map();
-  tasksRes.rows.forEach((t) => taskMap.set(t.id, { ...t, children: [] }));
+  rows.forEach((t) => taskMap.set(t.id, { ...t, children: [] }));
   const roots = [];
-  tasksRes.rows.forEach((t) => {
+  rows.forEach((t) => {
     if (t.parent_id && taskMap.has(t.parent_id)) {
       taskMap.get(t.parent_id).children.push(t.id);
     } else {
@@ -115,7 +95,31 @@ async function fetchProjectBundle(projectId) {
     return result;
   }
 
-  const treeTasks = flattenTree(roots);
+  return flattenTree(roots);
+}
+
+async function fetchProjectBundle(projectId) {
+  const [projectRes, columnsRes, membersRes] = await Promise.all([
+    pool.query('SELECT * FROM projects WHERE id = $1', [projectId]),
+    pool.query(
+      `SELECT * FROM project_columns WHERE project_id = $1 ORDER BY position ASC, created_at ASC`,
+      [projectId]
+    ),
+    pool.query(
+       `SELECT pm.*, u.email, u.name AS user_name,
+               t.name AS team_name
+        FROM project_members pm
+        LEFT JOIN users u ON u.id = pm.user_id
+        LEFT JOIN teams t ON t.id = pm.team_id
+        WHERE pm.project_id = $1
+        ORDER BY pm.added_at ASC`,
+      [projectId]
+    ),
+  ]);
+
+  if (!projectRes.rows[0]) return null;
+
+  const treeTasks = await getTasksInTreeOrder(projectId);
 
   return {
     project: projectRes.rows[0],
@@ -396,12 +400,21 @@ router.post('/:id/tasks', async (req, res) => {
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
 
   try {
+    let taskPosition = position;
+    if (taskPosition === undefined || taskPosition === null) {
+      const { rows: posRows } = await pool.query(
+        'SELECT COALESCE(MAX(position), 0) + 1 AS next_pos FROM project_tasks WHERE project_id = $1',
+        [req.params.id]
+      );
+      taskPosition = posRows[0].next_pos;
+    }
+
     const taskId = await generateTaskId();
     const { rows } = await pool.query(
       `INSERT INTO project_tasks (project_id, task_id, name, description, values, position, parent_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 0), $7, $8)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [req.params.id, taskId, name.trim(), description || null, values || {}, position, parent_id || null, req.user.id]
+      [req.params.id, taskId, name.trim(), description || null, values || {}, taskPosition, parent_id || null, req.user.id]
     );
 
     logAction(req.user.id, req.user.email, 'create', 'project_task', rows[0].id, rows[0].name);
@@ -715,16 +728,11 @@ router.post('/:id/tasks/:taskId/indent', async (req, res) => {
 
     if (task.parent_id) return res.status(400).json({ error: 'Task is already a subtask' });
 
-    // Find the nearest task above this one to become the parent
-    const { rows: aboveRows } = await pool.query(
-      `SELECT id FROM project_tasks
-       WHERE project_id = $1 AND parent_id IS NULL AND position < $2
-       ORDER BY position DESC, created_at DESC
-       LIMIT 1`,
-      [projectId, task.position]
-    );
-    if (!aboveRows[0]) return res.status(400).json({ error: 'No task above to indent under' });
-    const newParentId = aboveRows[0].id;
+    // Find the task immediately above in tree order
+    const treeTasks = await getTasksInTreeOrder(projectId);
+    const idx = treeTasks.findIndex((t) => t.id === taskId);
+    if (idx <= 0) return res.status(400).json({ error: 'No task above to indent under' });
+    const newParentId = treeTasks[idx - 1].id;
 
     const cyclic = await wouldCreateCycle(projectId, taskId, newParentId);
     if (cyclic) return res.status(400).json({ error: 'Cannot indent under a descendant' });
