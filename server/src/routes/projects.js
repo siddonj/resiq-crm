@@ -36,6 +36,26 @@ async function generateTaskId() {
   return `PRJ-${String(seq).padStart(4, '0')}`;
 }
 
+// Detect if setting childId as parent of parentId would create a cycle
+async function wouldCreateCycle(projectId, taskId, newParentId) {
+  if (!newParentId) return false;
+  if (newParentId === taskId) return true;
+  let current = newParentId;
+  const visited = new Set();
+  while (current) {
+    if (visited.has(current)) break;
+    visited.add(current);
+    const { rows } = await pool.query(
+      'SELECT parent_id FROM project_tasks WHERE id = $1 AND project_id = $2',
+      [current, projectId]
+    );
+    if (!rows[0]) break;
+    if (rows[0].parent_id === taskId) return true;
+    current = rows[0].parent_id;
+  }
+  return false;
+}
+
 async function fetchProjectBundle(projectId) {
   const [projectRes, columnsRes, tasksRes, membersRes] = await Promise.all([
     pool.query('SELECT * FROM projects WHERE id = $1', [projectId]),
@@ -44,7 +64,17 @@ async function fetchProjectBundle(projectId) {
       [projectId]
     ),
     pool.query(
-      `SELECT * FROM project_tasks WHERE project_id = $1 ORDER BY position ASC, created_at ASC`,
+      `SELECT t.*,
+              COALESCE(sc.subtask_count, 0) AS subtask_count
+       FROM project_tasks t
+       LEFT JOIN (
+         SELECT parent_id, COUNT(*) AS subtask_count
+         FROM project_tasks
+         WHERE project_id = $1 AND parent_id IS NOT NULL
+         GROUP BY parent_id
+       ) sc ON sc.parent_id = t.id
+       WHERE t.project_id = $1
+       ORDER BY t.position ASC, t.created_at ASC`,
       [projectId]
     ),
     pool.query(
@@ -61,10 +91,36 @@ async function fetchProjectBundle(projectId) {
 
   if (!projectRes.rows[0]) return null;
 
+  // Build tree order: parents first, then children recursively
+  const taskMap = new Map();
+  tasksRes.rows.forEach((t) => taskMap.set(t.id, { ...t, children: [] }));
+  const roots = [];
+  tasksRes.rows.forEach((t) => {
+    if (t.parent_id && taskMap.has(t.parent_id)) {
+      taskMap.get(t.parent_id).children.push(t.id);
+    } else {
+      roots.push(t.id);
+    }
+  });
+
+  function flattenTree(ids, depth = 0) {
+    const result = [];
+    for (const id of ids) {
+      const node = taskMap.get(id);
+      if (node) {
+        result.push({ ...node, depth });
+        result.push(...flattenTree(node.children, depth + 1));
+      }
+    }
+    return result;
+  }
+
+  const treeTasks = flattenTree(roots);
+
   return {
     project: projectRes.rows[0],
     columns: columnsRes.rows,
-    tasks: tasksRes.rows,
+    tasks: treeTasks,
     members: membersRes.rows,
   };
 }
@@ -360,6 +416,10 @@ router.post('/:id/tasks', async (req, res) => {
 router.put('/:id/tasks/:taskId', async (req, res) => {
   const { name, description, values, position, parent_id } = req.body || {};
   try {
+    if (parent_id !== undefined) {
+      const cyclic = await wouldCreateCycle(req.params.id, req.params.taskId, parent_id);
+      if (cyclic) return res.status(400).json({ error: 'Cannot set a descendant as parent (cycle detected)' });
+    }
     const { rows } = await pool.query(
       `UPDATE project_tasks
          SET name = COALESCE($1, name),
@@ -634,6 +694,84 @@ router.get('/:id/tasks/:taskId/subtasks', async (req, res) => {
     res.json(rows);
   } catch (err) {
     console.error('Error listing subtasks:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Indent / Outdent ───────────────────────────────────────────
+
+router.post('/:id/tasks/:taskId/indent', async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const taskId = req.params.taskId;
+
+    // Get current task
+    const { rows: taskRows } = await pool.query(
+      'SELECT * FROM project_tasks WHERE id = $1 AND project_id = $2',
+      [taskId, projectId]
+    );
+    if (!taskRows[0]) return res.status(404).json({ error: 'Task not found' });
+    const task = taskRows[0];
+
+    if (task.parent_id) return res.status(400).json({ error: 'Task is already a subtask' });
+
+    // Find the nearest task above this one to become the parent
+    const { rows: aboveRows } = await pool.query(
+      `SELECT id FROM project_tasks
+       WHERE project_id = $1 AND parent_id IS NULL AND position < $2
+       ORDER BY position DESC, created_at DESC
+       LIMIT 1`,
+      [projectId, task.position]
+    );
+    if (!aboveRows[0]) return res.status(400).json({ error: 'No task above to indent under' });
+    const newParentId = aboveRows[0].id;
+
+    const cyclic = await wouldCreateCycle(projectId, taskId, newParentId);
+    if (cyclic) return res.status(400).json({ error: 'Cannot indent under a descendant' });
+
+    const { rows } = await pool.query(
+      `UPDATE project_tasks SET parent_id = $1, updated_at = NOW()
+       WHERE id = $2 AND project_id = $3 RETURNING *`,
+      [newParentId, taskId, projectId]
+    );
+    logAction(req.user.id, req.user.email, 'indent', 'project_task', rows[0].id, rows[0].name);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error indenting task:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/tasks/:taskId/outdent', async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    const taskId = req.params.taskId;
+
+    const { rows: taskRows } = await pool.query(
+      'SELECT * FROM project_tasks WHERE id = $1 AND project_id = $2',
+      [taskId, projectId]
+    );
+    if (!taskRows[0]) return res.status(404).json({ error: 'Task not found' });
+    const task = taskRows[0];
+
+    if (!task.parent_id) return res.status(400).json({ error: 'Task is not a subtask' });
+
+    // Get the parent's parent (grandparent) to potentially promote to that level, or null
+    const { rows: parentRows } = await pool.query(
+      'SELECT parent_id FROM project_tasks WHERE id = $1 AND project_id = $2',
+      [task.parent_id, projectId]
+    );
+    const newParentId = parentRows[0]?.parent_id || null;
+
+    const { rows } = await pool.query(
+      `UPDATE project_tasks SET parent_id = $1, updated_at = NOW()
+       WHERE id = $2 AND project_id = $3 RETURNING *`,
+      [newParentId, taskId, projectId]
+    );
+    logAction(req.user.id, req.user.email, 'outdent', 'project_task', rows[0].id, rows[0].name);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error outdenting task:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

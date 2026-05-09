@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
 
 export default function KanbanView({ columns = [], tasks = [], filterText = '', onAddTask, onUpdateTask, onTaskClick }) {
-  // Filter tasks
+  // Filter tasks (Kanban shows only top-level tasks; subtasks live in detail panels)
+  const topLevelTasks = tasks.filter((t) => !t.parent_id)
   const lowerFilter = filterText.toLowerCase()
   const filteredTasks = lowerFilter
-    ? tasks.filter((t) => (t.name || '').toLowerCase().includes(lowerFilter) || (t.task_id || '').toLowerCase().includes(lowerFilter))
-    : tasks
+    ? topLevelTasks.filter((t) => (t.name || '').toLowerCase().includes(lowerFilter) || (t.task_id || '').toLowerCase().includes(lowerFilter))
+    : topLevelTasks
 
   // Use first dropdown/status column as kanban grouping, or create default "Status" lanes
   const statusColumn = useMemo(() => {

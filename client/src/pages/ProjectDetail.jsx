@@ -209,6 +209,7 @@ export default function ProjectDetail() {
               onTaskClick={(task) => setSelectedTask(task)}
               onBulkDelete={handleBulkDelete}
               onBulkUpdate={handleBulkUpdate}
+              onReload={loadProject}
             />
           )}
           {view === 'kanban' && (
