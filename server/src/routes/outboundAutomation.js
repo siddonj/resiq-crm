@@ -5,254 +5,31 @@ const auth = require('../middleware/auth');
 const { scoreLead } = require('../services/outboundScoring');
 const { logAction } = require('../services/auditLogger');
 const { getSetting } = require('../services/appSettings');
+const outboundUtils = require('../utils/outboundUtils');
+const leadService = require('../services/outbound/leadService');
+const draftService = require('../services/outbound/draftService');
+const sequenceService = require('../services/outbound/sequenceService');
+const campaignService = require('../services/outbound/campaignService');
+const { validateBody, validateQuery } = require('../middleware/validateZod');
+const {
+  ImportCsvSchema,
+  LeadFiltersSchema,
+  CreateCampaignSchema,
+  UpdateCampaignStatusSchema,
+  CreateDraftSchema,
+  EnrollSequenceSchema,
+  ChangeSequenceStateSchema,
+  BulkActionSchema,
+  SuppressionSchema,
+  CreateWorkflowRuleSchema,
+  CreateMultifamilyObjectSchema,
+  AssociateToObjectSchema,
+  SaveGoalsSchema,
+  WorkspaceConfigSchema,
+} = require('../utils/outboundSchemas');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
-
-const VALID_SOURCE_TYPES = new Set(['csv', 'manual', 'api', 'other']);
-const SEND_EVENT_TYPES = {
-  email: ['draft_sent'],
-  linkedin: ['linkedin_task_completed'],
-};
-
-const VALID_CAMPAIGN_STATUSES = new Set(['draft', 'active', 'paused', 'completed', 'archived']);
-const VALID_CAMPAIGN_CHANNELS = new Set(['email', 'linkedin']);
-const VALID_CAMPAIGN_MEMBER_STATUSES = new Set([
-  'queued',
-  'contacted',
-  'replied',
-  'meeting',
-  'opportunity',
-  'suppressed',
-  'dropped',
-]);
-const VALID_SEQUENCE_ENROLLMENT_STATES = new Set(['active', 'paused', 'stopped', 'completed', 'error']);
-const ALLOWED_MANUAL_SEQUENCE_TRANSITIONS = {
-  active: new Set(['paused', 'stopped']),
-  paused: new Set(['active', 'stopped']),
-  error: new Set(['active', 'stopped']),
-  completed: new Set([]),
-  stopped: new Set([]),
-};
-const CAMPAIGN_MEMBER_TO_LEAD_STATUS = {
-  queued: 'queued',
-  contacted: 'contacted',
-  replied: 'replied',
-  meeting: 'meeting',
-  opportunity: 'opportunity',
-  suppressed: 'suppressed',
-};
-const LEAD_OUTCOME_EVENT_MAP = {
-  replied: {
-    leadStatus: 'replied',
-    eventType: 'lead_replied',
-    stopReason: 'Auto-stopped after reply',
-  },
-  meeting: {
-    leadStatus: 'meeting',
-    eventType: 'meeting_booked',
-    stopReason: 'Auto-stopped after meeting booked',
-  },
-  opportunity: {
-    leadStatus: 'opportunity',
-    eventType: 'opportunity_created',
-    stopReason: 'Auto-stopped after opportunity created',
-  },
-  hard_bounce: {
-    leadStatus: 'disqualified',
-    eventType: 'hard_bounce',
-    stopReason: 'Auto-stopped after hard bounce',
-  },
-};
-const VALID_OUTBOUND_LEAD_STATUSES = new Set([
-  'new',
-  'qualified',
-  'queued',
-  'contacted',
-  'replied',
-  'meeting',
-  'opportunity',
-  'disqualified',
-  'suppressed',
-]);
-const VALID_RULE_TRIGGER_EVENTS = new Set([
-  'lead_imported',
-  'draft_generated',
-  'draft_approved',
-  'draft_sent',
-  'linkedin_task_completed',
-  'lead_suppressed',
-  'lead_unsuppressed',
-  'lead_replied',
-  'meeting_booked',
-  'hard_bounce',
-  'sequence_enrolled',
-  'sequence_state_changed',
-  'campaign_created',
-  'campaign_member_status_changed',
-  'manual_test',
-]);
-const VALID_RULE_ACTION_TYPES = new Set([
-  'update_lead_status',
-  'set_next_recommended_action',
-  'create_reminder',
-  'suppress_lead',
-  'log_event',
-  'enroll_sequence',
-]);
-const VALID_RULE_RUN_STATUSES = new Set(['success', 'failed', 'skipped']);
-const VALID_FORECAST_PERIOD_TYPES = new Set(['weekly', 'monthly']);
-const FORECAST_BUCKET_WEIGHTS = {
-  closed: 1,
-  commitOnly: 0.7,
-  bestCaseOnly: 0.4,
-};
-const ATTRIBUTION_STAGE_BY_EVENT = {
-  lead_imported: 'imported',
-  sequence_enrolled: 'sequence',
-  draft_sent: 'contacted',
-  linkedin_task_completed: 'contacted',
-  lead_replied: 'replied',
-  meeting_booked: 'meeting',
-  opportunity_created: 'opportunity',
-};
-const ATTRIBUTION_STAGE_ORDER = ['imported', 'contacted', 'replied', 'meeting', 'opportunity', 'sequence'];
-const VALID_DATA_QUALITY_STATUSES = new Set(['open', 'resolved', 'dismissed']);
-const VALID_DATA_QUALITY_ISSUE_TYPES = new Set([
-  'missing_contact_channel',
-  'missing_company',
-  'missing_title',
-  'low_source_confidence',
-  'stale_lead',
-  'potential_duplicate',
-]);
-const DATA_QUALITY_BLOCKING_TYPES = new Set(['missing_contact_channel']);
-const MIN_SOURCE_CONFIDENCE_THRESHOLD = 40;
-const STALE_LEAD_DAYS = 90;
-const VALID_MULTIFAMILY_OBJECT_TYPES = new Set(['portfolio', 'property', 'tech_stack', 'initiative']);
-const VALID_MULTIFAMILY_ENTITY_TYPES = new Set(['outbound_lead', 'contact', 'deal', 'company']);
-const VALID_MULTIFAMILY_EXPLORER_ENTITY_TYPES = new Set(['contact', 'deal', 'company']);
-const VALID_DRAFT_STATUSES = new Set(['drafted', 'approved', 'sent', 'archived']);
-const VALID_DRAFT_CHANNELS = new Set(['email', 'linkedin']);
-const VALID_LINKEDIN_TASK_STATUSES = new Set(['pending', 'drafted', 'approved', 'completed', 'skipped', 'blocked']);
-const VALID_OUTBOUND_SAVED_VIEW_SCOPES = new Set(['outbound_leads']);
-const VALID_OUTBOUND_BULK_ACTIONS = new Set(['set_status', 'suppress', 'unsuppress', 'rescore']);
-
-function parseCSVRow(line) {
-  const result = [];
-  let current = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      if (inQuotes && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else {
-        inQuotes = !inQuotes;
-      }
-    } else if (ch === ',' && !inQuotes) {
-      result.push(current.trim());
-      current = '';
-    } else {
-      current += ch;
-    }
-  }
-  result.push(current.trim());
-  return result;
-}
-
-function normalizeHeader(header) {
-  return String(header || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_')
-    .replace(/[^\w_]/g, '');
-}
-
-function parseCSV(text) {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim());
-  if (lines.length < 2) return [];
-
-  const headers = parseCSVRow(lines[0]).map(normalizeHeader);
-  return lines.slice(1).map((line) => {
-    const values = parseCSVRow(line);
-    const row = {};
-    headers.forEach((header, index) => {
-      row[header] = (values[index] || '').trim();
-    });
-    return row;
-  });
-}
-
-function canonicalLinkedInUrl(url) {
-  const raw = String(url || '').trim();
-  if (!raw) return null;
-
-  try {
-    const safe = raw.startsWith('http') ? raw : `https://${raw}`;
-    const parsed = new URL(safe);
-    parsed.search = '';
-    parsed.hash = '';
-    const normalized = parsed.toString().replace(/\/$/, '');
-    return normalized.toLowerCase();
-  } catch {
-    return raw.toLowerCase().replace(/\/$/, '');
-  }
-}
-
-function buildLeadFromRow(row) {
-  const firstName = row.first_name || row.firstname || '';
-  const lastName = row.last_name || row.lastname || '';
-  const fullName = row.name || `${firstName} ${lastName}`.trim();
-
-  return {
-    name: fullName || 'Unknown',
-    first_name: firstName || null,
-    last_name: lastName || null,
-    email: (row.email || '').toLowerCase() || null,
-    phone: row.phone || null,
-    company: row.company || row.organization || null,
-    title: row.title || row.job_title || row.role || null,
-    linkedin_url: canonicalLinkedInUrl(row.linkedin_url || row.linkedin || row.linkedin_profile),
-    website: row.website || row.company_website || null,
-    location: row.location || row.geo || null,
-    notes: row.notes || row.note || row.context || null,
-  };
-}
-
-function computeDedupeKey(lead) {
-  if (lead.email) return `email:${lead.email.toLowerCase()}`;
-  if (lead.linkedin_url) return `linkedin:${lead.linkedin_url}`;
-  return `name_company:${String(lead.name || '').toLowerCase()}|${String(lead.company || '').toLowerCase()}`;
-}
-
-function buildEmailDraft(lead) {
-  const firstName = lead.first_name || (lead.name || '').split(' ')[0] || 'there';
-  const companyName = lead.company || 'your team';
-  const role = lead.title ? ` as ${lead.title}` : '';
-
-  return {
-    subject: `Quick idea for ${companyName}'s multifamily ops`,
-    body: `Hi ${firstName},
-
-I noticed your work${role} at ${companyName} and wanted to share a quick idea.
-
-I help multifamily teams improve property tech execution and operational efficiency without adding tool sprawl.
-
-If useful, I can send a short outline tailored to your portfolio and current workflow.
-
-Best,
-ResiQ CRM`,
-  };
-}
-
-function buildLinkedInDraft(lead) {
-  const firstName = lead.first_name || (lead.name || '').split(' ')[0] || 'there';
-  const companyName = lead.company || 'your team';
-  return `Hi ${firstName} - I work with multifamily operators to improve property tech execution and operational efficiency. Would love to connect and share a quick idea for ${companyName}.`;
-}
 
 async function logLeadEvent({
   userId,
@@ -309,7 +86,7 @@ async function recordAttributionTouchpoint({
 }) {
   if (!eventId || !leadId) return;
 
-  const attributionStage = deriveAttributionStage(eventType, metadata);
+  const attributionStage = outboundUtils.deriveAttributionStage(eventType, metadata);
   if (!attributionStage) return;
 
   const leadRes = await pool.query(
@@ -323,16 +100,16 @@ async function recordAttributionTouchpoint({
   const lead = leadRes.rows[0];
   if (!lead) return;
 
-  const campaignId = sanitizeUuidValue(metadata.campaignId || metadata.campaign_id);
-  const sequenceId = sanitizeUuidValue(metadata.sequenceId || metadata.sequence_id);
+  const campaignId = outboundUtils.sanitizeUuidValue(metadata.campaignId || metadata.campaign_id);
+  const sequenceId = outboundUtils.sanitizeUuidValue(metadata.sequenceId || metadata.sequence_id);
   let attributedValue = 0;
 
   if (attributionStage === 'opportunity') {
-    const explicitValue = toFiniteNumber(
+    const explicitValue = outboundUtils.toFiniteNumber(
       metadata.attributedValue ?? metadata.attributed_value ?? metadata.revenue ?? metadata.expectedRevenue,
       0
     );
-    attributedValue = explicitValue > 0 ? round2(explicitValue) : round2(await getAverageClosedWonValue(userId));
+    attributedValue = explicitValue > 0 ? outboundUtils.round2(explicitValue) : outboundUtils.round2(await getAverageClosedWonValue(userId));
   }
 
   await pool.query(
@@ -433,7 +210,7 @@ async function recordLeadScoreHistory({ userId, leadId, score, source = 'manual_
 }
 
 async function getDailySendUsage(userId, channel) {
-  const eventTypes = SEND_EVENT_TYPES[channel] || [];
+  const eventTypes = outboundUtils.SEND_EVENT_TYPES[channel] || [];
   const limitSettingKey =
     channel === 'email'
       ? 'outbound_daily_email_send_limit'
@@ -468,244 +245,16 @@ function requireWithinDailyLimit(usage) {
   return usage.used < usage.limit;
 }
 
-function csvEscape(value) {
-  return `"${String(value ?? '').replace(/"/g, '""')}"`;
-}
 
-function normalizeCampaignChannels(channels) {
-  const candidate = Array.isArray(channels) ? channels : [];
-  const normalized = candidate
-    .map((channel) => String(channel || '').toLowerCase().trim())
-    .filter((channel) => VALID_CAMPAIGN_CHANNELS.has(channel));
 
-  const unique = [...new Set(normalized)];
-  if (unique.length === 0) return ['email'];
-  return unique;
-}
 
-function sanitizeUuidList(values) {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return (Array.isArray(values) ? values : [])
-    .map((value) => String(value || '').trim())
-    .filter((value) => uuidRegex.test(value));
-}
 
-function sanitizeUuidValue(value) {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  const normalized = String(value || '').trim();
-  return uuidRegex.test(normalized) ? normalized : null;
-}
 
-function toFiniteNumber(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
 
-function safeRate(numerator, denominator) {
-  const parsedNumerator = toFiniteNumber(numerator, 0);
-  const parsedDenominator = toFiniteNumber(denominator, 0);
-  if (parsedDenominator <= 0) return 0;
-  return round2((parsedNumerator / parsedDenominator) * 100);
-}
 
-function classifyPersonaTitle(title) {
-  const normalized = String(title || '').trim().toLowerCase();
-  if (!normalized) return 'Unknown';
-  if (normalized.includes('chief') || normalized.includes(' cxo ') || normalized.startsWith('coo') || normalized.startsWith('ceo')) {
-    return 'Executive';
-  }
-  if (normalized.includes('vp') || normalized.includes('vice president')) {
-    return 'VP';
-  }
-  if (normalized.includes('director') || normalized.includes('head of')) {
-    return 'Director';
-  }
-  if (normalized.includes('manager')) {
-    return 'Manager';
-  }
-  if (normalized.includes('owner') || normalized.includes('founder') || normalized.includes('principal')) {
-    return 'Owner/Founder';
-  }
-  return 'Other';
-}
 
-function normalizeIssueToken(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '');
-}
 
-function getLeadUpdatedAt(lead) {
-  return lead?.updated_at || lead?.created_at || null;
-}
 
-function buildLeadDataQualityIssueCandidates(lead, { duplicateGroup = null } = {}) {
-  if (!lead || !lead.id) return [];
-
-  const issues = [];
-  const leadId = lead.id;
-  const hasEmail = Boolean(String(lead.email || '').trim());
-  const hasLinkedIn = Boolean(String(lead.linkedin_url || '').trim());
-  const hasCompany = Boolean(String(lead.company || '').trim());
-  const hasTitle = Boolean(String(lead.title || '').trim());
-  const sourceConfidence = Number(lead.source_confidence || 0);
-  const updatedAt = getLeadUpdatedAt(lead);
-  const daysSinceUpdate = updatedAt ? Math.floor((Date.now() - new Date(updatedAt).getTime()) / (1000 * 60 * 60 * 24)) : null;
-
-  if (!hasEmail && !hasLinkedIn) {
-    issues.push({
-      leadId,
-      issueType: 'missing_contact_channel',
-      issueKey: `missing_contact_channel:${leadId}`,
-      severity: 'high',
-      isBlocking: true,
-      details: {
-        message: 'Lead requires email or LinkedIn URL before sequence enrollment.',
-        missingFields: ['email_or_linkedin_url'],
-      },
-    });
-  }
-
-  if (!hasCompany) {
-    issues.push({
-      leadId,
-      issueType: 'missing_company',
-      issueKey: `missing_company:${leadId}`,
-      severity: 'medium',
-      isBlocking: false,
-      details: {
-        message: 'Company is missing.',
-        missingFields: ['company'],
-      },
-    });
-  }
-
-  if (!hasTitle) {
-    issues.push({
-      leadId,
-      issueType: 'missing_title',
-      issueKey: `missing_title:${leadId}`,
-      severity: 'low',
-      isBlocking: false,
-      details: {
-        message: 'Title is missing.',
-        missingFields: ['title'],
-      },
-    });
-  }
-
-  if (sourceConfidence < MIN_SOURCE_CONFIDENCE_THRESHOLD) {
-    issues.push({
-      leadId,
-      issueType: 'low_source_confidence',
-      issueKey: `low_source_confidence:${leadId}`,
-      severity: 'medium',
-      isBlocking: false,
-      details: {
-        message: `Source confidence is below ${MIN_SOURCE_CONFIDENCE_THRESHOLD}.`,
-        sourceConfidence,
-        minThreshold: MIN_SOURCE_CONFIDENCE_THRESHOLD,
-      },
-    });
-  }
-
-  if (daysSinceUpdate != null && daysSinceUpdate >= STALE_LEAD_DAYS) {
-    issues.push({
-      leadId,
-      issueType: 'stale_lead',
-      issueKey: `stale_lead:${leadId}`,
-      severity: 'medium',
-      isBlocking: false,
-      details: {
-        message: `Lead record is stale (${daysSinceUpdate} days since update).`,
-        staleDays: daysSinceUpdate,
-      },
-    });
-  }
-
-  if (duplicateGroup && Array.isArray(duplicateGroup.leadIds) && duplicateGroup.leadIds.length > 1) {
-    issues.push({
-      leadId,
-      issueType: 'potential_duplicate',
-      issueKey: `potential_duplicate:${duplicateGroup.groupKey}:${leadId}`,
-      severity: 'high',
-      isBlocking: false,
-      details: {
-        message: 'Potential duplicate lead found by normalized name + company.',
-        groupKey: duplicateGroup.groupKey,
-        candidateLeadIds: duplicateGroup.leadIds,
-        suggestedPrimaryLeadId: duplicateGroup.suggestedPrimaryLeadId || null,
-      },
-    });
-  }
-
-  return issues;
-}
-
-function buildDuplicateGroupIndex(leads) {
-  const groups = new Map();
-  for (const lead of leads) {
-    const normalizedName = normalizeIssueToken(lead.name);
-    const normalizedCompany = normalizeIssueToken(lead.company);
-    if (!normalizedName || !normalizedCompany) continue;
-    const groupKey = `${normalizedName}:${normalizedCompany}`;
-    if (!groups.has(groupKey)) {
-      groups.set(groupKey, []);
-    }
-    groups.get(groupKey).push(lead);
-  }
-
-  const byLeadId = new Map();
-  for (const [groupKey, members] of groups.entries()) {
-    if (members.length <= 1) continue;
-    members.sort((a, b) => new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime());
-    const leadIds = members.map((member) => member.id);
-    const suggestedPrimaryLeadId = leadIds[0];
-    for (const member of members) {
-      byLeadId.set(member.id, {
-        groupKey,
-        leadIds,
-        suggestedPrimaryLeadId,
-      });
-    }
-  }
-
-  return byLeadId;
-}
-
-async function upsertDataQualityIssues(userId, issues) {
-  if (!issues.length) return;
-
-  for (const issue of issues) {
-    await pool.query(
-      `INSERT INTO data_quality_issues
-        (user_id, lead_id, issue_type, issue_key, severity, status, is_blocking, details, detected_at, updated_at, resolved_at)
-       VALUES
-        ($1, $2, $3, $4, $5, 'open', $6, $7::jsonb, NOW(), NOW(), NULL)
-       ON CONFLICT (user_id, issue_key)
-       DO UPDATE SET
-         lead_id = EXCLUDED.lead_id,
-         issue_type = EXCLUDED.issue_type,
-         severity = EXCLUDED.severity,
-         status = 'open',
-         is_blocking = EXCLUDED.is_blocking,
-         details = EXCLUDED.details,
-         detected_at = NOW(),
-         updated_at = NOW(),
-         resolved_at = NULL`,
-      [
-        userId,
-        issue.leadId || null,
-        issue.issueType,
-        issue.issueKey,
-        issue.severity || 'medium',
-        Boolean(issue.isBlocking),
-        JSON.stringify(issue.details || {}),
-      ]
-    );
-  }
-}
 
 async function syncDataQualityIssuesForUser(userId) {
   const leadsRes = await pool.query(
@@ -715,15 +264,15 @@ async function syncDataQualityIssuesForUser(userId) {
     [userId]
   );
   const leads = leadsRes.rows;
-  const duplicateGroupByLead = buildDuplicateGroupIndex(leads);
+  const duplicateGroupByLead = outboundUtils.buildDuplicateGroupIndex(leads);
 
   const detectedIssues = [];
   for (const lead of leads) {
     const duplicateGroup = duplicateGroupByLead.get(lead.id) || null;
-    detectedIssues.push(...buildLeadDataQualityIssueCandidates(lead, { duplicateGroup }));
+    detectedIssues.push(...outboundUtils.buildLeadDataQualityIssueCandidates(lead, { duplicateGroup }));
   }
 
-  await upsertDataQualityIssues(userId, detectedIssues);
+  await sequenceService.upsertDataQualityIssues(userId, detectedIssues);
 
   const activeIssueKeys = detectedIssues.map((issue) => issue.issueKey);
   await pool.query(
@@ -738,310 +287,21 @@ async function syncDataQualityIssuesForUser(userId) {
   );
 }
 
-function mapDataQualityIssueRow(row) {
-  return {
-    id: row.id,
-    leadId: row.lead_id,
-    issueType: row.issue_type,
-    issueKey: row.issue_key,
-    severity: row.severity,
-    status: row.status,
-    isBlocking: Boolean(row.is_blocking),
-    details: row.details || {},
-    detectedAt: row.detected_at,
-    resolvedAt: row.resolved_at,
-    updatedAt: row.updated_at,
-    lead: row.lead_id
-      ? {
-          id: row.lead_id,
-          name: row.lead_name,
-          email: row.lead_email,
-          company: row.lead_company,
-          title: row.lead_title,
-          status: row.lead_status,
-        }
-      : null,
-  };
-}
 
-function normalizeMultifamilyObjectType(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (!VALID_MULTIFAMILY_OBJECT_TYPES.has(normalized)) return null;
-  return normalized;
-}
 
-function normalizeMultifamilyEntityType(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (!VALID_MULTIFAMILY_ENTITY_TYPES.has(normalized)) return null;
-  return normalized;
-}
 
-function mapMultifamilyObjectRow(row) {
-  return {
-    id: row.id,
-    objectType: row.object_type,
-    name: row.name,
-    description: row.description || null,
-    metadata: row.metadata || {},
-    associationCounts: {
-      outboundLead: Number(row.outbound_lead_count || 0),
-      contact: Number(row.contact_count || 0),
-      deal: Number(row.deal_count || 0),
-      company: Number(row.company_count || 0),
-      total: Number(row.total_association_count || 0),
-    },
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
 
-function mapMultifamilyAssociationRow(row) {
-  return {
-    id: row.id,
-    objectId: row.object_id,
-    objectType: row.object_type,
-    entityType: row.entity_type,
-    entityId: row.entity_id || null,
-    companyName: row.company_name || null,
-    targetKey: row.target_key,
-    metadata: row.metadata || {},
-    target: {
-      name: row.target_name || null,
-      email: row.target_email || null,
-      company: row.target_company || null,
-      title: row.target_title || null,
-    },
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
 
-function mapDraftInboxRow(row) {
-  return {
-    id: row.id,
-    leadId: row.lead_id,
-    channel: row.channel,
-    subject: row.subject || null,
-    body: row.body,
-    status: row.status,
-    approvedAt: row.approved_at,
-    sentAt: row.sent_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    lead: {
-      id: row.lead_id,
-      name: row.lead_name || null,
-      email: row.lead_email || null,
-      company: row.lead_company || null,
-      title: row.lead_title || null,
-      totalScore: Number(row.lead_total_score || 0),
-      status: row.lead_status || null,
-    },
-    linkedinTask: row.linkedin_task_id
-      ? {
-          id: row.linkedin_task_id,
-          status: row.linkedin_task_status,
-          dueAt: row.linkedin_task_due_at,
-          completedAt: row.linkedin_task_completed_at,
-        }
-      : null,
-  };
-}
 
-function computeLinkedinTaskPriority(task) {
-  const status = String(task.status || '').toLowerCase();
-  const statusWeights = {
-    approved: 35,
-    drafted: 25,
-    pending: 20,
-    blocked: 10,
-    skipped: 0,
-    completed: 0,
-  };
 
-  const nowMs = Date.now();
-  const dueAtMs = task.due_at ? new Date(task.due_at).getTime() : null;
-  let dueWeight = 0;
-  if (Number.isFinite(dueAtMs)) {
-    if (dueAtMs < nowMs) {
-      const daysOverdue = Math.max(0, Math.floor((nowMs - dueAtMs) / (1000 * 60 * 60 * 24)));
-      dueWeight += 45 + Math.min(15, daysOverdue * 4);
-    } else {
-      const daysUntilDue = Math.max(0, Math.floor((dueAtMs - nowMs) / (1000 * 60 * 60 * 24)));
-      dueWeight += Math.max(0, 20 - Math.min(20, daysUntilDue * 2));
-    }
-  } else {
-    dueWeight += 10;
-  }
 
-  const leadScoreWeight = Math.min(35, Math.max(0, Number(task.lead_total_score || 0) * 0.35));
-  return Math.round((statusWeights[status] || 0) + dueWeight + leadScoreWeight);
-}
 
-function mapLinkedinTaskBoardRow(row) {
-  return {
-    id: row.id,
-    leadId: row.lead_id,
-    draftId: row.draft_id || null,
-    taskType: row.task_type,
-    status: row.status,
-    dueAt: row.due_at,
-    completedAt: row.completed_at,
-    notes: row.notes || null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    priorityScore: computeLinkedinTaskPriority(row),
-    lead: {
-      id: row.lead_id,
-      name: row.lead_name || null,
-      email: row.lead_email || null,
-      company: row.lead_company || null,
-      title: row.lead_title || null,
-      totalScore: Number(row.lead_total_score || 0),
-      status: row.lead_status || null,
-      suppressionReason: row.lead_suppression_reason || null,
-    },
-    draft: row.draft_id
-      ? {
-          id: row.draft_id,
-          channel: row.draft_channel || null,
-          status: row.draft_status || null,
-          subject: row.draft_subject || null,
-        }
-      : null,
-  };
-}
 
-function mapTaskBoardBuckets(rows) {
-  const buckets = {
-    pending: [],
-    drafted: [],
-    approved: [],
-    blocked: [],
-    completed: [],
-    skipped: [],
-  };
-  for (const row of rows) {
-    const item = mapLinkedinTaskBoardRow(row);
-    if (!buckets[item.status]) {
-      buckets[item.status] = [];
-    }
-    buckets[item.status].push(item);
-  }
-  return buckets;
-}
 
-function normalizeSavedViewFilters(filters) {
-  const source = isPlainObject(filters) ? filters : {};
-  const normalized = {};
 
-  if (source.status) {
-    const status = String(source.status).trim().toLowerCase();
-    if (VALID_OUTBOUND_LEAD_STATUSES.has(status)) {
-      normalized.status = status;
-    }
-  }
 
-  if (source.search) {
-    const search = String(source.search).trim();
-    if (search) normalized.search = search.slice(0, 200);
-  }
 
-  const minScore = Number(source.minScore);
-  if (Number.isFinite(minScore)) {
-    normalized.minScore = Math.max(0, Math.min(100, Math.round(minScore)));
-  }
 
-  const limit = Number(source.limit);
-  if (Number.isFinite(limit)) {
-    normalized.limit = Math.max(1, Math.min(500, Math.round(limit)));
-  }
-
-  const objectType = normalizeMultifamilyObjectType(source.objectType);
-  if (objectType) {
-    normalized.objectType = objectType;
-  }
-
-  const objectId = sanitizeUuidValue(source.objectId || '');
-  if (objectId) {
-    normalized.objectId = objectId;
-  }
-
-  return normalized;
-}
-
-function mapSavedViewRow(row) {
-  return {
-    id: row.id,
-    scope: row.scope,
-    name: row.name,
-    isDefault: Boolean(row.is_default),
-    filters: row.filters || {},
-    displayOptions: row.display_options || {},
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
-}
-
-function normalizeMultifamilyExplorerEntityType(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (!VALID_MULTIFAMILY_EXPLORER_ENTITY_TYPES.has(normalized)) return null;
-  return normalized;
-}
-
-function normalizeTextValue(value) {
-  if (value == null) return null;
-  const normalized = String(value).trim();
-  return normalized || null;
-}
-
-function mergeUniqueNoteBlocks(primaryNote, duplicates) {
-  const chunks = [primaryNote, ...duplicates.map((lead) => lead.notes)]
-    .map((value) => normalizeTextValue(value))
-    .filter(Boolean);
-
-  const unique = [];
-  for (const chunk of chunks) {
-    if (!unique.includes(chunk)) {
-      unique.push(chunk);
-    }
-  }
-
-  return unique.length ? unique.join('\n\n') : null;
-}
-
-function pickPrimaryThenDuplicate(primaryValue, duplicateLeads, fieldName) {
-  const primaryNormalized = normalizeTextValue(primaryValue);
-  if (primaryNormalized) return primaryNormalized;
-
-  for (const duplicate of duplicateLeads) {
-    const candidate = normalizeTextValue(duplicate?.[fieldName]);
-    if (candidate) return candidate;
-  }
-
-  return null;
-}
-
-function mapDataQualityMergeOperationRow(row) {
-  return {
-    id: row.id,
-    issueId: row.issue_id || null,
-    primaryLeadId: row.primary_lead_id || null,
-    primaryLead: row.primary_lead_id
-      ? {
-          id: row.primary_lead_id,
-          name: row.primary_lead_name || null,
-          email: row.primary_lead_email || null,
-          company: row.primary_lead_company || null,
-        }
-      : null,
-    mergedLeadIds: Array.isArray(row.merged_lead_ids) ? row.merged_lead_ids : [],
-    mergedLeadCount: Number(row.merged_lead_count || 0),
-    fieldUpdates: row.field_updates || {},
-    metadata: row.metadata || {},
-    createdAt: row.created_at,
-  };
-}
 
 async function verifyMultifamilyAssociationTarget(userId, entityType, entityId) {
   if (entityType === 'outbound_lead') {
@@ -1084,14 +344,6 @@ async function verifyMultifamilyAssociationTarget(userId, entityType, entityId) 
   return null;
 }
 
-function deriveAttributionStage(eventType, metadata = {}) {
-  if (eventType === 'campaign_member_status_changed') {
-    const memberStatus = String(metadata.memberStatus || metadata.member_status || '').trim().toLowerCase();
-    if (memberStatus === 'contacted') return 'contacted';
-    return null;
-  }
-  return ATTRIBUTION_STAGE_BY_EVENT[eventType] || null;
-}
 
 async function getAverageClosedWonValue(userId) {
   const result = await pool.query(
@@ -1108,237 +360,9 @@ async function getAverageClosedWonValue(userId) {
   return value > 0 ? value : 25000;
 }
 
-function round2(value) {
-  return Number(Number(value || 0).toFixed(2));
-}
 
-function toPeriodDateString(date) {
-  return date.toISOString().slice(0, 10);
-}
 
-function getCurrentPeriodWindow(periodType) {
-  const now = new Date();
-  const utcToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
-  if (periodType === 'weekly') {
-    const mondayOffset = (utcToday.getUTCDay() + 6) % 7;
-    const periodStart = new Date(utcToday);
-    periodStart.setUTCDate(periodStart.getUTCDate() - mondayOffset);
-    const periodEnd = new Date(periodStart);
-    periodEnd.setUTCDate(periodEnd.getUTCDate() + 6);
-
-    return {
-      periodType,
-      periodStart: toPeriodDateString(periodStart),
-      periodEnd: toPeriodDateString(periodEnd),
-    };
-  }
-
-  const periodStart = new Date(Date.UTC(utcToday.getUTCFullYear(), utcToday.getUTCMonth(), 1));
-  const periodEnd = new Date(Date.UTC(utcToday.getUTCFullYear(), utcToday.getUTCMonth() + 1, 0));
-
-  return {
-    periodType: 'monthly',
-    periodStart: toPeriodDateString(periodStart),
-    periodEnd: toPeriodDateString(periodEnd),
-  };
-}
-
-function calculatePeriodProgress(periodStart, periodEnd) {
-  const start = new Date(`${periodStart}T00:00:00.000Z`);
-  const end = new Date(`${periodEnd}T00:00:00.000Z`);
-  const now = new Date();
-  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-
-  const totalDays = Math.max(1, Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1);
-  const elapsedRaw = Math.floor((today - start) / (1000 * 60 * 60 * 24)) + 1;
-  const elapsedDays = Math.max(0, Math.min(totalDays, elapsedRaw));
-  const remainingDays = Math.max(0, totalDays - elapsedDays);
-  const completionRatio = totalDays > 0 ? elapsedDays / totalDays : 0;
-
-  return {
-    totalDays,
-    elapsedDays,
-    remainingDays,
-    completionRatio: round2(completionRatio),
-  };
-}
-
-async function recordSequenceTransition({
-  enrollmentId,
-  userId,
-  fromState = null,
-  toState,
-  reason = null,
-  triggerSource = 'manual',
-  metadata = {},
-}) {
-  await pool.query(
-    `INSERT INTO outbound_sequence_enrollment_transitions
-      (enrollment_id, user_id, from_state, to_state, reason, trigger_source, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
-    [enrollmentId, userId, fromState, toState, reason, triggerSource, JSON.stringify(metadata || {})]
-  );
-}
-
-async function getEnrollmentRecord(userId, enrollmentId) {
-  const result = await pool.query(
-    `SELECT
-       e.*,
-       s.name AS sequence_name,
-       l.name AS lead_name,
-       l.email AS lead_email,
-       l.company AS lead_company,
-       l.status AS lead_status,
-       l.suppression_reason
-     FROM outbound_sequence_enrollments e
-     JOIN sequences s ON s.id = e.sequence_id
-     JOIN outbound_leads l ON l.id = e.lead_id
-     WHERE e.id = $1
-       AND e.user_id = $2
-     LIMIT 1`,
-    [enrollmentId, userId]
-  );
-  return result.rows[0] || null;
-}
-
-async function autoStopOpenSequenceEnrollments({
-  userId,
-  leadId,
-  reason,
-  triggerSource,
-  metadata = {},
-}) {
-  const openRes = await pool.query(
-    `SELECT id, status
-     FROM outbound_sequence_enrollments
-     WHERE user_id = $1
-       AND lead_id = $2
-       AND status IN ('active', 'paused')
-     ORDER BY created_at DESC`,
-    [userId, leadId]
-  );
-
-  if (!openRes.rows.length) return [];
-
-  const stoppedIds = [];
-  for (const enrollment of openRes.rows) {
-    await pool.query(
-      `UPDATE outbound_sequence_enrollments
-       SET status = 'stopped',
-           stop_reason = $1,
-           stopped_at = NOW(),
-           updated_at = NOW(),
-           last_transition_at = NOW()
-       WHERE id = $2
-         AND user_id = $3`,
-      [reason, enrollment.id, userId]
-    );
-
-    await recordSequenceTransition({
-      enrollmentId: enrollment.id,
-      userId,
-      fromState: enrollment.status,
-      toState: 'stopped',
-      reason,
-      triggerSource,
-      metadata,
-    });
-
-    stoppedIds.push(enrollment.id);
-  }
-
-  return stoppedIds;
-}
-
-function isPlainObject(value) {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function getByPath(source, path) {
-  const segments = String(path || '')
-    .split('.')
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-  if (!segments.length) return undefined;
-
-  let current = source;
-  for (const segment of segments) {
-    if (!isPlainObject(current) && !Array.isArray(current)) return undefined;
-    current = current[segment];
-    if (current === undefined) return undefined;
-  }
-  return current;
-}
-
-function compareConditionValues(op, actual, expected) {
-  const normalized = String(op || 'equals').toLowerCase();
-  switch (normalized) {
-    case 'equals':
-    case 'eq':
-      return actual === expected;
-    case 'not_equals':
-    case 'ne':
-      return actual !== expected;
-    case 'gt':
-      return Number(actual) > Number(expected);
-    case 'gte':
-      return Number(actual) >= Number(expected);
-    case 'lt':
-      return Number(actual) < Number(expected);
-    case 'lte':
-      return Number(actual) <= Number(expected);
-    case 'contains':
-      return String(actual ?? '').toLowerCase().includes(String(expected ?? '').toLowerCase());
-    case 'in':
-      return Array.isArray(expected) && expected.includes(actual);
-    case 'exists':
-      return actual !== undefined && actual !== null && actual !== '';
-    default:
-      return false;
-  }
-}
-
-function evaluateRuleConditions(conditions, context) {
-  if (!isPlainObject(conditions)) {
-    return true;
-  }
-
-  const operator = String(conditions.operator || 'AND').toUpperCase();
-  const rules = Array.isArray(conditions.rules) ? conditions.rules : [];
-
-  if (!rules.length) {
-    return true;
-  }
-
-  const evaluations = rules.map((rule) => {
-    if (!isPlainObject(rule)) return false;
-    const field = String(rule.field || '').trim();
-    const op = String(rule.op || 'equals').trim();
-    if (!field) return false;
-    const actual = getByPath(context, field);
-    return compareConditionValues(op, actual, rule.value);
-  });
-
-  if (operator === 'OR') {
-    return evaluations.some(Boolean);
-  }
-  return evaluations.every(Boolean);
-}
-
-function normalizeRuleActions(actions) {
-  const normalized = (Array.isArray(actions) ? actions : [])
-    .map((action) => (isPlainObject(action) ? action : null))
-    .filter(Boolean)
-    .map((action) => {
-      const type = String(action.type || '').trim().toLowerCase();
-      if (!VALID_RULE_ACTION_TYPES.has(type)) return null;
-      const config = isPlainObject(action.config) ? action.config : {};
-      return { type, config };
-    })
-    .filter(Boolean);
-  return normalized;
-}
 
 async function upsertSequenceEnrollmentForRule({ userId, sequenceId, leadId }) {
   const sequenceRes = await pool.query(
@@ -1389,7 +413,7 @@ async function upsertSequenceEnrollmentForRule({ userId, sequenceId, leadId }) {
   );
   const enrollmentId = insertedRes.rows[0].id;
 
-  await recordSequenceTransition({
+  await sequenceService.recordSequenceTransition({
     enrollmentId,
     userId,
     fromState: null,
@@ -1427,7 +451,7 @@ async function executeWorkflowRuleActions({
       if (action.type === 'update_lead_status') {
         if (!lead?.id) throw new Error('update_lead_status requires lead context');
         const nextStatus = String(action.config.status || '').trim().toLowerCase();
-        if (!VALID_OUTBOUND_LEAD_STATUSES.has(nextStatus)) {
+        if (!outboundUtils.VALID_OUTBOUND_LEAD_STATUSES.has(nextStatus)) {
           throw new Error('Invalid lead status in update_lead_status action');
         }
         if (!dryRun) {
@@ -1482,7 +506,7 @@ async function executeWorkflowRuleActions({
                AND user_id = $3`,
             [reason, lead.id, userId]
           );
-          await autoStopOpenSequenceEnrollments({
+          await sequenceService.autoStopOpenSequenceEnrollments({
             userId,
             leadId: lead.id,
             reason: 'Auto-stopped after suppression update',
@@ -1507,7 +531,7 @@ async function executeWorkflowRuleActions({
             leadId: lead?.id || null,
             eventType,
             metadata: {
-              ...(isPlainObject(action.config.metadata) ? action.config.metadata : {}),
+              ...(outboundUtils.isPlainObject(action.config.metadata) ? action.config.metadata : {}),
               source: 'workflow_rule',
             },
             runRules: false,
@@ -1553,7 +577,7 @@ async function insertWorkflowRuleRun({
   actionsExecuted,
   errorMessage = null,
 }) {
-  const normalizedStatus = VALID_RULE_RUN_STATUSES.has(status) ? status : 'failed';
+  const normalizedStatus = outboundUtils.VALID_RULE_RUN_STATUSES.has(status) ? status : 'failed';
   await pool.query(
     `INSERT INTO workflow_rule_runs
       (rule_id, user_id, trigger_source, input_context, matched, status, actions_executed, error_message)
@@ -1625,16 +649,16 @@ async function runWorkflowRulesForEvent({
     lead,
     event: {
       type: eventName,
-      data: isPlainObject(eventData) ? eventData : {},
+      data: outboundUtils.isPlainObject(eventData) ? eventData : {},
     },
     now: new Date().toISOString(),
   };
 
   const outputs = [];
   for (const rule of rulesRes.rows) {
-    const matched = evaluateRuleConditions(rule.conditions || {}, context);
-    const trueActions = normalizeRuleActions(rule.true_actions);
-    const falseActions = normalizeRuleActions(rule.false_actions);
+    const matched = outboundUtils.evaluateRuleConditions(rule.conditions || {}, context);
+    const trueActions = outboundUtils.normalizeRuleActions(rule.true_actions);
+    const falseActions = outboundUtils.normalizeRuleActions(rule.false_actions);
     const targetActions = matched ? trueActions : falseActions;
 
     try {
@@ -1698,9 +722,9 @@ async function runWorkflowRulesForEvent({
 }
 
 async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
-  const normalizedPeriodType = VALID_FORECAST_PERIOD_TYPES.has(periodType) ? periodType : 'monthly';
-  const period = getCurrentPeriodWindow(normalizedPeriodType);
-  const progress = calculatePeriodProgress(period.periodStart, period.periodEnd);
+  const normalizedPeriodType = outboundUtils.VALID_FORECAST_PERIOD_TYPES.has(periodType) ? periodType : 'monthly';
+  const period = outboundUtils.getCurrentPeriodWindow(normalizedPeriodType);
+  const progress = outboundUtils.calculatePeriodProgress(period.periodStart, period.periodEnd);
 
   const [bucketRes, activityRes, revenueRes, avgDealRes, goalRes] = await Promise.all([
     pool.query(
@@ -1778,12 +802,12 @@ async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
       ? Number(goal.target_revenue) / Number(goal.target_opportunities)
       : 25000;
 
-  const closedValue = round2(closedCount * baselineValue * FORECAST_BUCKET_WEIGHTS.closed);
-  const commitValue = round2(
-    closedValue + commitOnlyCount * baselineValue * FORECAST_BUCKET_WEIGHTS.commitOnly
+  const closedValue = outboundUtils.round2(closedCount * baselineValue * outboundUtils.FORECAST_BUCKET_WEIGHTS.closed);
+  const commitValue = outboundUtils.round2(
+    closedValue + commitOnlyCount * baselineValue * outboundUtils.FORECAST_BUCKET_WEIGHTS.commitOnly
   );
-  const bestCaseValue = round2(
-    commitValue + bestCaseOnlyCount * baselineValue * FORECAST_BUCKET_WEIGHTS.bestCaseOnly
+  const bestCaseValue = outboundUtils.round2(
+    commitValue + bestCaseOnlyCount * baselineValue * outboundUtils.FORECAST_BUCKET_WEIGHTS.bestCaseOnly
   );
   const totalForecastValue = bestCaseValue;
 
@@ -1793,9 +817,9 @@ async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
   const dealsWonActual = Number(revenueRow.deals_won_actual || 0);
 
   const projectionScale = progress.elapsedDays > 0 ? progress.totalDays / progress.elapsedDays : 0;
-  const meetingsProjected = round2(meetingsActual * projectionScale);
-  const opportunitiesProjected = round2(opportunitiesActual * projectionScale);
-  const revenueProjected = round2(revenueActual * projectionScale);
+  const meetingsProjected = outboundUtils.round2(meetingsActual * projectionScale);
+  const opportunitiesProjected = outboundUtils.round2(opportunitiesActual * projectionScale);
+  const revenueProjected = outboundUtils.round2(revenueActual * projectionScale);
 
   const targetMeetings = goal ? Number(goal.target_meetings || 0) : 0;
   const targetOpportunities = goal ? Number(goal.target_opportunities || 0) : 0;
@@ -1803,15 +827,15 @@ async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
 
   const goalGap = goal
     ? {
-        meetingsGap: round2(targetMeetings - meetingsProjected),
-        opportunitiesGap: round2(targetOpportunities - opportunitiesProjected),
-        revenueGap: round2(targetRevenue - revenueProjected),
+        meetingsGap: outboundUtils.round2(targetMeetings - meetingsProjected),
+        opportunitiesGap: outboundUtils.round2(targetOpportunities - opportunitiesProjected),
+        revenueGap: outboundUtils.round2(targetRevenue - revenueProjected),
       }
     : null;
 
   const metadata = {
-    baselineValue: round2(baselineValue),
-    averageClosedWonDealValue: round2(averageClosedWonDealValue),
+    baselineValue: outboundUtils.round2(baselineValue),
+    averageClosedWonDealValue: outboundUtils.round2(averageClosedWonDealValue),
     projected: {
       meetings: meetingsProjected,
       opportunities: opportunitiesProjected,
@@ -1820,7 +844,7 @@ async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
     actual: {
       meetings: meetingsActual,
       opportunities: opportunitiesActual,
-      revenue: round2(revenueActual),
+      revenue: outboundUtils.round2(revenueActual),
       dealsWon: dealsWonActual,
     },
     progress,
@@ -1873,7 +897,7 @@ async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
     actuals: {
       meetings: meetingsActual,
       opportunities: opportunitiesActual,
-      revenue: round2(revenueActual),
+      revenue: outboundUtils.round2(revenueActual),
       dealsWon: dealsWonActual,
     },
     projected: {
@@ -1886,7 +910,7 @@ async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
           id: goal.id,
           targetMeetings,
           targetOpportunities,
-          targetRevenue: round2(targetRevenue),
+          targetRevenue: outboundUtils.round2(targetRevenue),
           notes: goal.notes,
           updatedAt: goal.updated_at,
         }
@@ -1894,20 +918,20 @@ async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
     gapToGoal: goalGap,
     progress,
     assumptions: {
-      baselineDealValue: round2(baselineValue),
-      averageClosedWonDealValue: round2(averageClosedWonDealValue),
+      baselineDealValue: outboundUtils.round2(baselineValue),
+      averageClosedWonDealValue: outboundUtils.round2(averageClosedWonDealValue),
       bucketWeights: {
-        closed: FORECAST_BUCKET_WEIGHTS.closed,
-        commitOnly: FORECAST_BUCKET_WEIGHTS.commitOnly,
-        bestCaseOnly: FORECAST_BUCKET_WEIGHTS.bestCaseOnly,
+        closed: outboundUtils.FORECAST_BUCKET_WEIGHTS.closed,
+        commitOnly: outboundUtils.FORECAST_BUCKET_WEIGHTS.commitOnly,
+        bestCaseOnly: outboundUtils.FORECAST_BUCKET_WEIGHTS.bestCaseOnly,
       },
     },
   };
 }
 
 async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
-  const normalizedPeriodType = VALID_FORECAST_PERIOD_TYPES.has(periodType) ? periodType : 'monthly';
-  const period = getCurrentPeriodWindow(normalizedPeriodType);
+  const normalizedPeriodType = outboundUtils.VALID_FORECAST_PERIOD_TYPES.has(periodType) ? periodType : 'monthly';
+  const period = outboundUtils.getCurrentPeriodWindow(normalizedPeriodType);
   const [overviewRes, sourceRes, sequenceRes, personaRowsRes, lineageRes, baselineValue] = await Promise.all([
     pool.query(
       `SELECT
@@ -2004,7 +1028,7 @@ async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
   const repliedLeads = Number(overview.replied_leads || 0);
   const meetingLeads = Number(overview.meeting_leads || 0);
   const opportunityLeads = Number(overview.opportunity_leads || 0);
-  const attributedRevenue = round2(Number(overview.attributed_revenue || 0));
+  const attributedRevenue = outboundUtils.round2(Number(overview.attributed_revenue || 0));
 
   const bySource = sourceRes.rows.map((row) => {
     const imported = Number(row.imported_leads || 0);
@@ -2012,7 +1036,7 @@ async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
     const replied = Number(row.replied_leads || 0);
     const meetings = Number(row.meeting_leads || 0);
     const opportunities = Number(row.opportunity_leads || 0);
-    const revenue = round2(Number(row.attributed_revenue || 0));
+    const revenue = outboundUtils.round2(Number(row.attributed_revenue || 0));
     return {
       sourceType: row.source_type,
       sourceReference: row.source_reference,
@@ -2022,11 +1046,11 @@ async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
       meetingLeads: meetings,
       opportunityLeads: opportunities,
       attributedRevenue: revenue,
-      meetingRateFromImported: safeRate(meetings, imported),
-      opportunityRateFromImported: safeRate(opportunities, imported),
-      replyRateFromContacted: safeRate(replied, contacted),
-      valuePerImportedLead: imported > 0 ? round2(revenue / imported) : 0,
-      valuePerOpportunity: opportunities > 0 ? round2(revenue / opportunities) : 0,
+      meetingRateFromImported: outboundUtils.safeRate(meetings, imported),
+      opportunityRateFromImported: outboundUtils.safeRate(opportunities, imported),
+      replyRateFromContacted: outboundUtils.safeRate(replied, contacted),
+      valuePerImportedLead: imported > 0 ? outboundUtils.round2(revenue / imported) : 0,
+      valuePerOpportunity: opportunities > 0 ? outboundUtils.round2(revenue / opportunities) : 0,
     };
   });
 
@@ -2035,7 +1059,7 @@ async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
     const replied = Number(row.replied_leads || 0);
     const meetings = Number(row.meeting_leads || 0);
     const opportunities = Number(row.opportunity_leads || 0);
-    const revenue = round2(Number(row.attributed_revenue || 0));
+    const revenue = outboundUtils.round2(Number(row.attributed_revenue || 0));
     return {
       sequenceId: row.sequence_id,
       sequenceName: row.sequence_name,
@@ -2044,15 +1068,15 @@ async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
       meetingLeads: meetings,
       opportunityLeads: opportunities,
       attributedRevenue: revenue,
-      replyRateFromContacted: safeRate(replied, contacted),
-      meetingRateFromContacted: safeRate(meetings, contacted),
-      opportunityRateFromContacted: safeRate(opportunities, contacted),
+      replyRateFromContacted: outboundUtils.safeRate(replied, contacted),
+      meetingRateFromContacted: outboundUtils.safeRate(meetings, contacted),
+      opportunityRateFromContacted: outboundUtils.safeRate(opportunities, contacted),
     };
   });
 
   const personaBuckets = new Map();
   for (const row of personaRowsRes.rows) {
-    const persona = classifyPersonaTitle(row.title);
+    const persona = outboundUtils.classifyPersonaTitle(row.title);
     if (!personaBuckets.has(persona)) {
       personaBuckets.set(persona, {
         persona,
@@ -2085,7 +1109,7 @@ async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
       const replied = bucket.repliedLeadIds.size;
       const meetings = bucket.meetingLeadIds.size;
       const opportunities = bucket.opportunityLeadIds.size;
-      const revenue = round2(bucket.attributedRevenue);
+      const revenue = outboundUtils.round2(bucket.attributedRevenue);
       return {
         persona: bucket.persona,
         leads,
@@ -2094,8 +1118,8 @@ async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
         meetingLeads: meetings,
         opportunityLeads: opportunities,
         attributedRevenue: revenue,
-        meetingRateFromLeads: safeRate(meetings, leads),
-        opportunityRateFromLeads: safeRate(opportunities, leads),
+        meetingRateFromLeads: outboundUtils.safeRate(meetings, leads),
+        opportunityRateFromLeads: outboundUtils.safeRate(opportunities, leads),
       };
     })
     .sort((a, b) => b.attributedRevenue - a.attributedRevenue || b.opportunityLeads - a.opportunityLeads || b.meetingLeads - a.meetingLeads)
@@ -2108,7 +1132,7 @@ async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
     sequenceName: row.sequence_name,
     meetings: Number(row.meetings || 0),
     opportunities: Number(row.opportunities || 0),
-    attributedRevenue: round2(Number(row.attributed_revenue || 0)),
+    attributedRevenue: outboundUtils.round2(Number(row.attributed_revenue || 0)),
   }));
 
   return {
@@ -2124,11 +1148,11 @@ async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
       meetingLeads,
       opportunityLeads,
       attributedRevenue,
-      meetingRateFromImported: safeRate(meetingLeads, importedLeads),
-      opportunityRateFromImported: safeRate(opportunityLeads, importedLeads),
-      replyRateFromContacted: safeRate(repliedLeads, contactedLeads),
-      valuePerImportedLead: importedLeads > 0 ? round2(attributedRevenue / importedLeads) : 0,
-      valuePerOpportunity: opportunityLeads > 0 ? round2(attributedRevenue / opportunityLeads) : 0,
+      meetingRateFromImported: outboundUtils.safeRate(meetingLeads, importedLeads),
+      opportunityRateFromImported: outboundUtils.safeRate(opportunityLeads, importedLeads),
+      replyRateFromContacted: outboundUtils.safeRate(repliedLeads, contactedLeads),
+      valuePerImportedLead: importedLeads > 0 ? outboundUtils.round2(attributedRevenue / importedLeads) : 0,
+      valuePerOpportunity: opportunityLeads > 0 ? outboundUtils.round2(attributedRevenue / opportunityLeads) : 0,
       estimatedSpend: 0,
     },
     bySource,
@@ -2137,8 +1161,8 @@ async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
     lineage,
     assumptions: {
       attributionModel: 'event_touchpoints',
-      stageOrder: ATTRIBUTION_STAGE_ORDER,
-      opportunityValueFallback: round2(baselineValue),
+      stageOrder: outboundUtils.ATTRIBUTION_STAGE_ORDER,
+      opportunityValueFallback: outboundUtils.round2(baselineValue),
       estimatedSpendModel: 'manual_cost_tracking_pending',
     },
   };
@@ -2149,13 +1173,30 @@ router.use(auth);
 /**
  * POST /api/outbound/leads/import/csv
  */
-router.post('/leads/import/csv', upload.single('file'), async (req, res) => {
-  const sourceType = VALID_SOURCE_TYPES.has(req.body.sourceType) ? req.body.sourceType : 'csv';
-  const sourceReference = req.body.sourceReference || null;
-  const sourceConfidence = Number(req.body.sourceConfidence || 80);
+const MAX_CSV_ROWS = 10000;
+
+router.post('/leads/import/csv', upload.single('file'), validateBody(ImportCsvSchema), async (req, res) => {
+  const { sourceType, sourceReference, sourceConfidence } = req.validatedBody;
 
   if (!req.file) {
     return res.status(400).json({ error: 'CSV file is required.' });
+  }
+
+  // Validate MIME type
+  const allowedMimeTypes = ['text/csv', 'application/vnd.ms-excel', 'application/csv'];
+  if (!allowedMimeTypes.includes(req.file.mimetype)) {
+    return res.status(400).json({ error: 'Invalid file type. Only CSV files are allowed.' });
+  }
+
+  const csvText = req.file.buffer.toString('utf8');
+  const rows = outboundUtils.parseCSV(csvText);
+
+  if (rows.length === 0) {
+    return res.status(400).json({ error: 'CSV file is empty or has no data rows.' });
+  }
+
+  if (rows.length > MAX_CSV_ROWS) {
+    return res.status(400).json({ error: `CSV exceeds maximum of ${MAX_CSV_ROWS} rows.` });
   }
 
   const importJob = await pool.query(
@@ -2166,27 +1207,27 @@ router.post('/leads/import/csv', upload.single('file'), async (req, res) => {
   );
 
   const jobId = importJob.rows[0].id;
+  const client = await pool.connect();
 
   try {
-    const csvText = req.file.buffer.toString('utf8');
-    const rows = parseCSV(csvText);
-
     let importedRows = 0;
     let duplicateRows = 0;
     let failedRows = 0;
     const errorSample = [];
 
+    await client.query('BEGIN');
+
     for (const row of rows) {
       try {
-        const lead = buildLeadFromRow(row);
+        const lead = outboundUtils.buildLeadFromRow(row);
         if (!lead.name || lead.name === 'Unknown') {
           throw new Error('Lead is missing name/first_name fields');
         }
 
-        const dedupeKey = computeDedupeKey(lead);
+        const dedupeKey = outboundUtils.computeDedupeKey(lead);
         const score = scoreLead(lead);
 
-        const existing = await pool.query(
+        const existing = await client.query(
           `SELECT id FROM outbound_leads WHERE user_id = $1 AND dedupe_key = $2`,
           [req.user.id, dedupeKey]
         );
@@ -2196,7 +1237,7 @@ router.post('/leads/import/csv', upload.single('file'), async (req, res) => {
           continue;
         }
 
-        const inserted = await pool.query(
+        const inserted = await client.query(
           `INSERT INTO outbound_leads
             (user_id, source_type, source_reference, source_confidence, is_synthetic,
              name, first_name, last_name, email, phone, company, title, linkedin_url,
@@ -2235,18 +1276,28 @@ router.post('/leads/import/csv', upload.single('file'), async (req, res) => {
         );
 
         importedRows++;
-        await recordLeadScoreHistory({
-          userId: req.user.id,
-          leadId: inserted.rows[0].id,
-          score,
-          source: 'import',
-        });
-        await logLeadEvent({
-          userId: req.user.id,
-          leadId: inserted.rows[0].id,
-          eventType: 'lead_imported',
-          metadata: { sourceType, sourceReference },
-        });
+        await client.query(
+          `INSERT INTO lead_score_history
+            (user_id, lead_id, fit_score, intent_score, engagement_score, total_score, status, next_recommended_action, reasons, source)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)`,
+          [
+            req.user.id,
+            inserted.rows[0].id,
+            score.fitScore,
+            score.intentScore,
+            0,
+            score.totalScore,
+            score.status,
+            score.nextRecommendedAction,
+            JSON.stringify(score.reasons || {}),
+            'import',
+          ]
+        );
+        await client.query(
+          `INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [req.user.id, inserted.rows[0].id, 'lead_imported', null, JSON.stringify({ sourceType, sourceReference })]
+        );
       } catch (err) {
         failedRows++;
         if (errorSample.length < 20) {
@@ -2254,6 +1305,8 @@ router.post('/leads/import/csv', upload.single('file'), async (req, res) => {
         }
       }
     }
+
+    await client.query('COMMIT');
 
     await pool.query(
       `UPDATE lead_import_jobs
@@ -2294,6 +1347,7 @@ router.post('/leads/import/csv', upload.single('file'), async (req, res) => {
       errorSample,
     });
   } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
     await pool.query(
       `UPDATE lead_import_jobs
        SET status = 'failed',
@@ -2308,6 +1362,8 @@ router.post('/leads/import/csv', upload.single('file'), async (req, res) => {
       message: err.message,
       jobId,
     });
+  } finally {
+    client.release();
   }
 });
 
@@ -2386,7 +1442,7 @@ router.get('/multifamily/summary', async (req, res) => {
  * Query: entityType=contact|deal|company, search, limit
  */
 router.get('/multifamily/entities', async (req, res) => {
-  const entityType = normalizeMultifamilyExplorerEntityType(req.query.entityType || 'contact');
+  const entityType = outboundUtils.normalizeMultifamilyExplorerEntityType(req.query.entityType || 'contact');
   const search = String(req.query.search || '').trim();
   const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
 
@@ -2563,7 +1619,7 @@ router.get('/multifamily/entities', async (req, res) => {
  * Query: objectType
  */
 router.get('/multifamily/objects', async (req, res) => {
-  const objectType = req.query.objectType ? normalizeMultifamilyObjectType(req.query.objectType) : null;
+  const objectType = req.query.objectType ? outboundUtils.normalizeMultifamilyObjectType(req.query.objectType) : null;
   if (req.query.objectType && !objectType) {
     return res.status(400).json({ error: 'Invalid objectType.' });
   }
@@ -2595,7 +1651,7 @@ router.get('/multifamily/objects', async (req, res) => {
 
   return res.json({
     total: result.rows.length,
-    objects: result.rows.map(mapMultifamilyObjectRow),
+    objects: result.rows.map(outboundUtils.mapMultifamilyObjectRow),
   });
 });
 
@@ -2603,18 +1659,8 @@ router.get('/multifamily/objects', async (req, res) => {
  * POST /api/outbound/multifamily/objects
  * Body: { objectType, name, description?, metadata? }
  */
-router.post('/multifamily/objects', async (req, res) => {
-  const objectType = normalizeMultifamilyObjectType(req.body.objectType);
-  const name = String(req.body.name || '').trim();
-  const description = req.body.description == null ? null : String(req.body.description).trim() || null;
-  const metadata = isPlainObject(req.body.metadata) ? req.body.metadata : {};
-
-  if (!objectType) {
-    return res.status(400).json({ error: 'Valid objectType is required.' });
-  }
-  if (!name) {
-    return res.status(400).json({ error: 'name is required.' });
-  }
+router.post('/multifamily/objects', validateBody(CreateMultifamilyObjectSchema), async (req, res) => {
+  const { objectType, name, description, metadata } = req.validatedBody;
 
   const insertedRes = await pool.query(
     `INSERT INTO multifamily_objects
@@ -2631,7 +1677,7 @@ router.post('/multifamily/objects', async (req, res) => {
   });
 
   return res.status(201).json(
-    mapMultifamilyObjectRow({
+    outboundUtils.mapMultifamilyObjectRow({
       ...inserted,
       total_association_count: 0,
       outbound_lead_count: 0,
@@ -2663,7 +1709,7 @@ router.patch('/multifamily/objects/:id', async (req, res) => {
   const nextName = req.body.name == null ? existing.name : String(req.body.name).trim();
   const nextDescription =
     req.body.description == null ? existing.description : String(req.body.description).trim() || null;
-  const nextMetadata = req.body.metadata == null ? existing.metadata || {} : isPlainObject(req.body.metadata) ? req.body.metadata : {};
+  const nextMetadata = req.body.metadata == null ? existing.metadata || {} : outboundUtils.isPlainObject(req.body.metadata) ? req.body.metadata : {};
 
   if (!nextName) {
     return res.status(400).json({ error: 'name cannot be empty.' });
@@ -2687,7 +1733,7 @@ router.patch('/multifamily/objects/:id', async (req, res) => {
   });
 
   return res.json(
-    mapMultifamilyObjectRow({
+    outboundUtils.mapMultifamilyObjectRow({
       ...updated,
       total_association_count: 0,
       outbound_lead_count: 0,
@@ -2725,7 +1771,7 @@ router.delete('/multifamily/objects/:id', async (req, res) => {
  * Query: entityType
  */
 router.get('/multifamily/objects/:id/associations', async (req, res) => {
-  const entityType = req.query.entityType ? normalizeMultifamilyEntityType(req.query.entityType) : null;
+  const entityType = req.query.entityType ? outboundUtils.normalizeMultifamilyEntityType(req.query.entityType) : null;
   if (req.query.entityType && !entityType) {
     return res.status(400).json({ error: 'Invalid entityType.' });
   }
@@ -2791,7 +1837,7 @@ router.get('/multifamily/objects/:id/associations', async (req, res) => {
 
   return res.json({
     total: result.rows.length,
-    associations: result.rows.map(mapMultifamilyAssociationRow),
+    associations: result.rows.map(outboundUtils.mapMultifamilyAssociationRow),
   });
 });
 
@@ -2813,10 +1859,10 @@ router.post('/multifamily/objects/:id/associations', async (req, res) => {
   }
   const object = objectRes.rows[0];
 
-  const entityType = normalizeMultifamilyEntityType(req.body.entityType);
-  const entityId = sanitizeUuidValue(req.body.entityId || '');
+  const entityType = outboundUtils.normalizeMultifamilyEntityType(req.body.entityType);
+  const entityId = outboundUtils.sanitizeUuidValue(req.body.entityId || '');
   const companyName = String(req.body.companyName || '').trim();
-  const metadata = isPlainObject(req.body.metadata) ? req.body.metadata : {};
+  const metadata = outboundUtils.isPlainObject(req.body.metadata) ? req.body.metadata : {};
 
   if (!entityType) {
     return res.status(400).json({ error: 'Valid entityType is required.' });
@@ -2880,7 +1926,7 @@ router.post('/multifamily/objects/:id/associations', async (req, res) => {
   );
 
   return res.status(201).json(
-    mapMultifamilyAssociationRow({
+    outboundUtils.mapMultifamilyAssociationRow({
       ...association,
       target_name: entityType === 'company' ? companyName : targetRecord?.name || null,
       target_email: targetRecord?.email || null,
@@ -2908,8 +1954,8 @@ router.post('/multifamily/objects/:id/associations/bulk', async (req, res) => {
   }
   const object = objectRes.rows[0];
 
-  const entityType = normalizeMultifamilyEntityType(req.body.entityType);
-  const metadata = isPlainObject(req.body.metadata) ? req.body.metadata : {};
+  const entityType = outboundUtils.normalizeMultifamilyEntityType(req.body.entityType);
+  const metadata = outboundUtils.isPlainObject(req.body.metadata) ? req.body.metadata : {};
 
   if (!entityType) {
     return res.status(400).json({ error: 'Valid entityType is required.' });
@@ -2945,7 +1991,7 @@ router.post('/multifamily/objects/:id/associations/bulk', async (req, res) => {
       );
 
       associations.push(
-        mapMultifamilyAssociationRow({
+        outboundUtils.mapMultifamilyAssociationRow({
           ...associationRes.rows[0],
           target_name: name,
           target_email: null,
@@ -2970,7 +2016,7 @@ router.post('/multifamily/objects/:id/associations/bulk', async (req, res) => {
     });
   }
 
-  const entityIds = sanitizeUuidList(req.body.entityIds);
+  const entityIds = outboundUtils.sanitizeUuidList(req.body.entityIds);
   if (!entityIds.length) {
     return res.status(400).json({ error: 'entityIds[] is required for contact/deal bulk associations.' });
   }
@@ -2997,7 +2043,7 @@ router.post('/multifamily/objects/:id/associations/bulk', async (req, res) => {
     );
 
     associations.push(
-      mapMultifamilyAssociationRow({
+      outboundUtils.mapMultifamilyAssociationRow({
         ...associationRes.rows[0],
         target_name: targetRecord.name || null,
         target_email: targetRecord.email || null,
@@ -3069,17 +2115,17 @@ router.delete('/multifamily/objects/:id/associations/:associationId', async (req
 /**
  * GET /api/outbound/leads
  */
-router.get('/leads', async (req, res) => {
-  const { status, minScore = 0, search = '', limit = 100 } = req.query;
+router.get('/leads', validateQuery(LeadFiltersSchema), async (req, res) => {
+  const { status, minScore = 0, search = '', limit = 100, cursor } = req.validatedQuery;
   await syncDataQualityIssuesForUser(req.user.id);
 
-  const objectTypeFilter = normalizeMultifamilyObjectType(req.query.objectType || '');
-  const objectIdFilter = sanitizeUuidValue(req.query.objectId || '');
+  const objectTypeFilter = outboundUtils.normalizeMultifamilyObjectType(req.query.objectType || '');
+  const objectIdFilter = outboundUtils.sanitizeUuidValue(req.query.objectId || '');
   const specificObjectFilters = [
-    { objectType: 'portfolio', objectId: sanitizeUuidValue(req.query.portfolioId || '') },
-    { objectType: 'property', objectId: sanitizeUuidValue(req.query.propertyId || '') },
-    { objectType: 'tech_stack', objectId: sanitizeUuidValue(req.query.techStackId || '') },
-    { objectType: 'initiative', objectId: sanitizeUuidValue(req.query.initiativeId || '') },
+    { objectType: 'portfolio', objectId: outboundUtils.sanitizeUuidValue(req.query.portfolioId || '') },
+    { objectType: 'property', objectId: outboundUtils.sanitizeUuidValue(req.query.propertyId || '') },
+    { objectType: 'tech_stack', objectId: outboundUtils.sanitizeUuidValue(req.query.techStackId || '') },
+    { objectType: 'initiative', objectId: outboundUtils.sanitizeUuidValue(req.query.initiativeId || '') },
   ].filter((entry) => entry.objectId);
 
   if ((req.query.objectType || req.query.objectId) && (!objectTypeFilter || !objectIdFilter)) {
@@ -3156,11 +2202,44 @@ router.get('/leads', async (req, res) => {
       )`;
   }
 
-  params.push(Math.min(500, Math.max(1, Number(limit))));
-  sql += ` ORDER BY l.total_score DESC, l.created_at DESC LIMIT $${params.length}`;
+  let cursorScore = null;
+  let cursorId = null;
+  if (cursor) {
+    try {
+      const parsed = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
+      if (typeof parsed.score === 'number' && parsed.id) {
+        cursorScore = parsed.score;
+        cursorId = parsed.id;
+      }
+    } catch {
+      return res.status(400).json({ error: 'Invalid cursor.' });
+    }
+  }
+
+  if (cursorScore !== null && cursorId !== null) {
+    params.push(cursorScore);
+    const scoreIdx = params.length;
+    params.push(cursorId);
+    const idIdx = params.length;
+    sql += ` AND (l.total_score < $${scoreIdx} OR (l.total_score = $${scoreIdx} AND l.id < $${idIdx}::uuid))`;
+  }
+
+  const safeLimit = Math.min(500, Math.max(1, Number(limit)));
+  params.push(safeLimit + 1);
+  sql += ` ORDER BY l.total_score DESC, l.id DESC LIMIT $${params.length}`;
 
   const result = await pool.query(sql, params);
-  return res.json({ total: result.rows.length, leads: result.rows });
+  const rows = result.rows;
+  const hasMore = rows.length > safeLimit;
+  const leads = hasMore ? rows.slice(0, safeLimit) : rows;
+
+  let nextCursor = null;
+  if (hasMore && leads.length > 0) {
+    const last = leads[leads.length - 1];
+    nextCursor = Buffer.from(JSON.stringify({ score: last.total_score, id: last.id })).toString('base64');
+  }
+
+  return res.json({ total: leads.length, leads, nextCursor });
 });
 
 /**
@@ -3169,7 +2248,7 @@ router.get('/leads', async (req, res) => {
  */
 router.get('/saved-views', async (req, res) => {
   const scope = String(req.query.scope || 'outbound_leads').trim().toLowerCase();
-  if (!VALID_OUTBOUND_SAVED_VIEW_SCOPES.has(scope)) {
+  if (!outboundUtils.VALID_OUTBOUND_SAVED_VIEW_SCOPES.has(scope)) {
     return res.status(400).json({ error: 'Invalid saved view scope.' });
   }
 
@@ -3184,7 +2263,7 @@ router.get('/saved-views', async (req, res) => {
 
   return res.json({
     total: result.rows.length,
-    views: result.rows.map(mapSavedViewRow),
+    views: result.rows.map(outboundUtils.mapSavedViewRow),
   });
 });
 
@@ -3196,10 +2275,10 @@ router.post('/saved-views', async (req, res) => {
   const scope = String(req.body.scope || 'outbound_leads').trim().toLowerCase();
   const name = String(req.body.name || '').trim();
   const isDefault = Boolean(req.body.isDefault);
-  const filters = normalizeSavedViewFilters(req.body.filters);
-  const displayOptions = isPlainObject(req.body.displayOptions) ? req.body.displayOptions : {};
+  const filters = outboundUtils.normalizeSavedViewFilters(req.body.filters);
+  const displayOptions = outboundUtils.isPlainObject(req.body.displayOptions) ? req.body.displayOptions : {};
 
-  if (!VALID_OUTBOUND_SAVED_VIEW_SCOPES.has(scope)) {
+  if (!outboundUtils.VALID_OUTBOUND_SAVED_VIEW_SCOPES.has(scope)) {
     return res.status(400).json({ error: 'Invalid saved view scope.' });
   }
   if (!name) {
@@ -3238,7 +2317,7 @@ router.post('/saved-views', async (req, res) => {
       isDefault,
     });
 
-    return res.status(201).json(mapSavedViewRow(insertedRes.rows[0]));
+    return res.status(201).json(outboundUtils.mapSavedViewRow(insertedRes.rows[0]));
   } catch (err) {
     try {
       await client.query('ROLLBACK');
@@ -3274,9 +2353,9 @@ router.patch('/saved-views/:id', async (req, res) => {
   const existing = existingRes.rows[0];
   const nextName = req.body.name == null ? existing.name : String(req.body.name).trim();
   const nextIsDefault = req.body.isDefault == null ? Boolean(existing.is_default) : Boolean(req.body.isDefault);
-  const nextFilters = req.body.filters == null ? existing.filters || {} : normalizeSavedViewFilters(req.body.filters);
+  const nextFilters = req.body.filters == null ? existing.filters || {} : outboundUtils.normalizeSavedViewFilters(req.body.filters);
   const nextDisplayOptions =
-    req.body.displayOptions == null ? existing.display_options || {} : isPlainObject(req.body.displayOptions) ? req.body.displayOptions : {};
+    req.body.displayOptions == null ? existing.display_options || {} : outboundUtils.isPlainObject(req.body.displayOptions) ? req.body.displayOptions : {};
 
   if (!nextName) {
     return res.status(400).json({ error: 'Saved view name cannot be empty.' });
@@ -3318,7 +2397,7 @@ router.patch('/saved-views/:id', async (req, res) => {
       isDefault: nextIsDefault,
     });
 
-    return res.json(mapSavedViewRow(updatedRes.rows[0]));
+    return res.json(outboundUtils.mapSavedViewRow(updatedRes.rows[0]));
   } catch (err) {
     try {
       await client.query('ROLLBACK');
@@ -3362,17 +2441,8 @@ router.delete('/saved-views/:id', async (req, res) => {
  * POST /api/outbound/leads/bulk
  * Body: { leadIds: string[], actionType: set_status|suppress|unsuppress|rescore, payload?: {} }
  */
-router.post('/leads/bulk', async (req, res) => {
-  const leadIds = sanitizeUuidList(req.body.leadIds);
-  const actionType = String(req.body.actionType || '').trim().toLowerCase();
-  const payload = isPlainObject(req.body.payload) ? req.body.payload : {};
-
-  if (!leadIds.length) {
-    return res.status(400).json({ error: 'leadIds[] is required.' });
-  }
-  if (!VALID_OUTBOUND_BULK_ACTIONS.has(actionType)) {
-    return res.status(400).json({ error: 'Invalid bulk action type.' });
-  }
+router.post('/leads/bulk', validateBody(BulkActionSchema), async (req, res) => {
+  const { leadIds, actionType, payload } = req.validatedBody;
 
   const leadsRes = await pool.query(
     `SELECT id, name, status, suppression_reason
@@ -3393,7 +2463,7 @@ router.post('/leads/bulk', async (req, res) => {
   const statusTarget = String(payload.status || '').trim().toLowerCase();
   const suppressionReason = String(payload.reason || '').trim();
 
-  if (actionType === 'set_status' && !VALID_OUTBOUND_LEAD_STATUSES.has(statusTarget)) {
+  if (actionType === 'set_status' && !outboundUtils.VALID_OUTBOUND_LEAD_STATUSES.has(statusTarget)) {
     return res.status(400).json({ error: 'payload.status must be a valid lead status for set_status action.' });
   }
   if (actionType === 'suppress' && !suppressionReason) {
@@ -3442,7 +2512,7 @@ router.post('/leads/bulk', async (req, res) => {
           bulkAction: true,
         },
       });
-      const stoppedIds = await autoStopOpenSequenceEnrollments({
+      const stoppedIds = await sequenceService.autoStopOpenSequenceEnrollments({
         userId: req.user.id,
         leadId: lead.id,
         reason: 'Auto-stopped after bulk suppression',
@@ -3640,7 +2710,7 @@ router.get('/sla/alerts', async (req, res) => {
       severity: row.severity,
       leadId: row.lead_id || null,
       dueAt: row.due_at || null,
-      ageHours: row.age_seconds != null ? round2(Number(row.age_seconds) / 3600) : null,
+      ageHours: row.age_seconds != null ? outboundUtils.round2(Number(row.age_seconds) / 3600) : null,
       lead: {
         id: row.lead_id || null,
         name: row.lead_name || null,
@@ -3682,10 +2752,10 @@ router.get('/data-quality/issues', async (req, res) => {
   const issueType = String(req.query.issueType || '').trim().toLowerCase();
   const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
 
-  if (status && !VALID_DATA_QUALITY_STATUSES.has(status)) {
+  if (status && !outboundUtils.VALID_DATA_QUALITY_STATUSES.has(status)) {
     return res.status(400).json({ error: 'Invalid data quality status filter.' });
   }
-  if (issueType && !VALID_DATA_QUALITY_ISSUE_TYPES.has(issueType)) {
+  if (issueType && !outboundUtils.VALID_DATA_QUALITY_ISSUE_TYPES.has(issueType)) {
     return res.status(400).json({ error: 'Invalid data quality issueType filter.' });
   }
 
@@ -3745,7 +2815,7 @@ router.get('/data-quality/issues', async (req, res) => {
 
   return res.json({
     total: issuesRes.rows.length,
-    issues: issuesRes.rows.map(mapDataQualityIssueRow),
+    issues: issuesRes.rows.map(outboundUtils.mapDataQualityIssueRow),
     summary: summaryRes.rows[0] || {
       open_count: 0,
       open_blocking_count: 0,
@@ -3778,7 +2848,7 @@ router.get('/data-quality/merge-operations', async (req, res) => {
 
   return res.json({
     total: result.rows.length,
-    mergeOperations: result.rows.map(mapDataQualityMergeOperationRow),
+    mergeOperations: result.rows.map(outboundUtils.mapDataQualityMergeOperationRow),
   });
 });
 
@@ -3804,10 +2874,10 @@ router.post('/data-quality/issues/:id/merge', async (req, res) => {
     return res.status(400).json({ error: 'Merge is only supported for potential_duplicate issues.' });
   }
 
-  const issueDetails = isPlainObject(issue.details) ? issue.details : {};
-  const candidateLeadIdsFromIssue = sanitizeUuidList(issueDetails.candidateLeadIds || issueDetails.candidate_lead_ids || []);
-  const bodyDuplicateLeadIds = sanitizeUuidList(req.body.duplicateLeadIds || []);
-  const primaryLeadId = sanitizeUuidValue(req.body.primaryLeadId || issueDetails.suggestedPrimaryLeadId || issue.lead_id || '');
+  const issueDetails = outboundUtils.isPlainObject(issue.details) ? issue.details : {};
+  const candidateLeadIdsFromIssue = outboundUtils.sanitizeUuidList(issueDetails.candidateLeadIds || issueDetails.candidate_lead_ids || []);
+  const bodyDuplicateLeadIds = outboundUtils.sanitizeUuidList(req.body.duplicateLeadIds || []);
+  const primaryLeadId = outboundUtils.sanitizeUuidValue(req.body.primaryLeadId || issueDetails.suggestedPrimaryLeadId || issue.lead_id || '');
 
   if (!primaryLeadId) {
     return res.status(400).json({ error: 'primaryLeadId is required for duplicate merge.' });
@@ -3856,21 +2926,21 @@ router.post('/data-quality/issues/:id/merge', async (req, res) => {
     const mergedFields = {};
     const textFields = ['name', 'first_name', 'last_name', 'email', 'phone', 'company', 'title', 'linkedin_url', 'website', 'location'];
     for (const field of textFields) {
-      mergedFields[field] = pickPrimaryThenDuplicate(primaryLead[field], duplicateLeads, field);
+      mergedFields[field] = outboundUtils.pickPrimaryThenDuplicate(primaryLead[field], duplicateLeads, field);
     }
 
     if (mergedFields.email) {
       mergedFields.email = mergedFields.email.toLowerCase();
     }
     if (mergedFields.linkedin_url) {
-      mergedFields.linkedin_url = canonicalLinkedInUrl(mergedFields.linkedin_url);
+      mergedFields.linkedin_url = outboundUtils.canonicalLinkedInUrl(mergedFields.linkedin_url);
     }
 
-    const mergedNotes = mergeUniqueNoteBlocks(primaryLead.notes, duplicateLeads);
+    const mergedNotes = outboundUtils.mergeUniqueNoteBlocks(primaryLead.notes, duplicateLeads);
     const mergedRawData = Object.assign(
       {},
-      ...duplicateLeads.map((lead) => (isPlainObject(lead.raw_data) ? lead.raw_data : {})),
-      isPlainObject(primaryLead.raw_data) ? primaryLead.raw_data : {}
+      ...duplicateLeads.map((lead) => (outboundUtils.isPlainObject(lead.raw_data) ? lead.raw_data : {})),
+      outboundUtils.isPlainObject(primaryLead.raw_data) ? primaryLead.raw_data : {}
     );
 
     const mergedSourceConfidence = Math.max(
@@ -3902,9 +2972,9 @@ router.post('/data-quality/issues/:id/merge', async (req, res) => {
       fieldUpdates.total_score = { from: Number(primaryLead.total_score || 0), to: mergedTotalScore };
     }
 
-    const nextRecommendedAction = pickPrimaryThenDuplicate(primaryLead.next_recommended_action, duplicateLeads, 'next_recommended_action');
-    const suppressionReason = pickPrimaryThenDuplicate(primaryLead.suppression_reason, duplicateLeads, 'suppression_reason');
-    const lastOutreachChannel = pickPrimaryThenDuplicate(primaryLead.last_outreach_channel, duplicateLeads, 'last_outreach_channel');
+    const nextRecommendedAction = outboundUtils.pickPrimaryThenDuplicate(primaryLead.next_recommended_action, duplicateLeads, 'next_recommended_action');
+    const suppressionReason = outboundUtils.pickPrimaryThenDuplicate(primaryLead.suppression_reason, duplicateLeads, 'suppression_reason');
+    const lastOutreachChannel = outboundUtils.pickPrimaryThenDuplicate(primaryLead.last_outreach_channel, duplicateLeads, 'last_outreach_channel');
     const isSynthetic = Boolean(primaryLead.is_synthetic) && duplicateLeads.every((lead) => Boolean(lead.is_synthetic));
 
     const updatedPrimaryRes = await client.query(
@@ -4037,7 +3107,7 @@ router.post('/data-quality/issues/:id/merge', async (req, res) => {
 
     await client.query(
       `UPDATE multifamily_object_associations
-       SET entity_id = $1,
+       SET entity_id = $1::uuid,
            target_key = $1::text,
            updated_at = NOW()
        WHERE user_id = $2
@@ -4106,7 +3176,7 @@ router.post('/data-quality/issues/:id/merge', async (req, res) => {
     });
 
     return res.json({
-      mergeOperation: mapDataQualityMergeOperationRow(mergeOperation),
+      mergeOperation: outboundUtils.mapDataQualityMergeOperationRow(mergeOperation),
       primaryLead: updatedPrimaryRes.rows[0],
       mergedLeadIds: duplicateLeadIds,
       resolvedIssueId: issue.id,
@@ -4129,7 +3199,7 @@ router.post('/data-quality/issues/:id/merge', async (req, res) => {
  */
 router.patch('/data-quality/issues/:id/status', async (req, res) => {
   const status = String(req.body.status || '').trim().toLowerCase();
-  if (!VALID_DATA_QUALITY_STATUSES.has(status)) {
+  if (!outboundUtils.VALID_DATA_QUALITY_STATUSES.has(status)) {
     return res.status(400).json({ error: 'Invalid status value.' });
   }
 
@@ -4164,33 +3234,15 @@ router.patch('/data-quality/issues/:id/status', async (req, res) => {
       )
     : { rows: [] };
 
-  return res.json(mapDataQualityIssueRow({ ...issueRow, ...(leadRes.rows[0] || {}) }));
+  return res.json(outboundUtils.mapDataQualityIssueRow({ ...issueRow, ...(leadRes.rows[0] || {}) }));
 });
 
 /**
  * GET /api/outbound/sequences
  */
 router.get('/sequences', async (req, res) => {
-  const result = await pool.query(
-    `SELECT
-       s.id,
-       s.name,
-       s.description,
-       s.created_at,
-       s.updated_at,
-       COUNT(st.id)::int AS step_count
-     FROM sequences s
-     LEFT JOIN sequence_steps st ON st.sequence_id = s.id
-     WHERE s.user_id = $1
-     GROUP BY s.id
-     ORDER BY s.updated_at DESC`,
-    [req.user.id]
-  );
-
-  return res.json({
-    total: result.rows.length,
-    sequences: result.rows,
-  });
+  const result = await sequenceService.listSequences(req.user.id);
+  return res.json(result);
 });
 
 /**
@@ -4198,225 +3250,49 @@ router.get('/sequences', async (req, res) => {
  * Query: status, limit
  */
 router.get('/sequences/enrollments', async (req, res) => {
-  const status = String(req.query.status || '').trim().toLowerCase();
-  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
-
-  if (status && !VALID_SEQUENCE_ENROLLMENT_STATES.has(status)) {
-    return res.status(400).json({ error: 'Invalid enrollment status filter.' });
+  try {
+    const result = await sequenceService.listEnrollments(
+      req.user.id,
+      req.query.status,
+      req.query.limit
+    );
+    return res.json(result);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
-
-  const params = [req.user.id];
-  const filters = ['e.user_id = $1'];
-  if (status) {
-    params.push(status);
-    filters.push(`e.status = $${params.length}`);
-  }
-  params.push(limit);
-
-  const result = await pool.query(
-    `SELECT
-       e.*,
-       s.name AS sequence_name,
-       l.name AS lead_name,
-       l.email AS lead_email,
-       l.company AS lead_company,
-       l.status AS lead_status,
-       COALESCE(step_counts.total_steps, 0) AS total_steps
-     FROM outbound_sequence_enrollments e
-     JOIN sequences s ON s.id = e.sequence_id
-     JOIN outbound_leads l ON l.id = e.lead_id
-     LEFT JOIN (
-       SELECT sequence_id, COUNT(*)::int AS total_steps
-       FROM sequence_steps
-       GROUP BY sequence_id
-     ) step_counts ON step_counts.sequence_id = e.sequence_id
-     WHERE ${filters.join(' AND ')}
-     ORDER BY e.updated_at DESC
-     LIMIT $${params.length}`,
-    params
-  );
-
-  return res.json({
-    total: result.rows.length,
-    enrollments: result.rows,
-  });
 });
 
 /**
  * POST /api/outbound/sequences/:id/enroll
  * Body: { leadId }
  */
-router.post('/sequences/:id/enroll', async (req, res) => {
-  const sequenceId = req.params.id;
-  const leadId = String(req.body.leadId || '').trim();
-
-  if (!leadId) {
-    return res.status(400).json({ error: 'leadId is required.' });
-  }
-
-  const sequenceRes = await pool.query(
-    `SELECT id, name
-     FROM sequences
-     WHERE id = $1
-       AND user_id = $2`,
-    [sequenceId, req.user.id]
-  );
-  if (!sequenceRes.rows.length) {
-    return res.status(404).json({ error: 'Sequence not found.' });
-  }
-
-  const stepsRes = await pool.query(
-    `SELECT COUNT(*)::int AS total_steps
-     FROM sequence_steps
-     WHERE sequence_id = $1`,
-    [sequenceId]
-  );
-  const totalSteps = Number(stepsRes.rows[0]?.total_steps || 0);
-  if (totalSteps === 0) {
-    return res.status(409).json({ error: 'Sequence has no steps yet.' });
-  }
-
-  const leadRes = await pool.query(
-    `SELECT
-       id,
-       name,
-       email,
-       linkedin_url,
-       company,
-       title,
-       source_confidence,
-       status,
-       suppression_reason,
-       created_at,
-       updated_at
-     FROM outbound_leads
-     WHERE id = $1
-       AND user_id = $2`,
-    [leadId, req.user.id]
-  );
-  if (!leadRes.rows.length) {
-    return res.status(404).json({ error: 'Lead not found.' });
-  }
-
-  const lead = leadRes.rows[0];
-  if (lead.status === 'suppressed' || lead.suppression_reason) {
-    return res.status(409).json({ error: 'Suppressed leads cannot be enrolled in sequences.' });
-  }
-
-  let duplicateGroup = null;
-  const normalizedName = normalizeIssueToken(lead.name);
-  const normalizedCompany = normalizeIssueToken(lead.company);
-  if (normalizedName && normalizedCompany) {
-    const duplicateRes = await pool.query(
-      `SELECT ARRAY_AGG(id ORDER BY updated_at DESC, created_at DESC) AS lead_ids
-       FROM outbound_leads
-       WHERE user_id = $1
-         AND LOWER(REGEXP_REPLACE(COALESCE(name, ''), '[^a-z0-9]+', '', 'g')) = $2
-         AND LOWER(REGEXP_REPLACE(COALESCE(company, ''), '[^a-z0-9]+', '', 'g')) = $3`,
-      [req.user.id, normalizedName, normalizedCompany]
-    );
-    const duplicateLeadIds = duplicateRes.rows[0]?.lead_ids || [];
-    if (duplicateLeadIds.length > 1) {
-      duplicateGroup = {
-        groupKey: `${normalizedName}:${normalizedCompany}`,
-        leadIds: duplicateLeadIds,
-        suggestedPrimaryLeadId: duplicateLeadIds[0],
-      };
-    }
-  }
-
-  const leadIssues = buildLeadDataQualityIssueCandidates(lead, { duplicateGroup });
-  await upsertDataQualityIssues(req.user.id, leadIssues);
-  const blockingIssues = leadIssues.filter((issue) => DATA_QUALITY_BLOCKING_TYPES.has(issue.issueType));
-  if (blockingIssues.length) {
-    return res.status(409).json({
-      error: 'Lead failed data quality guardrails before enrollment.',
-      code: 'data_quality_block',
-      blockers: blockingIssues.map((issue) => ({
-        issueType: issue.issueType,
-        severity: issue.severity,
-        details: issue.details || {},
-      })),
-    });
-  }
-
-  const openRes = await pool.query(
-    `SELECT e.id, e.sequence_id, e.status, s.name AS sequence_name
-     FROM outbound_sequence_enrollments e
-     JOIN sequences s ON s.id = e.sequence_id
-     WHERE e.user_id = $1
-       AND e.lead_id = $2
-       AND e.status IN ('active', 'paused')
-     LIMIT 1`,
-    [req.user.id, leadId]
-  );
-  if (openRes.rows.length) {
-    const open = openRes.rows[0];
-    return res.status(409).json({
-      error: `Lead already has an ${open.status} sequence enrollment.`,
-      enrollmentId: open.id,
-      sequenceId: open.sequence_id,
-      sequenceName: open.sequence_name,
-    });
-  }
-
+router.post('/sequences/:id/enroll', validateBody(EnrollSequenceSchema), async (req, res) => {
   try {
-    const insertedRes = await pool.query(
-      `INSERT INTO outbound_sequence_enrollments
-        (user_id, sequence_id, lead_id, status, current_step, next_step_due_at)
-       VALUES ($1, $2, $3, 'active', 1, NOW())
-       RETURNING id`,
-      [req.user.id, sequenceId, leadId]
-    );
-
-    const enrollmentId = insertedRes.rows[0].id;
-
-    await recordSequenceTransition({
-      enrollmentId,
+    const enrollment = await sequenceService.enrollLead({
       userId: req.user.id,
-      fromState: null,
-      toState: 'active',
-      reason: 'Manual enroll',
-      triggerSource: 'manual',
-      metadata: { sequenceId, leadId },
+      sequenceId: req.params.id,
+      leadId: req.validatedBody.leadId,
+      logLeadEventFn: logLeadEvent,
     });
-
-    await pool.query(
-      `UPDATE outbound_leads
-       SET status = CASE
-            WHEN status IN ('new', 'qualified') THEN 'queued'
-            ELSE status
-          END,
-          updated_at = NOW()
-       WHERE id = $1
-         AND user_id = $2`,
-      [leadId, req.user.id]
-    );
-
-    await logLeadEvent({
-      userId: req.user.id,
-      leadId,
-      eventType: 'sequence_enrolled',
-      metadata: { sequenceId, enrollmentId },
-    });
-
-    logAction(
-      req.user.id,
-      req.user.email,
-      'outbound_sequence_enrolled',
-      'outbound_sequence_enrollment',
-      enrollmentId,
-      sequenceRes.rows[0].name,
-      { leadId }
-    );
-
-    const enrollment = await getEnrollmentRecord(req.user.id, enrollmentId);
     return res.status(201).json(enrollment);
   } catch (err) {
-    if (err?.code === '23505') {
-      return res.status(409).json({ error: 'Lead already has an open sequence enrollment.' });
+    if (err.code === 'data_quality_block') {
+      return res.status(409).json({
+        error: err.message,
+        code: err.code,
+        blockers: err.blockers,
+      });
     }
-    return res.status(500).json({ error: 'Failed to enroll lead into sequence.' });
+    if (err.enrollmentId) {
+      return res.status(409).json({
+        error: err.message,
+        enrollmentId: err.enrollmentId,
+        sequenceId: err.sequenceId,
+        sequenceName: err.sequenceName,
+      });
+    }
+    const statusCode = err.message.includes('not found') ? 404 : 409;
+    return res.status(statusCode).json({ error: err.message });
   }
 });
 
@@ -4424,105 +3300,20 @@ router.post('/sequences/:id/enroll', async (req, res) => {
  * PATCH /api/outbound/sequences/enrollments/:id/state
  * Body: { state, reason? }
  */
-router.patch('/sequences/enrollments/:id/state', async (req, res) => {
-  const enrollmentId = req.params.id;
-  const nextState = String(req.body.state || '').trim().toLowerCase();
-  const reason = req.body.reason ? String(req.body.reason).trim() : '';
-
-  if (!VALID_SEQUENCE_ENROLLMENT_STATES.has(nextState)) {
-    return res.status(400).json({ error: 'Invalid state.' });
-  }
-
-  const existing = await getEnrollmentRecord(req.user.id, enrollmentId);
-  if (!existing) {
-    return res.status(404).json({ error: 'Sequence enrollment not found.' });
-  }
-
-  const currentState = String(existing.status || '').toLowerCase();
-  if (currentState === nextState) {
-    return res.json(existing);
-  }
-
-  const allowedTargets = ALLOWED_MANUAL_SEQUENCE_TRANSITIONS[currentState] || new Set();
-  if (!allowedTargets.has(nextState)) {
-    return res.status(409).json({
-      error: `Cannot transition enrollment from ${currentState} to ${nextState}.`,
+router.patch('/sequences/enrollments/:id/state', validateBody(ChangeSequenceStateSchema), async (req, res) => {
+  try {
+    const updated = await sequenceService.changeEnrollmentState({
+      userId: req.user.id,
+      enrollmentId: req.params.id,
+      nextState: req.validatedBody.state,
+      reason: req.validatedBody.reason,
+      logLeadEventFn: logLeadEvent,
     });
+    return res.json(updated);
+  } catch (err) {
+    const statusCode = err.message.includes('not found') ? 404 : 409;
+    return res.status(statusCode).json({ error: err.message });
   }
-
-  if (nextState === 'active' && (existing.lead_status === 'suppressed' || existing.suppression_reason)) {
-    return res.status(409).json({
-      error: 'Cannot resume sequence while lead is suppressed.',
-    });
-  }
-
-  const defaultReason =
-    nextState === 'paused' ? 'Manual pause' : nextState === 'stopped' ? 'Manual stop' : 'Manual state update';
-  const finalReason = reason || defaultReason;
-
-  await pool.query(
-    `UPDATE outbound_sequence_enrollments
-     SET status = $1,
-         pause_reason = CASE
-           WHEN $1 = 'paused' THEN $2
-           WHEN $1 = 'active' THEN NULL
-           ELSE pause_reason
-         END,
-         stop_reason = CASE
-           WHEN $1 = 'stopped' THEN $2
-           ELSE stop_reason
-         END,
-         paused_at = CASE WHEN $1 = 'paused' THEN NOW() ELSE paused_at END,
-         resumed_at = CASE WHEN $1 = 'active' THEN NOW() ELSE resumed_at END,
-         stopped_at = CASE WHEN $1 = 'stopped' THEN NOW() ELSE stopped_at END,
-         completed_at = CASE WHEN $1 = 'completed' THEN NOW() ELSE completed_at END,
-         updated_at = NOW(),
-         last_transition_at = NOW()
-     WHERE id = $3
-       AND user_id = $4`,
-    [nextState, finalReason, enrollmentId, req.user.id]
-  );
-
-  await recordSequenceTransition({
-    enrollmentId,
-    userId: req.user.id,
-    fromState: currentState,
-    toState: nextState,
-    reason: finalReason,
-    triggerSource: 'manual',
-    metadata: { leadId: existing.lead_id, sequenceId: existing.sequence_id },
-  });
-
-  await logLeadEvent({
-    userId: req.user.id,
-    leadId: existing.lead_id,
-    eventType: 'sequence_state_changed',
-    metadata: {
-      enrollmentId,
-      sequenceId: existing.sequence_id,
-      fromState: currentState,
-      toState: nextState,
-      reason: finalReason,
-    },
-  });
-
-  logAction(
-    req.user.id,
-    req.user.email,
-    'outbound_sequence_state_changed',
-    'outbound_sequence_enrollment',
-    enrollmentId,
-    existing.sequence_name,
-    {
-      leadId: existing.lead_id,
-      fromState: currentState,
-      toState: nextState,
-      reason: finalReason,
-    }
-  );
-
-  const updated = await getEnrollmentRecord(req.user.id, enrollmentId);
-  return res.json(updated);
 });
 
 /**
@@ -4554,25 +3345,11 @@ router.get('/workflows/rules', async (req, res) => {
 /**
  * POST /api/outbound/workflows/rules
  */
-router.post('/workflows/rules', async (req, res) => {
-  const name = String(req.body.name || '').trim();
+router.post('/workflows/rules', validateBody(CreateWorkflowRuleSchema), async (req, res) => {
+  const { name, triggerEvent, conditions, trueActions, falseActions, enabled, priority } = req.validatedBody;
   const description = req.body.description ? String(req.body.description).trim() : null;
-  const triggerEvent = String(req.body.triggerEvent || '').trim();
-  const priority = Math.max(0, Math.min(1000, Number(req.body.priority || 100)));
-  const enabled = req.body.enabled == null ? true : Boolean(req.body.enabled);
-  const conditions = isPlainObject(req.body.conditions) ? req.body.conditions : {};
-
   const rawTrueActions = Array.isArray(req.body.trueActions) ? req.body.trueActions : [];
   const rawFalseActions = Array.isArray(req.body.falseActions) ? req.body.falseActions : [];
-  const trueActions = normalizeRuleActions(rawTrueActions);
-  const falseActions = normalizeRuleActions(rawFalseActions);
-
-  if (!name) {
-    return res.status(400).json({ error: 'Rule name is required.' });
-  }
-  if (!VALID_RULE_TRIGGER_EVENTS.has(triggerEvent)) {
-    return res.status(400).json({ error: 'Invalid triggerEvent for outbound workflow rule.' });
-  }
   if (rawTrueActions.length !== trueActions.length || rawFalseActions.length !== falseActions.length) {
     return res.status(400).json({ error: 'One or more actions are invalid.' });
   }
@@ -4628,19 +3405,19 @@ router.patch('/workflows/rules/:id', async (req, res) => {
   const priority =
     req.body.priority == null ? Number(current.priority) : Math.max(0, Math.min(1000, Number(req.body.priority)));
   const enabled = req.body.enabled == null ? Boolean(current.enabled) : Boolean(req.body.enabled);
-  const conditions = req.body.conditions == null ? current.conditions : isPlainObject(req.body.conditions) ? req.body.conditions : {};
+  const conditions = req.body.conditions == null ? current.conditions : outboundUtils.isPlainObject(req.body.conditions) ? req.body.conditions : {};
 
   if (!name) {
     return res.status(400).json({ error: 'Rule name is required.' });
   }
-  if (!VALID_RULE_TRIGGER_EVENTS.has(triggerEvent)) {
+  if (!outboundUtils.VALID_RULE_TRIGGER_EVENTS.has(triggerEvent)) {
     return res.status(400).json({ error: 'Invalid triggerEvent for outbound workflow rule.' });
   }
 
   const rawTrueActions = req.body.trueActions == null ? current.true_actions : req.body.trueActions;
   const rawFalseActions = req.body.falseActions == null ? current.false_actions : req.body.falseActions;
-  const trueActions = normalizeRuleActions(rawTrueActions);
-  const falseActions = normalizeRuleActions(rawFalseActions);
+  const trueActions = outboundUtils.normalizeRuleActions(rawTrueActions);
+  const falseActions = outboundUtils.normalizeRuleActions(rawFalseActions);
 
   if (
     (Array.isArray(rawTrueActions) && rawTrueActions.length !== trueActions.length) ||
@@ -4739,13 +3516,13 @@ router.post('/workflows/rules/:id/test', async (req, res) => {
   const triggerEvent = req.body.triggerEvent
     ? String(req.body.triggerEvent).trim()
     : String(rule.trigger_event || '').trim();
-  if (!VALID_RULE_TRIGGER_EVENTS.has(triggerEvent)) {
+  if (!outboundUtils.VALID_RULE_TRIGGER_EVENTS.has(triggerEvent)) {
     return res.status(400).json({ error: 'Invalid triggerEvent for test run.' });
   }
 
   const leadId = req.body.leadId ? String(req.body.leadId).trim() : null;
   const applyActions = Boolean(req.body.applyActions);
-  const eventData = isPlainObject(req.body.eventData) ? req.body.eventData : {};
+  const eventData = outboundUtils.isPlainObject(req.body.eventData) ? req.body.eventData : {};
 
   const ruleRuns = await runWorkflowRulesForEvent({
     userId: req.user.id,
@@ -4792,147 +3569,46 @@ router.post('/workflows/rules/:id/test', async (req, res) => {
  * POST /api/outbound/campaigns
  * Body: { name, channels, audienceFilter, notes, leadIds }
  */
-router.post('/campaigns', async (req, res) => {
-  const name = String(req.body.name || '').trim();
-  if (!name) {
-    return res.status(400).json({ error: 'Campaign name is required.' });
+router.post('/campaigns', validateBody(CreateCampaignSchema), async (req, res) => {
+  try {
+    const campaign = await campaignService.createCampaign({
+      userId: req.user.id,
+      name: req.validatedBody.name,
+      channels: req.validatedBody.channels,
+      audienceFilter: req.body.audienceFilter,
+      notes: req.body.notes,
+      leadIds: req.body.leadIds,
+      logLeadEventFn: logLeadEvent,
+    });
+    return res.status(201).json(campaign);
+  } catch (err) {
+    const statusCode = err.message.includes('not found') ? 404 : 400;
+    return res.status(statusCode).json({ error: err.message });
   }
-
-  const channels = normalizeCampaignChannels(req.body.channels);
-  const audienceFilter = req.body.audienceFilter && typeof req.body.audienceFilter === 'object'
-    ? req.body.audienceFilter
-    : {};
-  const notes = req.body.notes ? String(req.body.notes) : null;
-
-  const campaignRes = await pool.query(
-    `INSERT INTO outbound_campaigns (user_id, name, channels, audience_filter, notes, status)
-     VALUES ($1, $2, $3::text[], $4::jsonb, $5, 'draft')
-     RETURNING *`,
-    [req.user.id, name, channels, JSON.stringify(audienceFilter), notes]
-  );
-
-  const campaign = campaignRes.rows[0];
-  const leadIds = sanitizeUuidList(req.body.leadIds);
-  let addedMembers = 0;
-
-  if (leadIds.length > 0) {
-    const membersRes = await pool.query(
-      `INSERT INTO outbound_campaign_members (campaign_id, lead_id, member_status)
-       SELECT $1, l.id, 'queued'
-       FROM outbound_leads l
-       WHERE l.user_id = $2
-         AND l.id = ANY($3::uuid[])
-       ON CONFLICT (campaign_id, lead_id) DO NOTHING
-       RETURNING id`,
-      [campaign.id, req.user.id, leadIds]
-    );
-    addedMembers = membersRes.rowCount;
-  }
-
-  await logLeadEvent({
-    userId: req.user.id,
-    leadId: null,
-    eventType: 'campaign_created',
-    metadata: {
-      campaignId: campaign.id,
-      channels,
-      addedMembers,
-    },
-  });
-
-  logAction(req.user.id, req.user.email, 'outbound_campaign_created', 'outbound_campaign', campaign.id, name, {
-    channels,
-    addedMembers,
-  });
-
-  return res.status(201).json({
-    ...campaign,
-    addedMembers,
-  });
 });
 
 /**
  * GET /api/outbound/campaigns
  */
 router.get('/campaigns', async (req, res) => {
-  const { status = '', limit = 100 } = req.query;
-  const params = [req.user.id];
-  const filters = ['c.user_id = $1'];
-
-  if (status) {
-    params.push(String(status));
-    filters.push(`c.status = $${params.length}`);
-  }
-
-  params.push(Math.min(500, Math.max(1, Number(limit))));
-
-  const result = await pool.query(
-    `SELECT
-       c.*,
-       COUNT(m.id)::int AS member_count,
-       COALESCE(SUM(CASE WHEN m.member_status = 'queued' THEN 1 ELSE 0 END), 0)::int AS queued_count,
-       COALESCE(SUM(CASE WHEN m.member_status IN ('contacted', 'replied', 'meeting', 'opportunity') THEN 1 ELSE 0 END), 0)::int AS engaged_count
-     FROM outbound_campaigns c
-     LEFT JOIN outbound_campaign_members m ON m.campaign_id = c.id
-     WHERE ${filters.join(' AND ')}
-     GROUP BY c.id
-     ORDER BY c.created_at DESC
-     LIMIT $${params.length}`,
-    params
+  const result = await campaignService.listCampaigns(
+    req.user.id,
+    req.query.status,
+    req.query.limit
   );
-
-  return res.json({
-    total: result.rows.length,
-    campaigns: result.rows,
-  });
+  return res.json(result);
 });
 
 /**
  * GET /api/outbound/campaigns/:id
  */
 router.get('/campaigns/:id', async (req, res) => {
-  const campaignRes = await pool.query(
-    `SELECT
-       c.*,
-       COUNT(m.id)::int AS member_count,
-       COALESCE(SUM(CASE WHEN m.member_status = 'queued' THEN 1 ELSE 0 END), 0)::int AS queued_count,
-       COALESCE(SUM(CASE WHEN m.member_status IN ('contacted', 'replied', 'meeting', 'opportunity') THEN 1 ELSE 0 END), 0)::int AS engaged_count
-     FROM outbound_campaigns c
-     LEFT JOIN outbound_campaign_members m ON m.campaign_id = c.id
-     WHERE c.id = $1 AND c.user_id = $2
-     GROUP BY c.id`,
-    [req.params.id, req.user.id]
-  );
-
-  if (campaignRes.rows.length === 0) {
-    return res.status(404).json({ error: 'Campaign not found.' });
+  try {
+    const result = await campaignService.getCampaign(req.user.id, req.params.id);
+    return res.json(result);
+  } catch (err) {
+    return res.status(404).json({ error: err.message });
   }
-
-  const membersRes = await pool.query(
-    `SELECT
-       m.id,
-       m.member_status,
-       m.last_channel,
-       m.added_at,
-       m.updated_at,
-       l.id AS lead_id,
-       l.name,
-       l.email,
-       l.company,
-       l.title,
-       l.total_score,
-       l.status AS lead_status
-     FROM outbound_campaign_members m
-     JOIN outbound_leads l ON l.id = m.lead_id
-     WHERE m.campaign_id = $1
-     ORDER BY m.added_at DESC`,
-    [req.params.id]
-  );
-
-  return res.json({
-    campaign: campaignRes.rows[0],
-    members: membersRes.rows,
-  });
 });
 
 /**
@@ -4940,89 +3616,34 @@ router.get('/campaigns/:id', async (req, res) => {
  * Body: { leadIds: [] }
  */
 router.post('/campaigns/:id/members/add', async (req, res) => {
-  const leadIds = sanitizeUuidList(req.body.leadIds);
-  if (leadIds.length === 0) {
-    return res.status(400).json({ error: 'leadIds array is required.' });
+  try {
+    const result = await campaignService.addMembers({
+      userId: req.user.id,
+      campaignId: req.params.id,
+      leadIds: req.body.leadIds,
+    });
+    return res.status(201).json(result);
+  } catch (err) {
+    const statusCode = err.message.includes('not found') ? 404 : 400;
+    return res.status(statusCode).json({ error: err.message });
   }
-
-  const campaignCheck = await pool.query(
-    `SELECT id, name FROM outbound_campaigns WHERE id = $1 AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
-  if (campaignCheck.rows.length === 0) {
-    return res.status(404).json({ error: 'Campaign not found.' });
-  }
-
-  const membersRes = await pool.query(
-    `INSERT INTO outbound_campaign_members (campaign_id, lead_id, member_status)
-     SELECT $1, l.id, 'queued'
-     FROM outbound_leads l
-     WHERE l.user_id = $2
-       AND l.id = ANY($3::uuid[])
-     ON CONFLICT (campaign_id, lead_id) DO NOTHING
-     RETURNING id`,
-    [req.params.id, req.user.id, leadIds]
-  );
-
-  await pool.query(
-    `UPDATE outbound_campaigns
-     SET updated_at = NOW()
-     WHERE id = $1 AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
-
-  logAction(
-    req.user.id,
-    req.user.email,
-    'outbound_campaign_members_added',
-    'outbound_campaign',
-    req.params.id,
-    campaignCheck.rows[0].name,
-    { addedMembers: membersRes.rowCount }
-  );
-
-  return res.status(201).json({
-    campaignId: req.params.id,
-    addedMembers: membersRes.rowCount,
-  });
 });
 
 /**
  * PATCH /api/outbound/campaigns/:id/status
  * Body: { status }
  */
-router.patch('/campaigns/:id/status', async (req, res) => {
-  const nextStatus = String(req.body.status || '').trim();
-  if (!VALID_CAMPAIGN_STATUSES.has(nextStatus)) {
-    return res.status(400).json({ error: 'Invalid campaign status.' });
+router.patch('/campaigns/:id/status', validateBody(UpdateCampaignStatusSchema), async (req, res) => {
+  try {
+    const campaign = await campaignService.updateCampaignStatus({
+      userId: req.user.id,
+      campaignId: req.params.id,
+      nextStatus: req.validatedBody.status,
+    });
+    return res.json(campaign);
+  } catch (err) {
+    return res.status(404).json({ error: err.message });
   }
-
-  const existingRes = await pool.query(
-    `SELECT id, name, status FROM outbound_campaigns WHERE id = $1 AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
-  if (existingRes.rows.length === 0) {
-    return res.status(404).json({ error: 'Campaign not found.' });
-  }
-
-  const updatedRes = await pool.query(
-    `UPDATE outbound_campaigns
-     SET status = $1::varchar,
-         updated_at = NOW(),
-         started_at = CASE WHEN $1::varchar = 'active'::varchar AND started_at IS NULL THEN NOW() ELSE started_at END,
-         completed_at = CASE WHEN $1::varchar = 'completed'::varchar THEN NOW() ELSE completed_at END
-     WHERE id = $2 AND user_id = $3
-     RETURNING *`,
-    [nextStatus, req.params.id, req.user.id]
-  );
-
-  const campaign = updatedRes.rows[0];
-  logAction(req.user.id, req.user.email, 'outbound_campaign_status_updated', 'outbound_campaign', campaign.id, campaign.name, {
-    from: existingRes.rows[0].status,
-    to: campaign.status,
-  });
-
-  return res.json(campaign);
 });
 
 /**
@@ -5030,157 +3651,21 @@ router.patch('/campaigns/:id/status', async (req, res) => {
  * Body: { memberStatus, lastChannel }
  */
 router.patch('/campaigns/:campaignId/members/:memberId/status', async (req, res) => {
-  const memberStatus = String(req.body.memberStatus || '').trim();
-  const lastChannel = req.body.lastChannel == null ? null : String(req.body.lastChannel).trim().toLowerCase();
-  const statusReason = req.body.reason == null ? '' : String(req.body.reason).trim();
-
-  if (!VALID_CAMPAIGN_MEMBER_STATUSES.has(memberStatus)) {
-    return res.status(400).json({ error: 'Invalid memberStatus.' });
+  try {
+    const result = await campaignService.updateMemberStatus({
+      userId: req.user.id,
+      campaignId: req.params.campaignId,
+      memberId: req.params.memberId,
+      memberStatus: req.body.memberStatus,
+      lastChannel: req.body.lastChannel,
+      statusReason: req.body.reason,
+      logLeadEventFn: logLeadEvent,
+    });
+    return res.json(result);
+  } catch (err) {
+    const statusCode = err.message.includes('not found') ? 404 : 400;
+    return res.status(statusCode).json({ error: err.message });
   }
-
-  if (lastChannel && !VALID_CAMPAIGN_CHANNELS.has(lastChannel)) {
-    return res.status(400).json({ error: 'Invalid lastChannel.' });
-  }
-
-  const updatedRes = await pool.query(
-    `UPDATE outbound_campaign_members m
-     SET member_status = $1,
-         last_channel = $2,
-         updated_at = NOW()
-     FROM outbound_campaigns c
-     WHERE m.id = $3
-       AND m.campaign_id = c.id
-       AND c.id = $4
-       AND c.user_id = $5
-     RETURNING m.*`,
-    [memberStatus, lastChannel, req.params.memberId, req.params.campaignId, req.user.id]
-  );
-
-  if (updatedRes.rows.length === 0) {
-    return res.status(404).json({ error: 'Campaign member not found.' });
-  }
-
-  await pool.query(
-    `UPDATE outbound_campaigns
-     SET updated_at = NOW()
-     WHERE id = $1 AND user_id = $2`,
-    [req.params.campaignId, req.user.id]
-  );
-  const updatedMember = updatedRes.rows[0];
-  const mappedLeadStatus = CAMPAIGN_MEMBER_TO_LEAD_STATUS[memberStatus];
-  const leadId = updatedMember.lead_id;
-  let autoStoppedEnrollmentIds = [];
-
-  if (mappedLeadStatus && leadId) {
-    await pool.query(
-      `UPDATE outbound_leads
-       SET status = $1,
-           suppression_reason = CASE
-             WHEN $1 = 'suppressed' THEN COALESCE(NULLIF($2, ''), suppression_reason, 'Campaign suppression update')
-             WHEN status = 'suppressed' THEN NULL
-             ELSE suppression_reason
-           END,
-           updated_at = NOW()
-       WHERE id = $3
-         AND user_id = $4`,
-      [mappedLeadStatus, statusReason, leadId, req.user.id]
-    );
-  }
-
-  if (leadId) {
-    await logLeadEvent({
-      userId: req.user.id,
-      leadId,
-      eventType: 'campaign_member_status_changed',
-      metadata: {
-        campaignId: req.params.campaignId,
-        memberId: req.params.memberId,
-        memberStatus,
-        lastChannel,
-      },
-    });
-  }
-
-  if (leadId && memberStatus === 'replied') {
-    await logLeadEvent({
-      userId: req.user.id,
-      leadId,
-      eventType: 'lead_replied',
-      metadata: {
-        campaignId: req.params.campaignId,
-        memberId: req.params.memberId,
-      },
-    });
-    autoStoppedEnrollmentIds = await autoStopOpenSequenceEnrollments({
-      userId: req.user.id,
-      leadId,
-      reason: 'Auto-stopped after reply',
-      triggerSource: 'campaign_member_status',
-      metadata: {
-        campaignId: req.params.campaignId,
-        memberId: req.params.memberId,
-        memberStatus,
-      },
-    });
-  } else if (leadId && memberStatus === 'opportunity') {
-    await logLeadEvent({
-      userId: req.user.id,
-      leadId,
-      eventType: 'opportunity_created',
-      metadata: {
-        campaignId: req.params.campaignId,
-        memberId: req.params.memberId,
-      },
-    });
-  } else if (leadId && memberStatus === 'meeting') {
-    await logLeadEvent({
-      userId: req.user.id,
-      leadId,
-      eventType: 'meeting_booked',
-      metadata: {
-        campaignId: req.params.campaignId,
-        memberId: req.params.memberId,
-      },
-    });
-    autoStoppedEnrollmentIds = await autoStopOpenSequenceEnrollments({
-      userId: req.user.id,
-      leadId,
-      reason: 'Auto-stopped after meeting booked',
-      triggerSource: 'campaign_member_status',
-      metadata: {
-        campaignId: req.params.campaignId,
-        memberId: req.params.memberId,
-        memberStatus,
-      },
-    });
-  } else if (leadId && memberStatus === 'suppressed') {
-    await logLeadEvent({
-      userId: req.user.id,
-      leadId,
-      eventType: 'lead_suppressed',
-      metadata: {
-        campaignId: req.params.campaignId,
-        memberId: req.params.memberId,
-        reason: statusReason || null,
-      },
-    });
-    autoStoppedEnrollmentIds = await autoStopOpenSequenceEnrollments({
-      userId: req.user.id,
-      leadId,
-      reason: 'Auto-stopped after suppression update',
-      triggerSource: 'campaign_member_status',
-      metadata: {
-        campaignId: req.params.campaignId,
-        memberId: req.params.memberId,
-        memberStatus,
-      },
-    });
-  }
-
-  return res.json({
-    ...updatedMember,
-    autoStoppedEnrollmentIds,
-  });
 });
 
 /**
@@ -5291,9 +3776,8 @@ router.get('/scoring/:leadId/explain', async (req, res) => {
  * PATCH /api/outbound/leads/:id/suppression
  * Body: { suppressed: boolean, reason?: string }
  */
-router.patch('/leads/:id/suppression', async (req, res) => {
-  const suppressed = Boolean(req.body.suppressed);
-  const reason = req.body.reason ? String(req.body.reason).trim() : null;
+router.patch('/leads/:id/suppression', validateBody(SuppressionSchema), async (req, res) => {
+  const { suppressed, reason } = req.validatedBody;
 
   const leadRes = await pool.query(
     `SELECT * FROM outbound_leads WHERE id = $1 AND user_id = $2`,
@@ -5330,7 +3814,7 @@ router.patch('/leads/:id/suppression', async (req, res) => {
     metadata: { reason: suppressed ? reason : null },
   });
   const autoStoppedEnrollmentIds = suppressed
-    ? await autoStopOpenSequenceEnrollments({
+    ? await sequenceService.autoStopOpenSequenceEnrollments({
         userId: req.user.id,
         leadId: updatedLead.id,
         reason: 'Auto-stopped after suppression update',
@@ -5362,7 +3846,7 @@ router.patch('/leads/:id/suppression', async (req, res) => {
 router.post('/leads/:id/outcome', async (req, res) => {
   const outcome = String(req.body.outcome || '').trim().toLowerCase();
   const note = req.body.note ? String(req.body.note).trim() : null;
-  const config = LEAD_OUTCOME_EVENT_MAP[outcome];
+  const config = outboundUtils.LEAD_OUTCOME_EVENT_MAP[outcome];
 
   if (!config) {
     return res.status(400).json({
@@ -5407,7 +3891,7 @@ router.post('/leads/:id/outcome', async (req, res) => {
     },
   });
 
-  const autoStoppedEnrollmentIds = await autoStopOpenSequenceEnrollments({
+  const autoStoppedEnrollmentIds = await sequenceService.autoStopOpenSequenceEnrollments({
     userId: req.user.id,
     leadId: req.params.id,
     reason: config.stopReason,
@@ -5434,76 +3918,19 @@ router.post('/leads/:id/outcome', async (req, res) => {
  * POST /api/outbound/drafts/generate
  * Body: { leadId, channel: 'email'|'linkedin' }
  */
-router.post('/drafts/generate', async (req, res) => {
-  const leadId = req.body?.leadId;
-  const channel = String(req.body?.channel || 'email').toLowerCase();
-  if (!leadId) return res.status(400).json({ error: 'leadId is required.' });
-  if (!VALID_DRAFT_CHANNELS.has(channel)) {
-    return res.status(400).json({ error: 'channel must be email or linkedin.' });
+router.post('/drafts/generate', validateBody(CreateDraftSchema), async (req, res) => {
+  try {
+    const result = await draftService.generateDraft({
+      userId: req.user.id,
+      leadId: req.validatedBody.leadId,
+      channel: req.validatedBody.channel,
+      logLeadEventFn: logLeadEvent,
+    });
+    return res.status(201).json(result);
+  } catch (err) {
+    const statusCode = err.message.includes('not found') ? 404 : err.message.includes('suppressed') ? 409 : 500;
+    return res.status(statusCode).json({ error: err.message });
   }
-
-  const leadRes = await pool.query(
-    `SELECT * FROM outbound_leads WHERE id = $1 AND user_id = $2`,
-    [leadId, req.user.id]
-  );
-  if (leadRes.rows.length === 0) {
-    return res.status(404).json({ error: 'Lead not found.' });
-  }
-
-  const lead = leadRes.rows[0];
-  if (lead.status === 'suppressed' || lead.suppression_reason) {
-    return res.status(409).json({ error: 'Lead is suppressed and cannot be contacted.' });
-  }
-  let subject = null;
-  let body = '';
-
-  if (channel === 'email') {
-    const emailDraft = buildEmailDraft(lead);
-    subject = emailDraft.subject;
-    body = emailDraft.body;
-  } else {
-    body = buildLinkedInDraft(lead);
-  }
-
-  const draftResult = await pool.query(
-    `INSERT INTO outbound_message_drafts (user_id, lead_id, channel, subject, body, status)
-     VALUES ($1, $2, $3, $4, $5, 'drafted')
-     RETURNING *`,
-    [req.user.id, leadId, channel, subject, body]
-  );
-
-  const draft = draftResult.rows[0];
-  let linkedinTask = null;
-
-  if (channel === 'linkedin') {
-    const taskResult = await pool.query(
-      `INSERT INTO linkedin_outreach_tasks (user_id, lead_id, draft_id, task_type, status, due_at)
-       VALUES ($1, $2, $3, 'manual_message', 'drafted', NOW() + INTERVAL '1 day')
-       RETURNING id, status, due_at`,
-      [req.user.id, leadId, draft.id]
-    );
-    linkedinTask = taskResult.rows[0];
-  }
-
-  await logLeadEvent({
-    userId: req.user.id,
-    leadId,
-    eventType: 'draft_generated',
-    channel,
-    metadata: { draftId: draft.id },
-  });
-
-  logAction(req.user.id, req.user.email, 'outbound_draft_generated', 'outbound_draft', draft.id, channel, {
-    leadId,
-    channel,
-  });
-
-  return res.status(201).json({
-    ...draft,
-    linkedinTaskId: linkedinTask ? linkedinTask.id : null,
-    linkedinTaskStatus: linkedinTask ? linkedinTask.status : null,
-    linkedinTaskDueAt: linkedinTask ? linkedinTask.due_at : null,
-  });
 });
 
 /**
@@ -5511,88 +3938,28 @@ router.post('/drafts/generate', async (req, res) => {
  * Query: status, channel, leadId, limit
  */
 router.get('/drafts/inbox', async (req, res) => {
-  const status = req.query.status ? String(req.query.status).trim().toLowerCase() : '';
-  const channel = req.query.channel ? String(req.query.channel).trim().toLowerCase() : '';
-  const leadId = req.query.leadId ? sanitizeUuidValue(req.query.leadId) : null;
-  const limit = Math.min(500, Math.max(1, Number(req.query.limit || 100)));
-
-  if (status && !VALID_DRAFT_STATUSES.has(status)) {
-    return res.status(400).json({ error: 'Invalid draft status filter.' });
+  try {
+    const result = await draftService.getDraftInbox({
+      userId: req.user.id,
+      status: req.query.status ? String(req.query.status).trim().toLowerCase() : '',
+      channel: req.query.channel ? String(req.query.channel).trim().toLowerCase() : '',
+      leadId: req.query.leadId ? outboundUtils.sanitizeUuidValue(req.query.leadId) : null,
+      limit: Number(req.query.limit || 100),
+    });
+    return res.json({
+      total: result.drafts.length,
+      drafts: result.drafts,
+      summary: result.summary || {
+        total_count: 0,
+        drafted_count: 0,
+        approved_count: 0,
+        sent_count: 0,
+        pending_linkedin_count: 0,
+      },
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
-  if (channel && !VALID_DRAFT_CHANNELS.has(channel)) {
-    return res.status(400).json({ error: 'Invalid draft channel filter.' });
-  }
-  if (req.query.leadId && !leadId) {
-    return res.status(400).json({ error: 'Invalid leadId filter.' });
-  }
-
-  const params = [req.user.id];
-  const filters = ['d.user_id = $1'];
-
-  if (status) {
-    params.push(status);
-    filters.push(`d.status = $${params.length}`);
-  }
-
-  if (channel) {
-    params.push(channel);
-    filters.push(`d.channel = $${params.length}`);
-  }
-
-  if (leadId) {
-    params.push(leadId);
-    filters.push(`d.lead_id = $${params.length}`);
-  }
-
-  params.push(limit);
-  const limitIdx = params.length;
-
-  const [draftsRes, summaryRes] = await Promise.all([
-    pool.query(
-      `SELECT
-         d.*,
-         l.name AS lead_name,
-         l.email AS lead_email,
-         l.company AS lead_company,
-         l.title AS lead_title,
-         l.total_score AS lead_total_score,
-         l.status AS lead_status,
-         t.id AS linkedin_task_id,
-         t.status AS linkedin_task_status,
-         t.due_at AS linkedin_task_due_at,
-         t.completed_at AS linkedin_task_completed_at
-       FROM outbound_message_drafts d
-       LEFT JOIN outbound_leads l ON l.id = d.lead_id
-       LEFT JOIN linkedin_outreach_tasks t ON t.draft_id = d.id AND t.user_id = d.user_id
-       WHERE ${filters.join(' AND ')}
-       ORDER BY d.updated_at DESC
-       LIMIT $${limitIdx}`,
-      params
-    ),
-    pool.query(
-      `SELECT
-         COUNT(*)::int AS total_count,
-         COUNT(*) FILTER (WHERE status = 'drafted')::int AS drafted_count,
-         COUNT(*) FILTER (WHERE status = 'approved')::int AS approved_count,
-         COUNT(*) FILTER (WHERE status = 'sent')::int AS sent_count,
-         COUNT(*) FILTER (WHERE channel = 'linkedin' AND status IN ('drafted', 'approved'))::int AS pending_linkedin_count
-       FROM outbound_message_drafts
-       WHERE user_id = $1`,
-      [req.user.id]
-    ),
-  ]);
-
-  return res.json({
-    total: draftsRes.rows.length,
-    drafts: draftsRes.rows.map(mapDraftInboxRow),
-    summary: summaryRes.rows[0] || {
-      total_count: 0,
-      drafted_count: 0,
-      approved_count: 0,
-      sent_count: 0,
-      pending_linkedin_count: 0,
-    },
-  });
 });
 
 /**
@@ -5603,7 +3970,7 @@ router.get('/linkedin/tasks/board', async (req, res) => {
   const status = req.query.status ? String(req.query.status).trim().toLowerCase() : '';
   const limit = Math.min(500, Math.max(1, Number(req.query.limit || 200)));
 
-  if (status && !VALID_LINKEDIN_TASK_STATUSES.has(status)) {
+  if (status && !outboundUtils.VALID_LINKEDIN_TASK_STATUSES.has(status)) {
     return res.status(400).json({ error: 'Invalid linkedin task status filter.' });
   }
 
@@ -5649,7 +4016,7 @@ router.get('/linkedin/tasks/board', async (req, res) => {
     params
   );
 
-  const boardBuckets = mapTaskBoardBuckets(tasksRes.rows);
+  const boardBuckets = outboundUtils.mapTaskBoardBuckets(tasksRes.rows);
   const usage = await getDailySendUsage(req.user.id, 'linkedin');
   const openStatuses = new Set(['pending', 'drafted', 'approved', 'blocked']);
   const openTasks = tasksRes.rows.filter((row) => openStatuses.has(row.status));
@@ -5662,7 +4029,7 @@ router.get('/linkedin/tasks/board', async (req, res) => {
 
   return res.json({
     total: tasksRes.rows.length,
-    tasks: tasksRes.rows.map(mapLinkedinTaskBoardRow),
+    tasks: tasksRes.rows.map(outboundUtils.mapLinkedinTaskBoardRow),
     board: boardBuckets,
     workload: {
       openCount: openTasks.length,
@@ -5702,7 +4069,7 @@ router.post('/linkedin/tasks/rebalance', async (req, res) => {
   );
 
   const openTasks = openRes.rows
-    .map((row) => ({ ...row, priority_score: computeLinkedinTaskPriority(row) }))
+    .map((row) => ({ ...row, priority_score: outboundUtils.computeLinkedinTaskPriority(row) }))
     .sort((a, b) => {
       if (b.priority_score !== a.priority_score) return b.priority_score - a.priority_score;
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
@@ -5766,63 +4133,17 @@ router.post('/linkedin/tasks/rebalance', async (req, res) => {
  * PATCH /api/outbound/drafts/:id/approve
  */
 router.patch('/drafts/:id/approve', async (req, res) => {
-  const existingRes = await pool.query(
-    `SELECT * FROM outbound_message_drafts WHERE id = $1 AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
-
-  if (existingRes.rows.length === 0) {
-    return res.status(404).json({ error: 'Draft not found.' });
+  try {
+    const draft = await draftService.approveDraft({
+      userId: req.user.id,
+      draftId: req.params.id,
+      logLeadEventFn: logLeadEvent,
+    });
+    return res.json(draft);
+  } catch (err) {
+    const statusCode = err.message.includes('not found') ? 404 : 409;
+    return res.status(statusCode).json({ error: err.message });
   }
-
-  const current = existingRes.rows[0];
-  if (current.status === 'approved') {
-    return res.json(current);
-  }
-
-  if (current.status === 'sent') {
-    return res.status(409).json({ error: 'Cannot approve a draft that is already sent.' });
-  }
-
-  if (current.status !== 'drafted') {
-    return res.status(409).json({ error: `Draft cannot be approved from status ${current.status}.` });
-  }
-
-  const draftRes = await pool.query(
-    `UPDATE outbound_message_drafts
-     SET status = 'approved',
-         approved_at = NOW(),
-         updated_at = NOW()
-     WHERE id = $1 AND user_id = $2
-     RETURNING *`,
-    [req.params.id, req.user.id]
-  );
-
-  const draft = draftRes.rows[0];
-  if (draft.channel === 'linkedin') {
-    await pool.query(
-      `UPDATE linkedin_outreach_tasks
-       SET status = 'approved',
-           updated_at = NOW()
-       WHERE draft_id = $1 AND user_id = $2`,
-      [draft.id, req.user.id]
-    );
-  }
-
-  await logLeadEvent({
-    userId: req.user.id,
-    leadId: draft.lead_id,
-    eventType: 'draft_approved',
-    channel: draft.channel,
-    metadata: { draftId: draft.id },
-  });
-
-  logAction(req.user.id, req.user.email, 'outbound_draft_approved', 'outbound_draft', draft.id, draft.channel, {
-    channel: draft.channel,
-    leadId: draft.lead_id,
-  });
-
-  return res.json(draft);
 });
 
 /**
@@ -5830,90 +4151,23 @@ router.patch('/drafts/:id/approve', async (req, res) => {
  * Manual send confirmation for email drafts
  */
 router.post('/drafts/:id/send', async (req, res) => {
-  const draftRes = await pool.query(
-    `SELECT * FROM outbound_message_drafts WHERE id = $1 AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
-
-  if (draftRes.rows.length === 0) {
-    return res.status(404).json({ error: 'Draft not found.' });
-  }
-
-  const draft = draftRes.rows[0];
-  if (draft.channel !== 'email') {
-    return res.status(400).json({ error: 'Only email drafts can be sent from this endpoint.' });
-  }
-
-  if (draft.status === 'sent') {
-    return res.status(409).json({ error: 'Draft already sent.' });
-  }
-
-  if (draft.status !== 'approved') {
-    return res.status(409).json({ error: 'Draft must be approved before sending.' });
-  }
-
-  const leadRes = await pool.query(
-    `SELECT id, status, suppression_reason
-     FROM outbound_leads
-     WHERE id = $1 AND user_id = $2`,
-    [draft.lead_id, req.user.id]
-  );
-  if (leadRes.rows.length === 0) {
-    return res.status(404).json({ error: 'Lead not found for this draft.' });
-  }
-  const lead = leadRes.rows[0];
-  if (lead.status === 'suppressed' || lead.suppression_reason) {
-    return res.status(409).json({ error: 'Lead is suppressed and cannot be contacted.' });
-  }
-
-  const usage = await getDailySendUsage(req.user.id, 'email');
-  if (!requireWithinDailyLimit(usage)) {
-    return res.status(429).json({
-      error: `Daily email send limit reached (${usage.limit}).`,
-      dailyUsage: usage,
+  try {
+    const result = await draftService.sendDraft({
+      userId: req.user.id,
+      draftId: req.params.id,
+      logLeadEventFn: logLeadEvent,
     });
+    return res.json(result);
+  } catch (err) {
+    if (err.statusCode === 429) {
+      return res.status(429).json({
+        error: err.message,
+        dailyUsage: err.dailyUsage,
+      });
+    }
+    const statusCode = err.message.includes('not found') ? 404 : err.message.includes('must be approved') || err.message.includes('already sent') || err.message.includes('suppressed') ? 409 : 400;
+    return res.status(statusCode).json({ error: err.message });
   }
-
-  const updatedRes = await pool.query(
-    `UPDATE outbound_message_drafts
-     SET status = 'sent',
-         sent_at = NOW(),
-         updated_at = NOW()
-     WHERE id = $1 AND user_id = $2
-     RETURNING *`,
-    [req.params.id, req.user.id]
-  );
-  const updatedDraft = updatedRes.rows[0];
-
-  await pool.query(
-    `UPDATE outbound_leads
-     SET status = CASE WHEN status IN ('new', 'qualified', 'queued') THEN 'contacted' ELSE status END,
-         last_outreach_channel = 'email',
-         updated_at = NOW()
-     WHERE id = $1 AND user_id = $2`,
-    [updatedDraft.lead_id, req.user.id]
-  );
-
-  await logLeadEvent({
-    userId: req.user.id,
-    leadId: updatedDraft.lead_id,
-    eventType: 'draft_sent',
-    channel: 'email',
-    metadata: { draftId: updatedDraft.id },
-  });
-
-  logAction(req.user.id, req.user.email, 'outbound_email_sent', 'outbound_draft', updatedDraft.id, 'email', {
-    leadId: updatedDraft.lead_id,
-  });
-
-  return res.json({
-    draft: updatedDraft,
-    dailyUsage: {
-      ...usage,
-      used: usage.used + 1,
-      remaining: Math.max(0, usage.limit - (usage.used + 1)),
-    },
-  });
 });
 
 /**
@@ -6092,7 +4346,7 @@ router.get('/events/export', async (req, res) => {
         event.lead_company,
         JSON.stringify(event.metadata || {}),
       ]
-        .map(csvEscape)
+        .map(outboundUtils.csvEscape)
         .join(',')
     );
 
@@ -6147,7 +4401,7 @@ router.get('/audit/export', async (req, res) => {
         log.resource_name,
         JSON.stringify(log.metadata || {}),
       ]
-        .map(csvEscape)
+        .map(outboundUtils.csvEscape)
         .join(',')
     );
 
@@ -6167,18 +4421,10 @@ router.get('/audit/export', async (req, res) => {
  * PUT /api/outbound/forecast/goals
  * Body: { periodType, targetMeetings, targetOpportunities, targetRevenue, notes }
  */
-router.put('/forecast/goals', async (req, res) => {
-  const periodType = String(req.body.periodType || 'monthly').trim().toLowerCase();
-  if (!VALID_FORECAST_PERIOD_TYPES.has(periodType)) {
-    return res.status(400).json({ error: 'periodType must be weekly or monthly.' });
-  }
+router.put('/forecast/goals', validateBody(SaveGoalsSchema), async (req, res) => {
+  const { periodType, targetMeetings, targetOpportunities, targetRevenue, notes } = req.validatedBody;
+  const period = outboundUtils.getCurrentPeriodWindow(periodType);
 
-  const targetMeetings = Math.max(0, Number(req.body.targetMeetings || 0));
-  const targetOpportunities = Math.max(0, Number(req.body.targetOpportunities || 0));
-  const targetRevenue = Math.max(0, Number(req.body.targetRevenue || 0));
-  const notes = req.body.notes == null ? null : String(req.body.notes).trim();
-
-  const period = getCurrentPeriodWindow(periodType);
   const goalRes = await pool.query(
     `INSERT INTO sales_goals
       (user_id, period_type, period_start, period_end, target_meetings, target_opportunities, target_revenue, notes, updated_at)
@@ -6216,7 +4462,7 @@ router.put('/forecast/goals', async (req, res) => {
       periodEnd: period.periodEnd,
       targetMeetings,
       targetOpportunities,
-      targetRevenue: round2(targetRevenue),
+      targetRevenue: outboundUtils.round2(targetRevenue),
     }
   );
 
@@ -6229,7 +4475,7 @@ router.put('/forecast/goals', async (req, res) => {
       periodEnd: goal.period_end,
       targetMeetings: Number(goal.target_meetings || 0),
       targetOpportunities: Number(goal.target_opportunities || 0),
-      targetRevenue: round2(Number(goal.target_revenue || 0)),
+      targetRevenue: outboundUtils.round2(Number(goal.target_revenue || 0)),
       notes: goal.notes,
       updatedAt: goal.updated_at,
     },
@@ -6243,7 +4489,7 @@ router.put('/forecast/goals', async (req, res) => {
  */
 router.get('/forecast/summary', async (req, res) => {
   const periodType = String(req.query.period || 'monthly').trim().toLowerCase();
-  if (!VALID_FORECAST_PERIOD_TYPES.has(periodType)) {
+  if (!outboundUtils.VALID_FORECAST_PERIOD_TYPES.has(periodType)) {
     return res.status(400).json({ error: 'period must be weekly or monthly.' });
   }
 
@@ -6257,7 +4503,7 @@ router.get('/forecast/summary', async (req, res) => {
  */
 router.get('/attribution/summary', async (req, res) => {
   const periodType = String(req.query.period || 'monthly').trim().toLowerCase();
-  if (!VALID_FORECAST_PERIOD_TYPES.has(periodType)) {
+  if (!outboundUtils.VALID_FORECAST_PERIOD_TYPES.has(periodType)) {
     return res.status(400).json({ error: 'period must be weekly or monthly.' });
   }
 
@@ -6389,7 +4635,7 @@ router.get('/workspace/config', async (req, res) => {
 /**
  * PUT /api/outbound/workspace/config
  */
-router.put('/workspace/config', async (req, res) => {
+router.put('/workspace/config', validateBody(WorkspaceConfigSchema), async (req, res) => {
   const {
     senderName,
     emailSignature,
@@ -6399,7 +4645,7 @@ router.put('/workspace/config', async (req, res) => {
     slaLinkedinOverdueHours,
     slaPausedStaleDays,
     slaHighScoreNotContactedDays,
-  } = req.body;
+  } = req.validatedBody;
 
   const emailLimitVal = Math.round(Number(dailyEmailLimit ?? 50));
   const linkedinLimitVal = Math.round(Number(dailyLinkedinLimit ?? 20));
@@ -6643,9 +4889,9 @@ router.post('/bulk/campaign-transition', async (req, res) => {
   if (memberIds.length > 100) {
     return res.status(400).json({ error: 'Maximum 100 members per bulk operation.' });
   }
-  if (!VALID_CAMPAIGN_MEMBER_STATUSES.has(status)) {
+  if (!outboundUtils.VALID_CAMPAIGN_MEMBER_STATUSES.has(status)) {
     return res.status(400).json({
-      error: `Invalid status. Valid values: ${[...VALID_CAMPAIGN_MEMBER_STATUSES].join(', ')}.`,
+      error: `Invalid status. Valid values: ${[...outboundUtils.VALID_CAMPAIGN_MEMBER_STATUSES].join(', ')}.`,
     });
   }
 
@@ -6662,7 +4908,7 @@ router.post('/bulk/campaign-transition', async (req, res) => {
         results.errors.push({ memberId, reason: 'Not found or unauthorized' });
         continue;
       }
-      const leadStatus = CAMPAIGN_MEMBER_TO_LEAD_STATUS[status];
+      const leadStatus = outboundUtils.CAMPAIGN_MEMBER_TO_LEAD_STATUS[status];
       if (leadStatus && upd.rows[0].lead_id) {
         await pool.query(
           `UPDATE outbound_leads SET status = $1, updated_at = NOW()

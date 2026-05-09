@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../models/db');
+const { logAction } = require('../services/auditLogger');
 
 const router = express.Router();
 
@@ -62,6 +63,10 @@ router.post('/login', async (req, res) => {
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ error: 'Invalid credentials' });
     const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
+    logAction(user.id, user.email, 'user_login', 'user', user.id, user.name, {
+      ip: req.ip,
+      user_agent: req.headers['user-agent'] || null,
+    });
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
   } catch (err) {
     console.error(err);

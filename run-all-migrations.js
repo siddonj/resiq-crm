@@ -98,6 +98,27 @@ async function runMigrations() {
     await client.connect();
     console.log('✓ Connected to database\n');
 
+    // Apply base schema first (creates users, contacts, deals, etc.)
+    const schemaFile = path.join(__dirname, 'database', 'schema.sql');
+    if (fs.existsSync(schemaFile)) {
+      const schemaSql = fs.readFileSync(schemaFile, 'utf8');
+      console.log('▶️  Applying base schema (database/schema.sql)...');
+      try {
+        await client.query(schemaSql);
+        console.log('✅ Base schema applied\n');
+      } catch (err) {
+        if (err.message.includes('already exists') ||
+            err.message.includes('duplicate key') ||
+            err.code === '42P07' ||
+            err.code === '42701' ||
+            err.code === '42710') {
+          console.log('⏭️  Base schema (already applied)\n');
+        } else {
+          throw err;
+        }
+      }
+    }
+
     const migrationsDir = path.join(__dirname, 'database', 'migrations');
     
     if (!fs.existsSync(migrationsDir)) {

@@ -15,29 +15,43 @@ async function generateProspects(prompt) {
   try {
     const openai = getOpenAIClient();
 
+    // Step 1: Search the web for real companies matching the criteria
+    const searchResponse = await openai.responses.create({
+      model: 'gpt-4o-mini',
+      tools: [{ type: 'web_search_preview' }],
+      input: `Search the web to find real companies matching this prospect description: ${prompt}. For each company found, include: company name, website, location, what they do, and any available decision-maker names, emails, or phone numbers. Find at least 5 real companies with verified information.`,
+    });
+
+    const searchResults = searchResponse.output_text;
+
+    // Step 2: Extract structured JSON from the real search results — no fabrication
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: 'gpt-4o-mini',
       messages: [
         {
-          role: "system",
-          content: `You are an expert SDR (Sales Development Representative) agent. 
-Based on the user's prompt, research and generate a list of relevant prospects. 
-Since you don't have live internet access in this basic version, use your deep knowledge base to suggest REAL companies that fit the criteria, and generate realistic point-of-contact personas for them.
+          role: 'system',
+          content: `You are a data extraction assistant. Given real company information from web search results, extract and structure the data as prospect records.
 
-You MUST respond with a JSON object containing an array called "prospects". 
-Each object in the array must have:
-- "name" (string, the person to contact)
-- "email" (string)
-- "phone" (string)
-- "company" (string, the name of the company)
-- "service_line" (string, one of the predefined values: 'managed_wifi', 'proptech_selection', 'fractional_it', 'vendor_rfp', 'ai_automation', 'team_process', or a custom value if appropriate)
-- "notes" (string, a short brief on why this company is a good fit and what they do)
+IMPORTANT: Only include companies that were actually found in the search results. Do NOT invent or add companies.
 
-Ensure the output is strictly valid JSON.`
+For contact names/emails: use what was found in search results. If a specific person was not found, use a job title (e.g. "Director of IT") and set email to "verify@[companydomain]" to flag it needs manual verification.
+
+You MUST respond with a JSON object containing an array called "prospects". Each object must have:
+- "name" (string, real person name if found, otherwise a job title)
+- "email" (string, real email if found, otherwise "verify@[domain]")
+- "phone" (string, real phone if found, otherwise "")
+- "company" (string, the real company name from search results)
+- "service_line" (string, one of: 'managed_wifi', 'proptech_selection', 'fractional_it', 'vendor_rfp', 'ai_automation', 'team_process', or a relevant custom value)
+- "notes" (string, why this company fits based on what the search results actually say about them)
+
+Respond with strictly valid JSON only.`
         },
-        { role: "user", content: prompt }
+        {
+          role: 'user',
+          content: `Web search results:\n\n${searchResults}\n\nExtract these into structured prospect records.`
+        }
       ],
-      response_format: { type: "json_object" },
+      response_format: { type: 'json_object' },
     });
 
     const result = JSON.parse(completion.choices[0].message.content);

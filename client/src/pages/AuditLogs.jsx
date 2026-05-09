@@ -14,6 +14,7 @@ const ACTION_LABELS = {
   deactivate: { label: 'Deactivated', color: 'bg-red-50 text-red-700' },
   add_member: { label: 'Member Added', color: 'bg-blue-50 text-blue-700' },
   remove_member: { label: 'Member Removed', color: 'bg-red-50 text-red-700' },
+  user_login: { label: 'Login', color: 'bg-indigo-50 text-indigo-700' },
 }
 
 function formatMetadata(action, metadata) {
@@ -21,6 +22,7 @@ function formatMetadata(action, metadata) {
   if (action === 'stage_change') return `${metadata.from} → ${metadata.to}`
   if (action === 'role_change') return `New role: ${metadata.new_role}`
   if (action === 'add_member') return `Role: ${metadata.role}`
+  if (action === 'user_login') return metadata.ip ? `IP: ${metadata.ip}` : null
   return null
 }
 
