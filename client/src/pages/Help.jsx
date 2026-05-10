@@ -15,9 +15,9 @@ const QUICK_START = [
   },
   {
     step: 3,
-    icon: '📧',
-    title: 'Connect Gmail',
-    desc: 'Go to Settings → Integrations → Connect Gmail. Emails with your contacts will sync automatically into their timelines.',
+    icon: '📁',
+    title: 'Create a project',
+    desc: 'Go to Projects → "+ New Project". Name it, add members, and set up columns. Use Grid, Kanban, Gantt, Calendar, or Sprint views to manage work.',
   },
   {
     step: 4,
@@ -106,6 +106,72 @@ const FEATURES = [
     desc: 'Clients get their own secure login to view proposals, invoices, and files you share with them.',
     tip: 'Invite clients from Settings → Accounts. They get an email link to set their password and log in.',
   },
+  {
+    icon: '📁',
+    title: 'Projects & Tasks',
+    desc: 'Full project management with Grid, Kanban, Gantt, Calendar, Sprint, and Team Planner views. Tasks support parent/child hierarchy, custom columns, and bulk operations.',
+    tip: 'Use indent/outdent arrows to create subtasks. Progress rolls up automatically from children to parents.',
+  },
+  {
+    icon: '🏷️',
+    title: 'Work Package Types',
+    desc: 'Define task types per project (Task, Milestone, Bug, Epic) with colors and icons. Types drive workflow-aware status transitions.',
+    tip: 'Set up workflows so reps can only move tasks through allowed status transitions — no accidental skips.',
+  },
+  {
+    icon: '🔗',
+    title: 'Task Relations',
+    desc: 'Link tasks with precedes, follows, blocks, blocked_by, duplicates, relates_to, and part_of relationships. Cycle detection prevents circular dependencies.',
+    tip: 'Use "blocks" / "blocked_by" to surface blockers in task detail panels before work starts.',
+  },
+  {
+    icon: '⏱️',
+    title: 'Task Time Tracking',
+    desc: 'Log time directly against tasks. Spent hours roll up to parent tasks automatically via PostgreSQL triggers. Track billable vs non-billable entries.',
+    tip: 'Watch the spent vs estimated progress bar in TaskDetail — it turns red when you go over budget.',
+  },
+  {
+    icon: '📋',
+    title: 'Project Templates',
+    desc: 'Save any project as a template and clone it for new engagements. Copies columns, views, types, workflows, and optionally task skeletons.',
+    tip: 'Create a "Standard Installation" template with all phases and task types pre-configured for faster project kickoffs.',
+  },
+  {
+    icon: '🏃',
+    title: 'Agile Boards / Sprints',
+    desc: 'Plan sprints with goals and dates. Assign story points, move tasks between sprint columns, and track burndown and velocity.',
+    tip: 'Use the Backlog view to groom unassigned tasks before pulling them into the next sprint.',
+  },
+  {
+    icon: '👥',
+    title: 'Team Planner',
+    desc: 'Visual workload grid showing each team member\'s daily allocation percentage. Green under 80%, amber 80-100%, red over 100%.',
+    tip: 'Schedule tasks with start/end dates and allocation % to spot over-allocation before it becomes a bottleneck.',
+  },
+  {
+    icon: '📸',
+    title: 'Baseline Comparison',
+    desc: 'Save project snapshots and compare current state against any baseline. See added, removed, and changed tasks with field-level diffs.',
+    tip: 'Save a baseline at project kickoff to track scope creep and schedule drift over time.',
+  },
+  {
+    icon: '📍',
+    title: 'Project Life Cycle Phases',
+    desc: 'Define sequential project phases with deliverables and gate approvals. Phase timeline shows progress at a glance in the project header.',
+    tip: 'Require gate approval before a phase can be marked complete — great for quality control checkpoints.',
+  },
+  {
+    icon: '📅',
+    title: 'Project Meetings',
+    desc: 'Schedule meetings inside projects with agenda, minutes, attendee RSVPs, and linked tasks. Separate from general Calendar events.',
+    tip: 'Link tasks to a meeting so attendees know exactly what work items are on the agenda.',
+  },
+  {
+    icon: '🗂️',
+    title: 'Portfolios',
+    desc: 'Group related projects into portfolios. View cross-project KPIs, health dashboards, milestone timelines, and resource allocation heatmaps.',
+    tip: 'Create a portfolio per client or per quarter to get a unified view of all active work.',
+  },
 ]
 
 const TIPS = [
@@ -117,6 +183,10 @@ const TIPS = [
   { icon: '⏱️', tip: 'Track billable time during discovery calls and generate invoices from those entries directly.' },
   { icon: '🌐', tip: 'Web forms + workflows = hands-free lead intake. New form submissions can trigger sequences automatically.' },
   { icon: '📊', tip: 'Review the Analytics page weekly to spot which pipeline stages are creating the most drop-off.' },
+  { icon: '📁', tip: 'Use project templates to spin up new engagements with pre-configured columns, types, and workflows in seconds.' },
+  { icon: '🔗', tip: 'Link predecessor tasks with "precedes" relations so the Gantt view shows dependencies visually.' },
+  { icon: '👥', tip: 'Check the Team Planner weekly to catch over-allocation before it burns out your team.' },
+  { icon: '📸', tip: 'Save a baseline at the start of every project phase so you can measure drift later.' },
 ]
 
 const FAQS = [
@@ -171,12 +241,32 @@ const FAQS = [
     ],
   },
   {
+    category: 'Projects & Tasks',
+    items: [
+      { q: 'How do I create a project?', a: 'Go to Projects → "+ New Project". Give it a name, description, and status. You can also create one from a template to copy columns, views, types, and workflows.' },
+      { q: 'What views are available for projects?', a: 'Grid (spreadsheet with hierarchy), Kanban (drag-and-drop columns), Gantt (timeline with dependencies), Calendar (due dates), Sprints (Agile boards), Team Planner (resource allocation), Baselines (snapshots), Phases (life cycle timeline), and Meetings.' },
+      { q: 'How do I create subtasks?', a: 'In Grid view, click the indent arrow (→) on a task row to make it a subtask of the task above. Click outdent (←) to promote it back. You can also use the "+ Add subtask" inline input under any parent task.' },
+      { q: 'How does progress rollup work?', a: 'Parent tasks automatically calculate their progress from child tasks. If a parent has two children at 50% and 100%, the parent shows the average (75%).' },
+      { q: 'What are task types?', a: 'Each project can define custom types (Task, Milestone, Bug, Epic, etc.) with colors and icons. Types can have workflow rules that restrict which status transitions are allowed.' },
+      { q: 'How do I link tasks together?', a: 'Open a task and go to the Relations tab. Choose a relation type (precedes, follows, blocks, blocked_by, duplicates, relates_to, part_of) and select the other task. The system prevents circular dependencies.' },
+      { q: 'How do I log time on a task?', a: 'Open a task and go to the Time tab. Enter hours, date, description, and check Billable if needed. Spent hours roll up to parent tasks automatically.' },
+      { q: 'How do sprints work?', a: 'Go to the Sprints view, create a sprint with start/end dates and a goal. Drag backlog tasks into the sprint and assign story points. Use the burndown chart to track progress.' },
+      { q: 'What is a baseline?', a: 'A baseline is a snapshot of your project at a point in time. Save one from the project header, then compare it later in the Baselines view to see what changed — added tasks, removed tasks, and field-level diffs.' },
+      { q: 'How does the Team Planner work?', a: 'Schedule tasks by assigning users with start/end dates and an allocation percentage. The grid shows each member\'s daily load. Green under 80%, amber 80-100%, red over 100%.' },
+      { q: 'How do project phases work?', a: 'Phases define sequential stages of a project (e.g. Discovery, Design, Build, Deploy). Each phase has deliverables and can require gate approval before completion. Tasks can be linked to phases.' },
+      { q: 'How do I create a project template?', a: 'Open any project and click "Save as Template" in the header. When creating a new project, choose "Create from Template" to clone columns, views, types, workflows, and optionally task skeletons.' },
+      { q: 'How do portfolios work?', a: 'Go to Portfolios in the sidebar. Create a portfolio and add related projects. The detail page shows cross-project KPIs, health status per project, milestone timelines, and resource allocation.' },
+      { q: 'How do I schedule a project meeting?', a: 'Inside a project, go to the Meetings view. Click "Schedule Meeting", fill in title, time, location, agenda, and attendees. You can also link tasks to the meeting agenda.' },
+    ],
+  },
+  {
     category: 'Calendar & Time Tracking',
     items: [
       { q: 'How do I add a calendar event?', a: 'Go to Calendar and click on a day or time slot. Fill in the event details — you can link it to a contact or deal for full context.' },
       { q: 'How do I sync with Google Calendar?', a: 'Go to Settings → Integrations and connect your Google Calendar account. Events sync so your CRM calendar and Google Calendar stay in sync.' },
       { q: 'How do I log time against a deal?', a: 'Go to Time Tracking → "+ Log Time". Select the deal or contact, enter the duration and description, and check Billable if it should appear on an invoice.' },
       { q: 'How do I add billable time to an invoice?', a: 'When creating an invoice, you can import billable time entries linked to that contact or deal as line items — no manual re-entry needed.' },
+      { q: 'How do I log time on a project task?', a: 'Open the task detail panel and go to the Time tab. Add hours, description, and billable flag. The task\'s spent hours update automatically and roll up to parent tasks.' },
     ],
   },
   {

@@ -7,6 +7,8 @@ ResiQ CRM is a full-stack CRM platform for property-tech consulting workflows, i
 - help desk and client portal
 - role-based access and audit logs
 - outbound automation for email + LinkedIn with human approval
+- full project management module (Grid, Kanban, Gantt, Calendar, Sprints, Team Planner, Baselines, Phases, Meetings, Portfolios)
+- task hierarchy, relations, time tracking, templates, and resource management
 
 ## Current Outbound Capabilities
 
