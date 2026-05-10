@@ -9,6 +9,13 @@ import {
   MULTIFAMILY_OBJECT_TYPES,
 } from '../features/outbound/utils/formatting.jsx'
 import LeadTable from '../features/outbound/components/LeadTable'
+import DraftInbox from '../features/outbound/components/DraftInbox'
+import ForecastPanel from '../features/outbound/components/ForecastPanel'
+import DataQualityPanel from '../features/outbound/components/DataQualityPanel'
+import CampaignManager from '../features/outbound/components/CampaignManager'
+import SequenceManager from '../features/outbound/components/SequenceManager'
+import WorkflowRuleBuilder from '../features/outbound/components/WorkflowRuleBuilder'
+import MultifamilyExplorer from '../features/outbound/components/MultifamilyExplorer'
 import {
   useOutboundAnalytics,
   useOutboundLeads,
@@ -1159,1135 +1166,105 @@ export default function OutboundAutomation() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-navy">Forecast + Goals</h3>
-            <p className="text-xs text-brand-gray mt-0.5">
-              Commit, best-case, and closed forecast buckets with period goal tracking.
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setForecastPeriod('weekly')}
-              className={`text-xs px-3 py-1.5 rounded-lg border ${
-                forecastPeriod === 'weekly'
-                  ? 'bg-teal text-white border-teal'
-                  : 'border-gray-200 text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              Weekly
-            </button>
-            <button
-              onClick={() => setForecastPeriod('monthly')}
-              className={`text-xs px-3 py-1.5 rounded-lg border ${
-                forecastPeriod === 'monthly'
-                  ? 'bg-teal text-white border-teal'
-                  : 'border-gray-200 text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              Monthly
-            </button>
-          </div>
-        </div>
+      <ForecastPanel
+        forecastPeriod={forecastPeriod}
+        setForecastPeriod={setForecastPeriod}
+        loadingForecast={loadingForecast}
+        forecastBuckets={forecastSummary?.buckets ?? {}}
+        forecastProgress={forecastSummary?.progress ?? null}
+        goalForm={goalForm}
+        setGoalForm={setGoalForm}
+        busyKey={busyKey}
+        handleSaveGoal={handleSaveGoal}
+        forecastGoals={forecastSummary?.goals ?? null}
+        forecastSummary={forecastSummary}
+        forecastGap={forecastSummary?.gap ?? null}
+        loadingAttribution={loadingAttribution}
+        attributionSummary={attributionSummary}
+        attributionSources={attributionSummary?.sources ?? []}
+        attributionOverview={attributionSummary?.overview ?? {}}
+        attributionSequences={attributionSummary?.sequences ?? []}
+        attributionPersonas={attributionSummary?.personas ?? []}
+      />
 
-        {loadingForecast ? (
-          <p className="text-sm text-brand-gray">Loading forecast summary...</p>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-xs text-brand-gray">Closed Bucket</p>
-                <p className="text-xl font-bold text-navy">{formatCurrency(forecastBuckets.closed?.value)}</p>
-                <p className="text-xs text-brand-gray">{toInt(forecastBuckets.closed?.count)} leads</p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-xs text-brand-gray">Commit Bucket</p>
-                <p className="text-xl font-bold text-navy">{formatCurrency(forecastBuckets.commit?.value)}</p>
-                <p className="text-xs text-brand-gray">{toInt(forecastBuckets.commit?.count)} leads</p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-4">
-                <p className="text-xs text-brand-gray">Best-Case Bucket</p>
-                <p className="text-xl font-bold text-navy">{formatCurrency(forecastBuckets.bestCase?.value)}</p>
-                <p className="text-xs text-brand-gray">{toInt(forecastBuckets.bestCase?.count)} leads</p>
-              </div>
-            </div>
+      <MultifamilyExplorer
+        multifamilyObjects={multifamilyObjects}
+        multifamilyObjectCounts={multifamilySummary?.objectCounts ?? {}}
+        multifamilyAssociationCounts={multifamilySummary?.associationCounts ?? {}}
+        multifamilyForm={multifamilyForm}
+        setMultifamilyForm={setMultifamilyForm}
+        multifamilyExplorer={multifamilyExplorer}
+        setMultifamilyExplorer={setMultifamilyExplorer}
+        multifamilyEntities={multifamilyEntities}
+        multifamilyEntitySelection={multifamilyEntitySelection}
+        selectedMultifamilyEntityKeys={Object.keys(multifamilyEntitySelection).filter((k) => multifamilyEntitySelection[k])}
+        selectedMultifamilyObject={multifamilyObjects.find((o) => o.id === multifamilyExplorer.objectId) ?? null}
+        selectedObjectAssociations={selectedObjectAssociations}
+        objectAssociationsQuery={objectAssociationsQuery}
+        loadingMultifamily={loadingMultifamily}
+        loadingMultifamilyEntities={loadingMultifamilyEntities}
+        busyKey={busyKey}
+        refreshMultifamilyObjects={refreshMultifamilyObjects}
+        refreshMultifamilyEntities={refreshMultifamilyEntities}
+        fetchSelectedObjectAssociations={fetchSelectedObjectAssociations}
+        handleCreateMultifamilyObject={handleCreateMultifamilyObject}
+        handleBulkAssociateExplorerEntities={handleBulkAssociateExplorerEntities}
+        handleToggleMultifamilyEntitySelection={handleToggleMultifamilyEntitySelection}
+      />
 
-            <div className="bg-slate-50 border border-slate-100 rounded-lg p-4">
-              <p className="text-xs text-brand-gray">Total Forecast Value</p>
-              <p className="text-2xl font-bold text-navy">{formatCurrency(forecastBuckets.totalForecastValue)}</p>
-              {forecastProgress ? (
-                <p className="text-xs text-brand-gray mt-1">
-                  {toInt(forecastProgress.elapsedDays)} of {toInt(forecastProgress.totalDays)} days elapsed
-                </p>
-              ) : null}
-            </div>
+      <DataQualityPanel
+        dataQualityIssues={dataQualityIssues}
+        dataQualityMergeOperations={dataQualityMergeOperations}
+        dataQualityStatusFilter={dataQualityStatusFilter}
+        setDataQualityStatusFilter={setDataQualityStatusFilter}
+        dataQualityOpenCount={dataQualitySummary?.openCount ?? 0}
+        dataQualityOpenBlockingCount={dataQualitySummary?.openBlockingCount ?? 0}
+        dataQualityResolvedCount={dataQualitySummary?.resolvedCount ?? 0}
+        dataQualityMergeCount30d={dataQualitySummary?.mergeCount30d ?? 0}
+        loadingDataQuality={loadingDataQuality}
+        loadingDataQualityMergeOperations={loadingDataQualityMergeOperations}
+        busyKey={busyKey}
+        refreshDataQualityIssues={refreshDataQualityIssues}
+        refreshDataQualityMergeOperations={refreshDataQualityMergeOperations}
+        handleDataQualityIssueStatus={handleDataQualityIssueStatus}
+        handleMergeDuplicateIssue={handleMergeDuplicateIssue}
+      />
 
-            <form onSubmit={handleSaveGoal} className="grid grid-cols-1 md:grid-cols-5 gap-3">
-              <input
-                type="number"
-                min="0"
-                value={goalForm.targetMeetings}
-                onChange={(event) => setGoalForm((prev) => ({ ...prev, targetMeetings: toInt(event.target.value) }))}
-                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                placeholder="Target meetings"
-              />
-              <input
-                type="number"
-                min="0"
-                value={goalForm.targetOpportunities}
-                onChange={(event) =>
-                  setGoalForm((prev) => ({ ...prev, targetOpportunities: toInt(event.target.value) }))
-                }
-                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                placeholder="Target opportunities"
-              />
-              <input
-                type="number"
-                min="0"
-                value={goalForm.targetRevenue}
-                onChange={(event) => setGoalForm((prev) => ({ ...prev, targetRevenue: toInt(event.target.value) }))}
-                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                placeholder="Target revenue"
-              />
-              <input
-                type="text"
-                value={goalForm.notes}
-                onChange={(event) => setGoalForm((prev) => ({ ...prev, notes: event.target.value }))}
-                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                placeholder="Goal notes"
-              />
-              <button
-                type="submit"
-                disabled={busyKey === `goal-save-${forecastPeriod}`}
-                className="bg-navy text-white rounded-lg px-3 py-2 text-sm font-semibold hover:bg-navy/90 disabled:opacity-60"
-              >
-                {busyKey === `goal-save-${forecastPeriod}` ? 'Saving...' : 'Save Goals'}
-              </button>
-            </form>
+      <CampaignManager
+        campaigns={campaigns}
+        campaignForm={campaignForm}
+        setCampaignForm={setCampaignForm}
+        leads={leads}
+        loadingCampaigns={loadingCampaigns}
+        busyKey={busyKey}
+        handleCreateCampaign={handleCreateCampaign}
+        handleCampaignStatus={handleCampaignStatus}
+      />
 
-            {forecastGoals ? (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div className="bg-white border border-gray-100 rounded-lg p-3">
-                  <p className="text-xs text-brand-gray">
-                    Meetings: {toInt(forecastSummary?.projected?.meetings)} / {toInt(forecastGoals.targetMeetings)}
-                  </p>
-                  <p
-                    className={`text-xs mt-1 ${
-                      (forecastGap?.meetingsGap || 0) <= 0 ? 'text-emerald-600' : 'text-amber-700'
-                    }`}
-                  >
-                    Gap: {toInt(forecastGap?.meetingsGap)}
-                  </p>
-                </div>
-                <div className="bg-white border border-gray-100 rounded-lg p-3">
-                  <p className="text-xs text-brand-gray">
-                    Opportunities: {toInt(forecastSummary?.projected?.opportunities)} /{' '}
-                    {toInt(forecastGoals.targetOpportunities)}
-                  </p>
-                  <p
-                    className={`text-xs mt-1 ${
-                      (forecastGap?.opportunitiesGap || 0) <= 0 ? 'text-emerald-600' : 'text-amber-700'
-                    }`}
-                  >
-                    Gap: {toInt(forecastGap?.opportunitiesGap)}
-                  </p>
-                </div>
-                <div className="bg-white border border-gray-100 rounded-lg p-3">
-                  <p className="text-xs text-brand-gray">
-                    Revenue: {formatCurrency(forecastSummary?.projected?.revenue)} /{' '}
-                    {formatCurrency(forecastGoals.targetRevenue)}
-                  </p>
-                  <p
-                    className={`text-xs mt-1 ${
-                      (forecastGap?.revenueGap || 0) <= 0 ? 'text-emerald-600' : 'text-amber-700'
-                    }`}
-                  >
-                    Gap: {formatCurrency(forecastGap?.revenueGap)}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-brand-gray">Set goals for this period to unlock gap-to-goal tracking.</p>
-            )}
-          </>
-        )}
-      </div>
+      <SequenceManager
+        sequences={sequences}
+        sequenceEnrollments={sequenceEnrollments}
+        loadingSequences={loadingSequences}
+        loadingSequenceEnrollments={loadingSequenceEnrollments}
+        busyKey={busyKey}
+        handleSequenceStateChange={handleSequenceStateChange}
+      />
 
-      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-navy">Attribution + Source ROI</h3>
-            <p className="text-xs text-brand-gray mt-0.5">
-              Source to sequence to meeting to opportunity lineage for the {forecastPeriod} window.
-            </p>
-          </div>
-          {attributionSummary?.period ? (
-            <p className="text-xs text-brand-gray">
-              {attributionSummary.period.start} to {attributionSummary.period.end}
-            </p>
-          ) : null}
-        </div>
-
-        {loadingAttribution ? (
-          <p className="text-sm text-brand-gray">Loading attribution summary...</p>
-        ) : attributionSources.length === 0 ? (
-          <p className="text-sm text-brand-gray">No attribution events yet for this period.</p>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-              <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-xs text-brand-gray">Imported</p>
-                <p className="text-lg font-bold text-navy">{toInt(attributionOverview.importedLeads)}</p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-xs text-brand-gray">Contacted</p>
-                <p className="text-lg font-bold text-navy">{toInt(attributionOverview.contactedLeads)}</p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-xs text-brand-gray">Meetings</p>
-                <p className="text-lg font-bold text-navy">{toInt(attributionOverview.meetingLeads)}</p>
-                <p className="text-xs text-brand-gray">{toInt(attributionOverview.meetingRateFromImported)}% from imported</p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-xs text-brand-gray">Opportunities</p>
-                <p className="text-lg font-bold text-navy">{toInt(attributionOverview.opportunityLeads)}</p>
-                <p className="text-xs text-brand-gray">
-                  {toInt(attributionOverview.opportunityRateFromImported)}% from imported
-                </p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-xs text-brand-gray">Attributed Revenue</p>
-                <p className="text-lg font-bold text-navy">{formatCurrency(attributionOverview.attributedRevenue)}</p>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
-                    <th className="py-2 pr-3">Source</th>
-                    <th className="py-2 pr-3">Imported</th>
-                    <th className="py-2 pr-3">Meetings</th>
-                    <th className="py-2 pr-3">Opportunities</th>
-                    <th className="py-2 pr-3">Revenue</th>
-                    <th className="py-2 pr-3">Opp %</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {attributionSources.slice(0, 8).map((source) => (
-                    <tr key={`${source.sourceType}-${source.sourceReference}`}>
-                      <td className="py-2 pr-3">
-                        <p className="font-semibold text-navy">{source.sourceType}</p>
-                        <p className="text-xs text-brand-gray truncate max-w-[240px]">{source.sourceReference}</p>
-                      </td>
-                      <td className="py-2 pr-3">{toInt(source.importedLeads)}</td>
-                      <td className="py-2 pr-3">{toInt(source.meetingLeads)}</td>
-                      <td className="py-2 pr-3">{toInt(source.opportunityLeads)}</td>
-                      <td className="py-2 pr-3">{formatCurrency(source.attributedRevenue)}</td>
-                      <td className="py-2 pr-3">{toInt(source.opportunityRateFromImported)}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="border border-gray-100 rounded-lg p-3">
-                <p className="text-xs font-semibold text-navy mb-2">Top Sequences</p>
-                {attributionSequences.length === 0 ? (
-                  <p className="text-xs text-brand-gray">No sequence-attributed events yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {attributionSequences.slice(0, 5).map((sequence) => (
-                      <div key={sequence.sequenceId} className="flex items-center justify-between gap-3 text-xs">
-                        <p className="text-navy truncate">{sequence.sequenceName}</p>
-                        <p className="text-brand-gray">
-                          Opp {toInt(sequence.opportunityLeads)} | {formatCurrency(sequence.attributedRevenue)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="border border-gray-100 rounded-lg p-3">
-                <p className="text-xs font-semibold text-navy mb-2">Top Personas</p>
-                {attributionPersonas.length === 0 ? (
-                  <p className="text-xs text-brand-gray">No persona attribution yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {attributionPersonas.slice(0, 5).map((persona) => (
-                      <div key={persona.persona} className="flex items-center justify-between gap-3 text-xs">
-                        <p className="text-navy">{persona.persona}</p>
-                        <p className="text-brand-gray">
-                          Opp {toInt(persona.opportunityLeads)} | {formatCurrency(persona.attributedRevenue)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-navy">Multifamily Object Explorer</h3>
-            <p className="text-xs text-brand-gray mt-0.5">
-              Manage portfolio, property, tech stack, and initiative objects with entity tagging workflows.
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              refreshMultifamilyObjects()
-              refreshMultifamilyEntities()
-              fetchSelectedObjectAssociations()
-            }}
-            className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
-          >
-            Refresh Objects
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Portfolios</p>
-            <p className="text-lg font-bold text-navy">{toInt(multifamilyObjectCounts.portfolio)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Properties</p>
-            <p className="text-lg font-bold text-navy">{toInt(multifamilyObjectCounts.property)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Tech Stacks</p>
-            <p className="text-lg font-bold text-navy">{toInt(multifamilyObjectCounts.tech_stack)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Initiatives</p>
-            <p className="text-lg font-bold text-navy">{toInt(multifamilyObjectCounts.initiative)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Lead Associations</p>
-            <p className="text-lg font-bold text-navy">{toInt(multifamilyAssociationCounts.outbound_lead)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Contact Associations</p>
-            <p className="text-lg font-bold text-navy">{toInt(multifamilyAssociationCounts.contact)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Deal Associations</p>
-            <p className="text-lg font-bold text-navy">{toInt(multifamilyAssociationCounts.deal)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Company Associations</p>
-            <p className="text-lg font-bold text-navy">{toInt(multifamilyAssociationCounts.company)}</p>
-          </div>
-        </div>
-
-        <form onSubmit={handleCreateMultifamilyObject} className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <select
-            value={multifamilyForm.objectType}
-            onChange={(event) => setMultifamilyForm((prev) => ({ ...prev, objectType: event.target.value }))}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-          >
-            {MULTIFAMILY_OBJECT_TYPES.map((typeOption) => (
-              <option key={typeOption.value} value={typeOption.value}>
-                {typeOption.label}
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            value={multifamilyForm.name}
-            onChange={(event) => setMultifamilyForm((prev) => ({ ...prev, name: event.target.value }))}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-            placeholder="Object name"
-          />
-          <input
-            type="text"
-            value={multifamilyForm.description}
-            onChange={(event) => setMultifamilyForm((prev) => ({ ...prev, description: event.target.value }))}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-            placeholder="Description"
-          />
-          <button
-            type="submit"
-            disabled={busyKey === `multifamily-create-${multifamilyForm.objectType}`}
-            className="bg-navy text-white rounded-lg px-3 py-2 text-sm font-semibold hover:bg-navy/90 disabled:opacity-60"
-          >
-            {busyKey === `multifamily-create-${multifamilyForm.objectType}` ? 'Creating...' : 'Create Object'}
-          </button>
-        </form>
-
-        {loadingMultifamily ? (
-          <p className="text-sm text-brand-gray">Loading multifamily objects...</p>
-        ) : multifamilyObjects.length === 0 ? (
-          <p className="text-sm text-brand-gray">No multifamily objects created yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
-                  <th className="py-2 pr-3">Type</th>
-                  <th className="py-2 pr-3">Name</th>
-                  <th className="py-2 pr-3">Description</th>
-                  <th className="py-2 pr-3">Associations</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {multifamilyObjects.slice(0, 20).map((object) => (
-                  <tr key={object.id}>
-                    <td className="py-2 pr-3 text-xs text-gray-700">{object.objectType}</td>
-                    <td className="py-2 pr-3">
-                      <button
-                        onClick={() =>
-                          setMultifamilyExplorer((prev) => ({
-                            ...prev,
-                            objectId: object.id,
-                          }))
-                        }
-                        className={`font-semibold ${
-                          multifamilyExplorer.objectId === object.id ? 'text-teal underline' : 'text-navy hover:text-teal'
-                        }`}
-                      >
-                        {object.name}
-                      </button>
-                    </td>
-                    <td className="py-2 pr-3 text-xs text-brand-gray">{object.description || 'No description'}</td>
-                    <td className="py-2 pr-3 text-xs text-brand-gray">
-                      Leads {toInt(object.associationCounts?.outboundLead)} | Contacts {toInt(object.associationCounts?.contact)} |
-                      Deals {toInt(object.associationCounts?.deal)} | Companies {toInt(object.associationCounts?.company)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <div className="border border-gray-100 rounded-lg p-4 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs text-brand-gray">Explorer Object</p>
-            <select
-              value={multifamilyExplorer.objectId}
-              onChange={(event) =>
-                setMultifamilyExplorer((prev) => ({
-                  ...prev,
-                  objectId: event.target.value,
-                }))
-              }
-              className="border border-gray-200 rounded-lg px-2 py-1 text-xs"
-            >
-              <option value="">Select object</option>
-              {multifamilyObjects.map((object) => (
-                <option key={object.id} value={object.id}>
-                  {object.name} ({object.objectType})
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={multifamilyExplorer.entityType}
-              onChange={(event) =>
-                setMultifamilyExplorer((prev) => ({
-                  ...prev,
-                  entityType: event.target.value,
-                }))
-              }
-              className="border border-gray-200 rounded-lg px-2 py-1 text-xs"
-            >
-              {MULTIFAMILY_EXPLORER_ENTITY_TYPES.map((entityType) => (
-                <option key={entityType.value} value={entityType.value}>
-                  {entityType.label}
-                </option>
-              ))}
-            </select>
-
-            <input
-              type="text"
-              value={multifamilyExplorer.search}
-              onChange={(event) =>
-                setMultifamilyExplorer((prev) => ({
-                  ...prev,
-                  search: event.target.value,
-                }))
-              }
-              className="border border-gray-200 rounded-lg px-2 py-1 text-xs min-w-[180px]"
-              placeholder={`Search ${multifamilyExplorer.entityType}s`}
-            />
-            <button
-              onClick={refreshMultifamilyEntities}
-              className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-700 hover:bg-gray-50"
-            >
-              Search
-            </button>
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-xs text-brand-gray">
-              {selectedMultifamilyObject
-                ? `Selected object: ${selectedMultifamilyObject.name} (${selectedMultifamilyObject.objectType})`
-                : 'Select a multifamily object to start bulk tagging.'}
-            </p>
-            <button
-              onClick={handleBulkAssociateExplorerEntities}
-              disabled={
-                !multifamilyExplorer.objectId ||
-                selectedMultifamilyEntityKeys.length === 0 ||
-                busyKey === `multifamily-bulk-${multifamilyExplorer.entityType}`
-              }
-              className="text-xs border border-indigo-200 text-indigo-700 rounded px-2 py-1 hover:bg-indigo-50 disabled:opacity-60"
-            >
-              {busyKey === `multifamily-bulk-${multifamilyExplorer.entityType}`
-                ? 'Tagging...'
-                : `Tag Selected (${selectedMultifamilyEntityKeys.length})`}
-            </button>
-          </div>
-
-          {loadingMultifamilyEntities ? (
-            <p className="text-xs text-brand-gray">Loading explorer entities...</p>
-          ) : multifamilyEntities.length === 0 ? (
-            <p className="text-xs text-brand-gray">No entities found for this search.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-gray-100 text-left text-brand-gray">
-                    <th className="py-2 pr-2">Select</th>
-                    <th className="py-2 pr-2">Name</th>
-                    <th className="py-2 pr-2">Context</th>
-                    <th className="py-2 pr-2">Current Associations</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {multifamilyEntities.slice(0, 40).map((entity) => {
-                    const entityKey = multifamilyExplorer.entityType === 'company' ? entity.companyName || entity.id : entity.id
-                    return (
-                      <tr key={entityKey}>
-                        <td className="py-2 pr-2">
-                          <input
-                            type="checkbox"
-                            checked={Boolean(multifamilyEntitySelection[entityKey])}
-                            onChange={(event) => handleToggleMultifamilyEntitySelection(entityKey, event.target.checked)}
-                          />
-                        </td>
-                        <td className="py-2 pr-2 font-semibold text-navy">
-                          {multifamilyExplorer.entityType === 'deal' ? entity.name : entity.name || entity.companyName}
-                        </td>
-                        <td className="py-2 pr-2 text-brand-gray">
-                          {multifamilyExplorer.entityType === 'contact' &&
-                            `${entity.email || 'No email'} • ${entity.company || 'No company'}`}
-                          {multifamilyExplorer.entityType === 'deal' &&
-                            `${entity.stage || 'unknown stage'} • ${entity.company || entity.contactName || 'No linked contact'}`}
-                          {multifamilyExplorer.entityType === 'company' &&
-                            `Contacts ${toInt(entity.contactCount)} • Leads ${toInt(entity.leadCount)}`}
-                        </td>
-                        <td className="py-2 pr-2 text-brand-gray">{toInt(entity.associationCount)}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div className="border-t border-gray-100 pt-3">
-            <p className="text-xs font-semibold text-navy mb-2">
-              Existing {multifamilyExplorer.entityType} associations for selected object
-            </p>
-            {objectAssociationsQuery.isLoading ? (
-              <p className="text-xs text-brand-gray">Loading object associations...</p>
-            ) : selectedObjectAssociations.length === 0 ? (
-              <p className="text-xs text-brand-gray">No associations yet for this object/entity type.</p>
-            ) : (
-              <div className="space-y-1">
-                {selectedObjectAssociations.slice(0, 15).map((association) => (
-                  <p key={association.id} className="text-xs text-brand-gray">
-                    <span className="font-semibold text-navy">{association.target?.name || association.companyName || 'Unknown'}</span>
-                    {association.target?.company ? ` • ${association.target.company}` : ''}
-                    {association.target?.email ? ` • ${association.target.email}` : ''}
-                  </p>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-navy">Data Quality Command Center</h3>
-            <p className="text-xs text-brand-gray mt-0.5">
-              Duplicate queue, stale records, and pre-enrollment required-field guardrails.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={dataQualityStatusFilter}
-              onChange={(event) => setDataQualityStatusFilter(event.target.value)}
-              className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs text-gray-700"
-            >
-              <option value="open">Open</option>
-              <option value="resolved">Resolved</option>
-              <option value="dismissed">Dismissed</option>
-            </select>
-            <button
-              onClick={refreshDataQualityIssues}
-              className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
-            >
-              Refresh Queue
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Open Issues</p>
-            <p className="text-lg font-bold text-navy">{dataQualityOpenCount}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Blocking Enrollment</p>
-            <p className="text-lg font-bold text-rose-700">{dataQualityOpenBlockingCount}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Resolved</p>
-            <p className="text-lg font-bold text-emerald-700">{dataQualityResolvedCount}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Merges (30d)</p>
-            <p className="text-lg font-bold text-indigo-700">{dataQualityMergeCount30d}</p>
-          </div>
-        </div>
-
-        {loadingDataQuality ? (
-          <p className="text-sm text-brand-gray">Loading data quality issues...</p>
-        ) : dataQualityIssues.length === 0 ? (
-          <p className="text-sm text-brand-gray">No issues for this filter.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
-                  <th className="py-2 pr-3">Issue</th>
-                  <th className="py-2 pr-3">Lead</th>
-                  <th className="py-2 pr-3">Severity</th>
-                  <th className="py-2 pr-3">Status</th>
-                  <th className="py-2 pr-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {dataQualityIssues.map((issue) => (
-                  <tr key={issue.id}>
-                    <td className="py-2 pr-3">
-                      <p className="font-semibold text-navy">{issue.issueType}</p>
-                      <p className="text-xs text-brand-gray">{issue.details?.message || 'No details'}</p>
-                    </td>
-                    <td className="py-2 pr-3">
-                      {issue.lead ? (
-                        <>
-                          <p className="text-navy">{issue.lead.name}</p>
-                          <p className="text-xs text-brand-gray">{issue.lead.email || issue.lead.company || 'No identifier'}</p>
-                        </>
-                      ) : (
-                        <span className="text-xs text-brand-gray">No lead attached</span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-3">
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                          issue.severity === 'high'
-                            ? 'bg-rose-100 text-rose-700'
-                            : issue.severity === 'medium'
-                            ? 'bg-amber-100 text-amber-700'
-                            : 'bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        {issue.severity}
-                      </span>
-                      {issue.isBlocking ? <p className="text-[11px] text-rose-700 mt-1">Blocks enrollment</p> : null}
-                    </td>
-                    <td className="py-2 pr-3 text-xs text-gray-700">{issue.status}</td>
-                    <td className="py-2 pr-3">
-        <div className="flex flex-wrap gap-2">
-                        {issue.status !== 'resolved' && (
-                          <button
-                            onClick={() => handleDataQualityIssueStatus(issue.id, 'resolved')}
-                            disabled={busyKey === `data-quality-${issue.id}-resolved`}
-                            className="text-xs border border-emerald-200 text-emerald-700 rounded px-2 py-1 hover:bg-emerald-50 disabled:opacity-60"
-                          >
-                            Resolve
-                          </button>
-                        )}
-                        {issue.status !== 'dismissed' && (
-                          <button
-                            onClick={() => handleDataQualityIssueStatus(issue.id, 'dismissed')}
-                            disabled={busyKey === `data-quality-${issue.id}-dismissed`}
-                            className="text-xs border border-gray-200 text-gray-700 rounded px-2 py-1 hover:bg-gray-50 disabled:opacity-60"
-                          >
-                            Dismiss
-                          </button>
-                        )}
-                        {issue.status !== 'open' && (
-                          <button
-                            onClick={() => handleDataQualityIssueStatus(issue.id, 'open')}
-                            disabled={busyKey === `data-quality-${issue.id}-open`}
-                            className="text-xs border border-blue-200 text-blue-700 rounded px-2 py-1 hover:bg-blue-50 disabled:opacity-60"
-                          >
-                            Reopen
-                          </button>
-                        )}
-                        {issue.issueType === 'potential_duplicate' && issue.status === 'open' && (
-                          <button
-                            onClick={() => handleMergeDuplicateIssue(issue)}
-                            disabled={busyKey === `data-quality-merge-${issue.id}`}
-                            className="text-xs border border-indigo-200 text-indigo-700 rounded px-2 py-1 hover:bg-indigo-50 disabled:opacity-60"
-                          >
-                            {busyKey === `data-quality-merge-${issue.id}` ? 'Merging...' : 'Merge Group'}
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <div className="border-t border-gray-100 pt-3">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-semibold text-navy">Recent Merge Operations</p>
-            <button
-              onClick={refreshDataQualityMergeOperations}
-              className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-700 hover:bg-gray-50"
-            >
-              Refresh Merges
-            </button>
-          </div>
-          {loadingDataQualityMergeOperations ? (
-            <p className="text-xs text-brand-gray mt-2">Loading merge operations...</p>
-          ) : dataQualityMergeOperations.length === 0 ? (
-            <p className="text-xs text-brand-gray mt-2">No merge operations yet.</p>
-          ) : (
-            <div className="mt-2 space-y-1">
-              {dataQualityMergeOperations.slice(0, 6).map((operation) => (
-                <p key={operation.id} className="text-xs text-brand-gray">
-                  <span className="font-semibold text-navy">{operation.primaryLead?.name || operation.primaryLeadId || 'Primary lead'}</span>
-                  {` merged ${toInt(operation.mergedLeadCount)} lead(s)`}
-                  {operation.createdAt ? ` • ${new Date(operation.createdAt).toLocaleString()}` : ''}
-                </p>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
-        <h3 className="text-sm font-semibold text-navy">Campaign Runs</h3>
-        <form onSubmit={handleCreateCampaign} className="grid grid-cols-1 md:grid-cols-5 gap-3">
-          <input
-            type="text"
-            value={campaignForm.name}
-            onChange={(event) => setCampaignForm((prev) => ({ ...prev, name: event.target.value }))}
-            placeholder="Campaign name"
-            className="md:col-span-2 border border-gray-200 rounded-lg px-3 py-2 text-sm"
-          />
-          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={campaignForm.includeEmail}
-              onChange={(event) => setCampaignForm((prev) => ({ ...prev, includeEmail: event.target.checked }))}
-            />
-            Email
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={campaignForm.includeLinkedIn}
-              onChange={(event) => setCampaignForm((prev) => ({ ...prev, includeLinkedIn: event.target.checked }))}
-            />
-            LinkedIn
-          </label>
-          <button
-            type="submit"
-            disabled={busyKey === 'campaign-create'}
-            className="bg-navy text-white rounded-lg px-3 py-2 text-sm font-semibold hover:bg-navy/90 disabled:opacity-60"
-          >
-            {busyKey === 'campaign-create' ? 'Creating...' : `Create (${leads.length} Leads)`}
-          </button>
-        </form>
-
-        {loadingCampaigns ? (
-          <p className="text-sm text-brand-gray">Loading campaigns...</p>
-        ) : campaigns.length === 0 ? (
-          <p className="text-sm text-brand-gray">No campaigns yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
-                  <th className="py-2 pr-3">Name</th>
-                  <th className="py-2 pr-3">Channels</th>
-                  <th className="py-2 pr-3">Status</th>
-                  <th className="py-2 pr-3">Members</th>
-                  <th className="py-2 pr-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {campaigns.map((campaign) => (
-                  <tr key={campaign.id}>
-                    <td className="py-3 pr-3">
-                      <p className="font-semibold text-navy">{campaign.name}</p>
-                      <p className="text-xs text-brand-gray">
-                        Created {new Date(campaign.created_at).toLocaleDateString()}
-                      </p>
-                    </td>
-                    <td className="py-3 pr-3 text-xs text-gray-700">
-                      {(Array.isArray(campaign.channels) ? campaign.channels : []).join(', ')}
-                    </td>
-                    <td className="py-3 pr-3">{renderStatusBadge(campaign.status)}</td>
-                    <td className="py-3 pr-3 text-xs text-gray-700">
-                      {toInt(campaign.member_count)} total | {toInt(campaign.engaged_count)} engaged
-                    </td>
-                    <td className="py-3 pr-3">
-                      <div className="flex flex-wrap gap-2">
-                        {campaign.status === 'draft' || campaign.status === 'paused' ? (
-                          <button
-                            onClick={() => handleCampaignStatus(campaign.id, 'active')}
-                            disabled={busyKey === `campaign-status-${campaign.id}-active`}
-                            className="text-xs border border-emerald-200 text-emerald-700 rounded px-2 py-1 hover:bg-emerald-50 disabled:opacity-60"
-                          >
-                            Activate
-                          </button>
-                        ) : null}
-                        {campaign.status === 'active' ? (
-                          <button
-                            onClick={() => handleCampaignStatus(campaign.id, 'paused')}
-                            disabled={busyKey === `campaign-status-${campaign.id}-paused`}
-                            className="text-xs border border-amber-200 text-amber-700 rounded px-2 py-1 hover:bg-amber-50 disabled:opacity-60"
-                          >
-                            Pause
-                          </button>
-                        ) : null}
-                        {campaign.status !== 'completed' && campaign.status !== 'archived' ? (
-                          <button
-                            onClick={() => handleCampaignStatus(campaign.id, 'completed')}
-                            disabled={busyKey === `campaign-status-${campaign.id}-completed`}
-                            className="text-xs border border-blue-200 text-blue-700 rounded px-2 py-1 hover:bg-blue-50 disabled:opacity-60"
-                          >
-                            Complete
-                          </button>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-navy">Sequence Control Center</h3>
-            <p className="text-xs text-brand-gray mt-0.5">
-              Enforce one active sequence per lead with pause, resume, and stop controls.
-            </p>
-          </div>
-          <div className="text-xs text-brand-gray">
-            Open enrollments:{' '}
-            {sequenceEnrollments.filter((item) => item.status === 'active' || item.status === 'paused').length}
-          </div>
-        </div>
-
-        {loadingSequences || loadingSequenceEnrollments ? (
-          <p className="text-sm text-brand-gray">Loading sequence control data...</p>
-        ) : sequences.length === 0 ? (
-          <p className="text-sm text-brand-gray">
-            No sequences found. Create one in the Sequences page before enrolling leads.
-          </p>
-        ) : sequenceEnrollments.length === 0 ? (
-          <p className="text-sm text-brand-gray">No sequence enrollments yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
-                  <th className="py-2 pr-3">Lead</th>
-                  <th className="py-2 pr-3">Sequence</th>
-                  <th className="py-2 pr-3">State</th>
-                  <th className="py-2 pr-3">Step</th>
-                  <th className="py-2 pr-3">Updated</th>
-                  <th className="py-2 pr-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {sequenceEnrollments.map((enrollment) => (
-                  <tr key={enrollment.id}>
-                    <td className="py-3 pr-3">
-                      <p className="font-semibold text-navy">{enrollment.lead_name}</p>
-                      <p className="text-xs text-brand-gray">{enrollment.lead_email || 'No email'}</p>
-                    </td>
-                    <td className="py-3 pr-3">{enrollment.sequence_name}</td>
-                    <td className="py-3 pr-3">{renderStatusBadge(enrollment.status)}</td>
-                    <td className="py-3 pr-3 text-xs text-gray-700">
-                      {toInt(enrollment.current_step)} / {toInt(enrollment.total_steps)}
-                    </td>
-                    <td className="py-3 pr-3 text-xs text-brand-gray">
-                      {enrollment.updated_at ? new Date(enrollment.updated_at).toLocaleString() : '-'}
-                    </td>
-                    <td className="py-3 pr-3">
-                      <div className="flex flex-wrap gap-2">
-                        {enrollment.status === 'active' && (
-                          <button
-                            onClick={() => handleSequenceStateChange(enrollment, 'paused')}
-                            disabled={busyKey === `sequence-state-${enrollment.id}-paused`}
-                            className="text-xs border border-amber-200 text-amber-700 rounded px-2 py-1 hover:bg-amber-50 disabled:opacity-60"
-                          >
-                            Pause
-                          </button>
-                        )}
-                        {enrollment.status === 'paused' && (
-                          <button
-                            onClick={() => handleSequenceStateChange(enrollment, 'active')}
-                            disabled={busyKey === `sequence-state-${enrollment.id}-active`}
-                            className="text-xs border border-emerald-200 text-emerald-700 rounded px-2 py-1 hover:bg-emerald-50 disabled:opacity-60"
-                          >
-                            Resume
-                          </button>
-                        )}
-                        {(enrollment.status === 'active' || enrollment.status === 'paused') && (
-                          <button
-                            onClick={() => handleSequenceStateChange(enrollment, 'stopped')}
-                            disabled={busyKey === `sequence-state-${enrollment.id}-stopped`}
-                            className="text-xs border border-rose-200 text-rose-700 rounded px-2 py-1 hover:bg-rose-50 disabled:opacity-60"
-                          >
-                            Stop
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-navy">Workflow Rules</h3>
-            <p className="text-xs text-brand-gray mt-0.5">
-              Trigger outbound actions from behavioral events with if/else automation.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={ruleTestLeadId}
-              onChange={(event) => setRuleTestLeadId(event.target.value)}
-              className="text-xs border border-gray-200 rounded px-2 py-1 text-gray-700"
-            >
-              <option value="">No lead context</option>
-              {leads.map((lead) => (
-                <option key={lead.id} value={lead.id}>
-                  {lead.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        <form onSubmit={handleCreateWorkflowRule} className="grid grid-cols-1 md:grid-cols-6 gap-3">
-          <input
-            type="text"
-            value={workflowForm.name}
-            onChange={(event) => setWorkflowForm((prev) => ({ ...prev, name: event.target.value }))}
-            placeholder="Rule name"
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm md:col-span-2"
-          />
-          <select
-            value={workflowForm.triggerEvent}
-            onChange={(event) => setWorkflowForm((prev) => ({ ...prev, triggerEvent: event.target.value }))}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-          >
-            {WORKFLOW_TRIGGER_EVENTS.map((eventType) => (
-              <option key={eventType} value={eventType}>
-                {eventType}
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            value={workflowForm.conditionField}
-            onChange={(event) => setWorkflowForm((prev) => ({ ...prev, conditionField: event.target.value }))}
-            placeholder="Condition field (e.g. lead.total_score)"
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-          />
-          <select
-            value={workflowForm.conditionOp}
-            onChange={(event) => setWorkflowForm((prev) => ({ ...prev, conditionOp: event.target.value }))}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-          >
-            {CONDITION_OPERATORS.map((operator) => (
-              <option key={operator.value} value={operator.value}>
-                {operator.label}
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            value={workflowForm.conditionValue}
-            onChange={(event) => setWorkflowForm((prev) => ({ ...prev, conditionValue: event.target.value }))}
-            placeholder="Condition value"
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-          />
-
-          <select
-            value={workflowForm.trueActionType}
-            onChange={(event) => setWorkflowForm((prev) => ({ ...prev, trueActionType: event.target.value }))}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-          >
-            {WORKFLOW_ACTION_TYPES.map((action) => (
-              <option key={action.value} value={action.value}>
-                If true: {action.label}
-              </option>
-            ))}
-          </select>
-          {workflowForm.trueActionType === 'enroll_sequence' ? (
-            <select
-              value={workflowForm.trueActionValue}
-              onChange={(event) => setWorkflowForm((prev) => ({ ...prev, trueActionValue: event.target.value }))}
-              className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="">Select sequence id</option>
-              {sequences.map((sequence) => (
-                <option key={sequence.id} value={sequence.id}>
-                  {sequence.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              type="text"
-              value={workflowForm.trueActionValue}
-              onChange={(event) => setWorkflowForm((prev) => ({ ...prev, trueActionValue: event.target.value }))}
-              placeholder="True action value"
-              className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-            />
-          )}
-
-          <select
-            value={workflowForm.falseActionType}
-            onChange={(event) => setWorkflowForm((prev) => ({ ...prev, falseActionType: event.target.value }))}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-          >
-            <option value="">Else: no action</option>
-            {WORKFLOW_ACTION_TYPES.map((action) => (
-              <option key={action.value} value={action.value}>
-                Else: {action.label}
-              </option>
-            ))}
-          </select>
-          <input
-            type="text"
-            value={workflowForm.falseActionValue}
-            onChange={(event) => setWorkflowForm((prev) => ({ ...prev, falseActionValue: event.target.value }))}
-            placeholder="False action value"
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
-          />
-          <button
-            type="submit"
-            disabled={busyKey === 'workflow-create'}
-            className="bg-navy text-white rounded-lg px-3 py-2 text-sm font-semibold hover:bg-navy/90 disabled:opacity-60"
-          >
-            {busyKey === 'workflow-create' ? 'Creating...' : 'Create Rule'}
-          </button>
-        </form>
-
-        {loadingWorkflowRules ? (
-          <p className="text-sm text-brand-gray">Loading workflow rules...</p>
-        ) : workflowRules.length === 0 ? (
-          <p className="text-sm text-brand-gray">No workflow rules yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 text-left text-xs text-brand-gray">
-                  <th className="py-2 pr-3">Rule</th>
-                  <th className="py-2 pr-3">Trigger</th>
-                  <th className="py-2 pr-3">Enabled</th>
-                  <th className="py-2 pr-3">Last Test</th>
-                  <th className="py-2 pr-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {workflowRules.map((rule) => (
-                  <tr key={rule.id}>
-                    <td className="py-3 pr-3">
-                      <p className="font-semibold text-navy">{rule.name}</p>
-                      <p className="text-xs text-brand-gray">{rule.description || 'No description'}</p>
-                    </td>
-                    <td className="py-3 pr-3 text-xs text-gray-700">{rule.trigger_event}</td>
-                    <td className="py-3 pr-3">
-                      {rule.enabled ? (
-                        <span className="px-2 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
-                          enabled
-                        </span>
-                      ) : (
-                        <span className="px-2 py-1 rounded-full text-xs font-semibold bg-zinc-100 text-zinc-700">
-                          disabled
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 pr-3 text-xs text-brand-gray">
-                      {rule.last_tested_at ? new Date(rule.last_tested_at).toLocaleString() : 'Never'}
-                    </td>
-                    <td className="py-3 pr-3">
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          onClick={() => handleToggleWorkflowRule(rule)}
-                          disabled={busyKey === `workflow-toggle-${rule.id}`}
-                          className="text-xs border border-gray-200 rounded px-2 py-1 hover:bg-gray-50 disabled:opacity-60"
-                        >
-                          {rule.enabled ? 'Disable' : 'Enable'}
-                        </button>
-                        <button
-                          onClick={() => handleTestWorkflowRule(rule, false)}
-                          disabled={busyKey === `workflow-test-${rule.id}-dry`}
-                          className="text-xs border border-blue-200 text-blue-700 rounded px-2 py-1 hover:bg-blue-50 disabled:opacity-60"
-                        >
-                          Dry Run
-                        </button>
-                        <button
-                          onClick={() => handleTestWorkflowRule(rule, true)}
-                          disabled={busyKey === `workflow-test-${rule.id}-live`}
-                          className="text-xs border border-amber-200 text-amber-700 rounded px-2 py-1 hover:bg-amber-50 disabled:opacity-60"
-                        >
-                          Run Live
-                        </button>
-                      </div>
-                      {ruleTestResultById[rule.id] && (
-                        <p className="mt-1 text-xs text-brand-gray">
-                          Last run: {ruleTestResultById[rule.id].status} | matched:{' '}
-                          {String(Boolean(ruleTestResultById[rule.id].matched))}
-                        </p>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <WorkflowRuleBuilder
+        workflowRules={workflowRules}
+        workflowForm={workflowForm}
+        setWorkflowForm={setWorkflowForm}
+        sequences={sequences}
+        leads={leads}
+        loadingWorkflowRules={loadingWorkflowRules}
+        busyKey={busyKey}
+        ruleTestLeadId={ruleTestLeadId}
+        setRuleTestLeadId={setRuleTestLeadId}
+        ruleTestResultById={ruleTestResultById}
+        handleCreateWorkflowRule={handleCreateWorkflowRule}
+        handleToggleWorkflowRule={handleToggleWorkflowRule}
+        handleTestWorkflowRule={handleTestWorkflowRule}
+      />
 
       <div className="bg-white rounded-xl shadow-sm p-6">
         <h3 className="text-sm font-semibold text-navy mb-4">Import CSV</h3>
@@ -2551,97 +1528,16 @@ export default function OutboundAutomation() {
         )}
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-navy">Draft Inbox</h3>
-            <p className="text-xs text-brand-gray mt-0.5">Persistent draft queue across sessions and devices.</p>
-          </div>
-          <button
-            onClick={refreshDraftInbox}
-            className="text-xs border border-gray-200 rounded-lg px-3 py-1.5 text-gray-700 hover:bg-gray-50"
-          >
-            Refresh Inbox
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Total Drafts</p>
-            <p className="text-lg font-bold text-navy">{toInt(draftInboxCounts.total_count)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Drafted</p>
-            <p className="text-lg font-bold text-navy">{toInt(draftInboxCounts.drafted_count)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Approved</p>
-            <p className="text-lg font-bold text-indigo-700">{toInt(draftInboxCounts.approved_count)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Sent</p>
-            <p className="text-lg font-bold text-emerald-700">{toInt(draftInboxCounts.sent_count)}</p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-3">
-            <p className="text-xs text-brand-gray">Pending LinkedIn</p>
-            <p className="text-lg font-bold text-amber-700">{toInt(draftInboxCounts.pending_linkedin_count)}</p>
-          </div>
-        </div>
-
-        {loadingDraftInbox ? (
-          <p className="text-sm text-brand-gray">Loading draft inbox...</p>
-        ) : draftInbox.length === 0 ? (
-          <p className="text-sm text-brand-gray">No drafts in inbox yet.</p>
-        ) : (
-          <div className="space-y-3">
-            {draftInbox.slice(0, 30).map((draft) => (
-              <div key={draft.id} className="border border-gray-100 rounded-lg p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-navy">
-                      {draft.channel === 'linkedin' ? 'LinkedIn' : 'Email'} draft for {draft.lead?.name || 'Unknown lead'}
-                    </p>
-                    <p className="text-xs text-brand-gray">
-                      {draft.status} {draft.channel === 'linkedin' && draft.linkedinTask ? `| Task ${draft.linkedinTask.status}` : ''}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {draft.status === 'drafted' && (
-                      <button
-                        onClick={() => handleApproveDraft(draft.id)}
-                        disabled={busyKey === `approve-${draft.id}`}
-                        className="text-xs border border-emerald-200 text-emerald-700 rounded px-2 py-1 hover:bg-emerald-50 disabled:opacity-60"
-                      >
-                        Approve
-                      </button>
-                    )}
-                    {draft.channel === 'email' && draft.status === 'approved' && (
-                      <button
-                        onClick={() => handleSendEmailDraft(draft)}
-                        disabled={busyKey === `send-email-${draft.id}`}
-                        className="text-xs border border-blue-200 text-blue-700 rounded px-2 py-1 hover:bg-blue-50 disabled:opacity-60"
-                      >
-                        Mark Sent
-                      </button>
-                    )}
-                    {draft.channel === 'linkedin' && draft.status === 'approved' && draft.linkedinTask?.status !== 'completed' && (
-                      <button
-                        onClick={() => handleCompleteLinkedInTask(draft.linkedinTask)}
-                        disabled={busyKey === `complete-task-${draft.linkedinTask?.id}`}
-                        className="text-xs border border-amber-200 text-amber-700 rounded px-2 py-1 hover:bg-amber-50 disabled:opacity-60"
-                      >
-                        Complete Task
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {draft.subject && <p className="text-xs text-brand-gray mt-2">Subject: {draft.subject}</p>}
-                <p className="text-xs text-gray-600 mt-2 whitespace-pre-wrap line-clamp-3">{draft.body}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <DraftInbox
+        draftInbox={draftInbox}
+        draftInboxCounts={draftInboxSummary?.counts ?? {}}
+        loadingDraftInbox={loadingDraftInbox}
+        busyKey={busyKey}
+        refreshDraftInbox={refreshDraftInbox}
+        handleApproveDraft={handleApproveDraft}
+        handleSendEmailDraft={handleSendEmailDraft}
+        handleCompleteLinkedInTask={handleCompleteLinkedInTask}
+      />
 
       <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
