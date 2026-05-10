@@ -13,6 +13,7 @@ import MembersPanel from '../components/projects/MembersPanel'
 import SavedViewsDropdown from '../components/projects/SavedViewsDropdown'
 import SprintBoard from '../components/projects/SprintBoard'
 import TeamPlanner from '../components/projects/TeamPlanner'
+import BaselineComparison from '../components/projects/BaselineComparison'
 
 export default function ProjectDetail() {
   const { projectId } = useParams()
@@ -27,6 +28,7 @@ export default function ProjectDetail() {
   const [relations, setRelations] = useState([])
   const [sprints, setSprints] = useState([])
   const [backlogTasks, setBacklogTasks] = useState([])
+  const [baselines, setBaselines] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [view, setView] = useState('grid')
@@ -53,6 +55,7 @@ export default function ProjectDetail() {
       setMembers(data.members || [])
       setSprints(sprintsData || [])
       setBacklogTasks(backlogData || [])
+      loadBaselines()
       setError('')
     } catch (err) {
       setError('Failed to load project')
@@ -105,6 +108,23 @@ export default function ProjectDetail() {
       alert('Project saved as template. It will appear in the template gallery.')
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save as template')
+    }
+  }
+
+  const loadBaselines = async () => {
+    try {
+      const { data } = await axios.get(`/api/projects/${projectId}/baselines`, headers)
+      setBaselines(data || [])
+    } catch { /* non-critical */ }
+  }
+
+  const handleSaveBaseline = async (name) => {
+    try {
+      await axios.post(`/api/projects/${projectId}/baselines`, { name }, headers)
+      loadBaselines()
+      setError('')
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save baseline')
     }
   }
 
@@ -176,6 +196,7 @@ export default function ProjectDetail() {
         project={project}
         onStatusChange={handleStatusChange}
         onSaveAsTemplate={handleSaveAsTemplate}
+        onSaveBaseline={handleSaveBaseline}
       />
 
       {error && <div className="mt-3 text-sm text-red-600">{error}</div>}
@@ -191,6 +212,7 @@ export default function ProjectDetail() {
                 { key: 'calendar', label: 'Calendar' },
                 { key: 'sprints', label: 'Sprints' },
                 { key: 'team-planner', label: 'Team Planner' },
+                { key: 'baselines', label: 'Baselines' },
               ].map(({ key, label }) => (
                 <button
                   key={key}
@@ -291,6 +313,13 @@ export default function ProjectDetail() {
               members={members}
               users={users}
               onReload={loadProject}
+            />
+          )}
+          {view === 'baselines' && (
+            <BaselineComparison
+              projectId={projectId}
+              baselines={baselines}
+              onBaselineChange={loadBaselines}
             />
           )}
         </div>

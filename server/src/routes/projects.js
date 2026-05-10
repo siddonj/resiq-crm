@@ -1891,4 +1891,151 @@ router.get('/:id/workload', async (req, res) => {
   }
 });
 
+// ── Baselines ────────────────────────────────────────────────
+
+router.get('/:id/baselines', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, created_by, created_at
+       FROM project_baselines
+       WHERE project_id = $1
+       ORDER BY created_at DESC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing baselines:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/baselines', async (req, res) => {
+  const { name } = req.body || {};
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Baseline name is required' });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT capture_project_baseline($1) AS snapshot`,
+      [req.params.id]
+    );
+    const snapshot = rows[0].snapshot;
+
+    const { rows: baselineRows } = await pool.query(
+      `INSERT INTO project_baselines (project_id, name, snapshot, created_by)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, name, created_at`,
+      [req.params.id, name.trim(), snapshot, req.user.id]
+    );
+
+    logAction(req.user.id, req.user.email, 'create', 'project_baseline', baselineRows[0].id, baselineRows[0].name);
+    res.status(201).json(baselineRows[0]);
+  } catch (err) {
+    console.error('Error saving baseline:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/:id/baselines/:baselineId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM project_baselines WHERE id = $1 AND project_id = $2`,
+      [req.params.baselineId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Baseline not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error loading baseline:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/baselines/:baselineId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `DELETE FROM project_baselines WHERE id = $1 AND project_id = $2 RETURNING id`,
+      [req.params.baselineId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Baseline not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_baseline', rows[0].id, rows[0].id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting baseline:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Compare current project state vs baseline
+router.get('/:id/baselines/:baselineId/compare', async (req, res) => {
+  try {
+    // Load baseline
+    const { rows: baselineRows } = await pool.query(
+      `SELECT snapshot FROM project_baselines WHERE id = $1 AND project_id = $2`,
+      [req.params.baselineId, req.params.id]
+    );
+    if (!baselineRows[0]) return res.status(404).json({ error: 'Baseline not found' });
+    const baseline = baselineRows[0].snapshot;
+
+    // Load current state
+    const { rows: currentRows } = await pool.query(
+      `SELECT capture_project_baseline($1) AS snapshot`,
+      [req.params.id]
+    );
+    const current = currentRows[0].snapshot;
+
+    // Diff tasks
+    const baselineTasks = baseline.tasks || [];
+    const currentTasks = current.tasks || [];
+    const baselineTaskMap = new Map(baselineTasks.map((t) => [t.id, t]));
+    const currentTaskMap = new Map(currentTasks.map((t) => [t.id, t]));
+
+    const added = [];
+    const removed = [];
+    const changed = [];
+
+    for (const t of currentTasks) {
+      const b = baselineTaskMap.get(t.id);
+      if (!b) {
+        added.push(t);
+      } else {
+        const changes = [];
+        if (t.name !== b.name) changes.push({ field: 'name', from: b.name, to: t.name });
+        if (t.status !== b.status) changes.push({ field: 'status', from: b.status, to: t.status });
+        if (t.progress !== b.progress) changes.push({ field: 'progress', from: b.progress, to: t.progress });
+        if (t.priority !== b.priority) changes.push({ field: 'priority', from: b.priority, to: t.priority });
+        if (t.due_date !== b.due_date) changes.push({ field: 'due_date', from: b.due_date, to: t.due_date });
+        if (t.estimated_hours !== b.estimated_hours) changes.push({ field: 'estimated_hours', from: b.estimated_hours, to: t.estimated_hours });
+        if (t.spent_hours !== b.spent_hours) changes.push({ field: 'spent_hours', from: b.spent_hours, to: t.spent_hours });
+        if (t.parent_id !== b.parent_id) changes.push({ field: 'parent_id', from: b.parent_id, to: t.parent_id });
+        if (changes.length > 0) {
+          changed.push({ task: t, changes });
+        }
+      }
+    }
+
+    for (const t of baselineTasks) {
+      if (!currentTaskMap.has(t.id)) removed.push(t);
+    }
+
+    res.json({
+      baseline_name: baselineRows[0].name,
+      baseline_date: baselineRows[0].created_at,
+      added,
+      removed,
+      changed,
+      summary: {
+        total_baseline: baselineTasks.length,
+        total_current: currentTasks.length,
+        added_count: added.length,
+        removed_count: removed.length,
+        changed_count: changed.length,
+      },
+    });
+  } catch (err) {
+    console.error('Error comparing baseline:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

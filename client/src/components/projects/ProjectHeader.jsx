@@ -1,4 +1,16 @@
-export default function ProjectHeader({ project, onStatusChange, onSaveAsTemplate }) {
+import { useState } from 'react'
+
+export default function ProjectHeader({ project, onStatusChange, onSaveAsTemplate, onSaveBaseline }) {
+  const [showBaselineForm, setShowBaselineForm] = useState(false)
+  const [baselineName, setBaselineName] = useState('')
+
+  const handleSaveBaseline = () => {
+    if (!baselineName.trim()) return
+    onSaveBaseline?.(baselineName.trim())
+    setBaselineName('')
+    setShowBaselineForm(false)
+  }
+
   const isArchived = project?.status === 'archived'
   const isActive = project?.status === 'active' || !project?.status
   const isTemplate = project?.is_template
@@ -31,34 +43,69 @@ export default function ProjectHeader({ project, onStatusChange, onSaveAsTemplat
           <span>Created: {new Date(project?.created_at).toLocaleDateString()}</span>
         </div>
       </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        {!isTemplate && (
-          <button
-            onClick={() => onSaveAsTemplate?.()}
-            className="px-3 py-2 text-sm rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
-            title="Save this project as a reusable template"
-          >
-            Save as Template
-          </button>
-        )}
-        {project?.status !== 'deleted' && (
-          <>
-            {isArchived ? (
-              <button
-                onClick={() => onStatusChange?.('active')}
-                className="px-3 py-2 text-sm rounded-md bg-green-50 text-green-700 border border-green-200 hover:bg-green-100"
-              >
-                Activate
-              </button>
-            ) : (
-              <button
-                onClick={() => onStatusChange?.('archived')}
-                className="px-3 py-2 text-sm rounded-md bg-yellow-50 text-yellow-700 border border-yellow-200 hover:bg-yellow-100"
-              >
-                Archive
-              </button>
-            )}
-          </>
+      <div className="flex flex-col items-end gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2">
+          {!isTemplate && (
+            <button
+              onClick={() => onSaveAsTemplate?.()}
+              className="px-3 py-2 text-sm rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+              title="Save this project as a reusable template"
+            >
+              Save as Template
+            </button>
+          )}
+          {!isTemplate && (
+            <button
+              onClick={() => setShowBaselineForm(!showBaselineForm)}
+              className="px-3 py-2 text-sm rounded-md bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+              title="Save current project state as a baseline"
+            >
+              Save Baseline
+            </button>
+          )}
+          {project?.status !== 'deleted' && (
+            <>
+              {isArchived ? (
+                <button
+                  onClick={() => onStatusChange?.('active')}
+                  className="px-3 py-2 text-sm rounded-md bg-green-50 text-green-700 border border-green-200 hover:bg-green-100"
+                >
+                  Activate
+                </button>
+              ) : (
+                <button
+                  onClick={() => onStatusChange?.('archived')}
+                  className="px-3 py-2 text-sm rounded-md bg-yellow-50 text-yellow-700 border border-yellow-200 hover:bg-yellow-100"
+                >
+                  Archive
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        {showBaselineForm && (
+          <div className="flex items-center gap-2 mt-1">
+            <input
+              className="w-48 rounded-md border-gray-300 text-sm"
+              placeholder="Baseline name (e.g., Week 1)"
+              value={baselineName}
+              onChange={(e) => setBaselineName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveBaseline() }}
+            />
+            <button
+              onClick={handleSaveBaseline}
+              disabled={!baselineName.trim()}
+              className="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              Save
+            </button>
+            <button
+              onClick={() => { setShowBaselineForm(false); setBaselineName('') }}
+              className="px-3 py-1.5 text-sm rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200"
+            >
+              Cancel
+            </button>
+          </div>
         )}
       </div>
     </div>
