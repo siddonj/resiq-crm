@@ -57,53 +57,88 @@ async function wouldCreateCycle(projectId, taskId, newParentId) {
 }
 
 async function getProjectTypes(projectId) {
-  const { rows } = await pool.query(
-    'SELECT * FROM project_task_types WHERE project_id = $1 ORDER BY position ASC, created_at ASC',
-    [projectId]
-  );
-  return rows;
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM project_task_types WHERE project_id = $1 ORDER BY position ASC, created_at ASC',
+      [projectId]
+    );
+    return rows;
+  } catch (err) {
+    console.error('getProjectTypes error (table may not exist):', err.message);
+    return [];
+  }
 }
 
 async function getProjectWorkflows(projectId) {
-  const { rows } = await pool.query(
-    'SELECT * FROM project_workflows WHERE project_id = $1 ORDER BY created_at ASC',
-    [projectId]
-  );
-  return rows;
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM project_workflows WHERE project_id = $1 ORDER BY created_at ASC',
+      [projectId]
+    );
+    return rows;
+  } catch (err) {
+    console.error('getProjectWorkflows error (table may not exist):', err.message);
+    return [];
+  }
 }
 
 async function getProjectTaskRelations(projectId) {
-  const { rows } = await pool.query(
-    `SELECT ptr.*,
-            ft.name AS from_task_name, ft.task_id AS from_task_task_id,
-            tt.name AS to_task_name, tt.task_id AS to_task_task_id
-     FROM project_task_relations ptr
-     JOIN project_tasks ft ON ft.id = ptr.from_task_id
-     JOIN project_tasks tt ON tt.id = ptr.to_task_id
-     WHERE ptr.project_id = $1
-     ORDER BY ptr.created_at ASC`,
-    [projectId]
-  );
-  return rows;
+  try {
+    const { rows } = await pool.query(
+      `SELECT ptr.*,
+              ft.name AS from_task_name, ft.task_id AS from_task_task_id,
+              tt.name AS to_task_name, tt.task_id AS to_task_task_id
+       FROM project_task_relations ptr
+       JOIN project_tasks ft ON ft.id = ptr.from_task_id
+       JOIN project_tasks tt ON tt.id = ptr.to_task_id
+       WHERE ptr.project_id = $1
+       ORDER BY ptr.created_at ASC`,
+      [projectId]
+    );
+    return rows;
+  } catch (err) {
+    console.error('getProjectTaskRelations error (table may not exist):', err.message);
+    return [];
+  }
 }
 
 async function getTasksInTreeOrder(projectId) {
-  const { rows } = await pool.query(
-    `SELECT t.*,
-            COALESCE(sc.subtask_count, 0) AS subtask_count,
-            ptt.name AS type_name, ptt.color AS type_color, ptt.icon AS type_icon
-     FROM project_tasks t
-     LEFT JOIN project_task_types ptt ON ptt.id = t.type_id
-     LEFT JOIN (
-       SELECT parent_id, COUNT(*) AS subtask_count
-       FROM project_tasks
-       WHERE project_id = $1 AND parent_id IS NOT NULL
-       GROUP BY parent_id
-     ) sc ON sc.parent_id = t.id
-     WHERE t.project_id = $1
-     ORDER BY t.position ASC, t.created_at ASC`,
-    [projectId]
-  );
+  let rows;
+  try {
+    const res = await pool.query(
+      `SELECT t.*,
+              COALESCE(sc.subtask_count, 0) AS subtask_count,
+              ptt.name AS type_name, ptt.color AS type_color, ptt.icon AS type_icon
+       FROM project_tasks t
+       LEFT JOIN project_task_types ptt ON ptt.id = t.type_id
+       LEFT JOIN (
+         SELECT parent_id, COUNT(*) AS subtask_count
+         FROM project_tasks
+         WHERE project_id = $1 AND parent_id IS NOT NULL
+         GROUP BY parent_id
+       ) sc ON sc.parent_id = t.id
+       WHERE t.project_id = $1
+       ORDER BY t.position ASC, t.created_at ASC`,
+      [projectId]
+    );
+    rows = res.rows;
+  } catch (err) {
+    console.error('getTasksInTreeOrder error (falling back to basic query):', err.message);
+    const res = await pool.query(
+      `SELECT t.*, COALESCE(sc.subtask_count, 0) AS subtask_count
+       FROM project_tasks t
+       LEFT JOIN (
+         SELECT parent_id, COUNT(*) AS subtask_count
+         FROM project_tasks
+         WHERE project_id = $1 AND parent_id IS NOT NULL
+         GROUP BY parent_id
+       ) sc ON sc.parent_id = t.id
+       WHERE t.project_id = $1
+       ORDER BY t.position ASC, t.created_at ASC`,
+      [projectId]
+    );
+    rows = res.rows;
+  }
 
   const taskMap = new Map();
   rows.forEach((t) => taskMap.set(t.id, { ...t, children: [] }));
