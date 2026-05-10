@@ -7,6 +7,7 @@ import Subscriptions from '../components/invoices/Subscriptions'
 import Expenses from '../components/invoices/Expenses'
 import Vendors from '../components/invoices/Vendors'
 import Products from '../components/invoices/Products'
+import InvoiceTemplates from '../components/invoices/InvoiceTemplates'
 
 const STATUS_COLORS = {
   draft: 'bg-gray-100 text-gray-600',
@@ -166,9 +167,11 @@ function generateHTML(invoice, authorName) {
 }
 
 // ── Invoice Form Modal ──────────────────────────────────────────────────────
-function InvoiceModal({ invoice, proposals, products = [], onClose, onSave }) {
+function InvoiceModal({ invoice, proposals, products = [], templates = [], onClose, onSave }) {
   const [title, setTitle] = useState(invoice?.title || '')
   const [proposalId, setProposalId] = useState(invoice?.proposal_id || '')
+  const [templateId, setTemplateId] = useState(invoice?.template_id || '')
+  const [paymentGateway, setPaymentGateway] = useState(invoice?.payment_gateway || 'stripe')
   const [lineItems, setLineItems] = useState(
     invoice?.line_items?.length ? invoice.line_items : [newLineItem()]
   )
@@ -203,7 +206,7 @@ function InvoiceModal({ invoice, proposals, products = [], onClose, onSave }) {
     setSaving(true)
     setError('')
     try {
-      const payload = { title, proposal_id: proposalId || null, line_items: lineItems, notes, due_date: dueDate || null }
+      const payload = { title, proposal_id: proposalId || null, template_id: templateId || null, payment_gateway: paymentGateway, line_items: lineItems, notes, due_date: dueDate || null }
       let res
       if (invoice?.id) {
         res = await axios.put(`/api/invoices/${invoice.id}`, payload, { headers: { Authorization: `Bearer ${token}` } })
@@ -267,6 +270,31 @@ function InvoiceModal({ invoice, proposals, products = [], onClose, onSave }) {
                 onChange={e => setDueDate(e.target.value)}
                 className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Template</label>
+              <select
+                value={templateId}
+                onChange={e => setTemplateId(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+              >
+                <option value="">— default —</option>
+                {templates.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Payment Gateway</label>
+              <select
+                value={paymentGateway}
+                onChange={e => setPaymentGateway(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+              >
+                {['stripe', 'paypal', 'gocardless', 'bank_transfer', 'cash', 'check'].map(g => (
+                  <option key={g} value={g}>{g.replace('_', ' ')}</option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -545,6 +573,7 @@ export default function Invoices() {
   const [vendors, setVendors] = useState([])
   const [categories, setCategories] = useState([])
   const [products, setProducts] = useState([])
+  const [templates, setTemplates] = useState([])
 
   const headers = { Authorization: `Bearer ${token}` }
 
@@ -553,7 +582,7 @@ export default function Invoices() {
     try {
       const params = {}
       if (filterStatus) params.status = filterStatus
-      const [invRes, propRes, contRes, dealRes, vendRes, catRes, prodRes] = await Promise.all([
+      const [invRes, propRes, contRes, dealRes, vendRes, catRes, prodRes, tmplRes] = await Promise.all([
         axios.get('/api/invoices', { headers, params }),
         axios.get('/api/proposals', { headers }),
         axios.get('/api/contacts', { headers }).catch(() => ({ data: [] })),
@@ -561,6 +590,7 @@ export default function Invoices() {
         axios.get('/api/invoices/vendors', { headers }).catch(() => ({ data: [] })),
         axios.get('/api/invoices/expense-categories', { headers }).catch(() => ({ data: [] })),
         axios.get('/api/invoices/products/all', { headers }).catch(() => ({ data: [] })),
+        axios.get('/api/invoices/templates/all', { headers }).catch(() => ({ data: [] })),
       ])
       setInvoices(invRes.data)
       setProposals(propRes.data.filter(p => p.status === 'signed'))
@@ -569,6 +599,7 @@ export default function Invoices() {
       setVendors(vendRes.data)
       setCategories(catRes.data)
       setProducts(prodRes.data)
+      setTemplates(tmplRes.data)
     } catch (err) {
       console.error(err)
     } finally {
@@ -646,7 +677,7 @@ export default function Invoices() {
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b mb-4">
-        {['invoices', 'recurring', 'subscriptions', 'expenses', 'vendors', 'products'].map(t => (
+        {['invoices', 'recurring', 'subscriptions', 'expenses', 'vendors', 'products', 'templates'].map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -675,6 +706,10 @@ export default function Invoices() {
 
       {tab === 'products' && (
         <Products onReload={load} />
+      )}
+
+      {tab === 'templates' && (
+        <InvoiceTemplates token={token} />
       )}
 
       {tab === 'invoices' && (
@@ -806,6 +841,7 @@ export default function Invoices() {
           invoice={editingInvoice}
           proposals={proposals}
           products={products}
+          templates={templates}
           onClose={() => { setShowModal(false); setEditingInvoice(null) }}
           onSave={handleSave}
         />

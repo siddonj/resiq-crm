@@ -92,7 +92,7 @@ router.get('/:id', auth, async (req, res) => {
 
 // Create invoice
 router.post('/', auth, async (req, res) => {
-  const { title, deal_id, proposal_id, line_items, notes, due_date } = req.body;
+  const { title, deal_id, proposal_id, line_items, notes, due_date, template_id, payment_gateway } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
 
   try {
@@ -101,10 +101,11 @@ router.post('/', auth, async (req, res) => {
     const invoice_number = `INV-${seqResult.rows[0].num}`;
 
     const result = await pool.query(
-      `INSERT INTO invoices (user_id, deal_id, proposal_id, invoice_number, title, line_items, notes, due_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      `INSERT INTO invoices (user_id, deal_id, proposal_id, invoice_number, title, line_items, notes, due_date, template_id, payment_gateway)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
       [req.user.id, deal_id || null, proposal_id || null, invoice_number, title,
-       JSON.stringify(line_items || []), notes || null, due_date || null]
+       JSON.stringify(line_items || []), notes || null, due_date || null,
+       template_id || null, payment_gateway || 'stripe']
     );
     const invoice = result.rows[0];
     logAction(req.user.id, req.user.email, 'create', 'invoice', invoice.id, invoice.title);
@@ -117,14 +118,15 @@ router.post('/', auth, async (req, res) => {
 
 // Update invoice (draft only)
 router.put('/:id', auth, async (req, res) => {
-  const { title, deal_id, proposal_id, line_items, notes, due_date } = req.body;
+  const { title, deal_id, proposal_id, line_items, notes, due_date, template_id, payment_gateway } = req.body;
   try {
     const result = await pool.query(
       `UPDATE invoices
-       SET title=$1, deal_id=$2, proposal_id=$3, line_items=$4, notes=$5, due_date=$6, updated_at=NOW()
-       WHERE id=$7 AND user_id=$8 AND status='draft' RETURNING *`,
+       SET title=$1, deal_id=$2, proposal_id=$3, line_items=$4, notes=$5, due_date=$6, template_id=$7, payment_gateway=$8, updated_at=NOW()
+       WHERE id=$9 AND user_id=$10 AND status='draft' RETURNING *`,
       [title, deal_id || null, proposal_id || null, JSON.stringify(line_items || []),
-       notes || null, due_date || null, req.params.id, req.user.id]
+       notes || null, due_date || null, template_id || null, payment_gateway || 'stripe',
+       req.params.id, req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found or not editable' });
     logAction(req.user.id, req.user.email, 'update', 'invoice', req.params.id, result.rows[0].title);
@@ -749,6 +751,90 @@ router.delete('/:id/payments/:paymentId', auth, async (req, res) => {
       [req.params.paymentId, req.params.id, req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Payment not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Invoice Templates ────────────────────────────────────────────
+
+router.get('/templates/all', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, is_default, created_at
+       FROM invoice_templates
+       WHERE user_id=$1 OR user_id IS NULL
+       ORDER BY is_default DESC, name ASC`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/templates/:id', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM invoice_templates WHERE id=$1 AND (user_id=$2 OR user_id IS NULL)`,
+      [req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Template not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/templates', auth, async (req, res) => {
+  const { name, html_template, css, is_default } = req.body || {};
+  if (!name || !html_template) return res.status(400).json({ error: 'Name and HTML template are required' });
+  try {
+    if (is_default) {
+      await pool.query(`UPDATE invoice_templates SET is_default=FALSE WHERE user_id=$1`, [req.user.id]);
+    }
+    const { rows } = await pool.query(
+      `INSERT INTO invoice_templates (name, html_template, css, is_default, user_id)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [name.trim(), html_template, css || null, is_default || false, req.user.id]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/templates/:id', auth, async (req, res) => {
+  const { name, html_template, css, is_default } = req.body || {};
+  try {
+    if (is_default) {
+      await pool.query(`UPDATE invoice_templates SET is_default=FALSE WHERE user_id=$1`, [req.user.id]);
+    }
+    const { rows } = await pool.query(
+      `UPDATE invoice_templates
+         SET name=COALESCE($1,name),
+             html_template=COALESCE($2,html_template),
+             css=COALESCE($3,css),
+             is_default=COALESCE($4,is_default)
+       WHERE id=$5 AND (user_id=$6 OR user_id IS NULL)
+       RETURNING *`,
+      [name, html_template, css, is_default, req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Template not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/templates/:id', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `DELETE FROM invoice_templates WHERE id=$1 AND user_id=$2 RETURNING id`,
+      [req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Template not found' });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
