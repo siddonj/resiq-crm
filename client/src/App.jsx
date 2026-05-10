@@ -6,14 +6,12 @@ import Overview from './pages/Overview'
 import Contacts from './pages/Contacts'
 import Pipeline from './pages/Pipeline'
 import Forecasting from './pages/Forecasting'
-import Workflows from './pages/Workflows'
 import Settings from './pages/Settings'
 import Users from './pages/Users'
 import Teams from './pages/Teams'
 import AuditLogs from './pages/AuditLogs'
 import Reminders from './pages/Reminders'
 import Proposals from './pages/Proposals'
-import Sequences from './pages/Sequences'
 import Invoices from './pages/Invoices'
 import TimeTracking from './pages/TimeTracking'
 import Calendar from './pages/Calendar'
@@ -53,8 +51,8 @@ function AppRoutes() {
         <Route path="pipeline" element={<Pipeline />} />
         <Route path="forecasting" element={<Forecasting />} />
         <Route path="analytics" element={<Analytics />} />
-        <Route path="workflows" element={<Workflows />} />
-        <Route path="sequences" element={<Sequences />} />
+        <Route path="workflows" element={<Navigate to="/outbound-automation" replace />} />
+        <Route path="sequences" element={<Navigate to="/outbound-automation" replace />} />
         <Route path="settings" element={<Settings />} />
         <Route path="teams" element={<Teams />} />
         <Route path="audit-logs" element={<AuditLogs />} />
