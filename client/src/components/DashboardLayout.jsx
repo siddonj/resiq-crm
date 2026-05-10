@@ -31,6 +31,7 @@ const navTabs = [
     label: 'Operations',
     items: [
       { to: '/projects', label: 'Projects' },
+      { to: '/portfolios', label: 'Portfolios' },
       { to: '/proposals', label: 'Proposals' },
       { to: '/invoices', label: 'Invoices' },
       { to: '/time-tracking', label: 'Time Tracking' },

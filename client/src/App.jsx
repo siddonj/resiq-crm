@@ -29,6 +29,8 @@ import Analytics from './pages/Analytics'
 import OutboundAutomation from './pages/OutboundAutomation'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
+import Portfolios from './pages/Portfolios'
+import PortfolioDetail from './pages/PortfolioDetail'
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth()
@@ -58,6 +60,8 @@ function AppRoutes() {
         <Route path="audit-logs" element={<AuditLogs />} />
         <Route path="projects" element={<Projects />} />
         <Route path="projects/:projectId" element={<ProjectDetail />} />
+        <Route path="portfolios" element={<Portfolios />} />
+        <Route path="portfolios/:portfolioId" element={<PortfolioDetail />} />
         <Route path="users" element={<Users />} />
         <Route path="reminders" element={<Reminders />} />
         <Route path="agents" element={<Agents />} />

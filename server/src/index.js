@@ -47,6 +47,7 @@ const { initSequenceWorker } = require('./workers/sequenceWorker');
 const { MessageQueueService } = require('./services/messageQueue');
 const WorkflowEngine = require('./services/workflowEngine');
 const trackRoutes = require('./routes/track');
+const portfoliosRoutes = require('./routes/portfolios');
 const TicketWebSocketServer = require('./services/ticketWebSocket');
 
 const app = express();
@@ -194,6 +195,7 @@ app.use('/api/engagement', engagementRoutes);
 app.use('/api/tickets', ticketsRoutes);
 app.use('/api/reddit-leads', redditLeadsRoutes);
 app.use('/api/track', trackRoutes);
+app.use('/api/portfolios', portfoliosRoutes);
 
 app.get('/api/health', async (req, res) => {
   const checks = {};
