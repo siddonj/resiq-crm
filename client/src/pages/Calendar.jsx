@@ -318,6 +318,18 @@ function SchedulingPanel({ token, user }) {
   const [msg, setMsg] = useState('')
   const [gcalConnected, setGcalConnected] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [timezone, setTimezone] = useState('UTC')
+  const DEFAULT_AVAILABILITY = {
+    monday: { enabled: true, start: '09:00', end: '17:00' },
+    tuesday: { enabled: true, start: '09:00', end: '17:00' },
+    wednesday: { enabled: true, start: '09:00', end: '17:00' },
+    thursday: { enabled: true, start: '09:00', end: '17:00' },
+    friday: { enabled: true, start: '09:00', end: '17:00' },
+    saturday: { enabled: false, start: '09:00', end: '17:00' },
+    sunday: { enabled: false, start: '09:00', end: '17:00' },
+  }
+  const [availability, setAvailability] = useState(DEFAULT_AVAILABILITY)
+  const DAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
 
   useEffect(() => {
     async function load() {
@@ -333,6 +345,8 @@ function SchedulingPanel({ token, user }) {
           setDescription(settRes.data.description || '')
           setSlotDuration(settRes.data.slot_duration)
           setEnabled(settRes.data.enabled)
+          if (settRes.data.availability) setAvailability({ ...DEFAULT_AVAILABILITY, ...settRes.data.availability })
+          if (settRes.data.timezone) setTimezone(settRes.data.timezone)
         } else {
           setSlug(user?.name?.toLowerCase().replace(/\s+/g, '-') || '')
         }
@@ -347,7 +361,7 @@ function SchedulingPanel({ token, user }) {
     setSaving(true); setMsg('')
     try {
       const res = await axios.put('/api/calendar/scheduling',
-        { slug, title, description, slot_duration: slotDuration, enabled },
+        { slug, title, description, slot_duration: slotDuration, enabled, availability, timezone },
         { headers: { Authorization: `Bearer ${token}` } }
       )
       setSettings(res.data)
@@ -453,6 +467,39 @@ function SchedulingPanel({ token, user }) {
                 <span className="text-sm text-gray-700">Enabled</span>
               </label>
             </div>
+          </div>
+          {/* Availability hours */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Availability Hours</label>
+            <div className="space-y-2">
+              {DAYS.map(day => (
+                <div key={day} className="flex items-center gap-3">
+                  <input type="checkbox" checked={availability[day]?.enabled ?? false}
+                    onChange={e => setAvailability(prev => ({ ...prev, [day]: { ...prev[day], enabled: e.target.checked } }))}
+                    className="w-4 h-4 accent-teal" />
+                  <span className={`text-sm w-24 capitalize ${availability[day]?.enabled ? 'text-gray-700' : 'text-gray-400'}`}>{day}</span>
+                  {availability[day]?.enabled ? (
+                    <>
+                      <input type="time" value={availability[day]?.start || '09:00'}
+                        onChange={e => setAvailability(prev => ({ ...prev, [day]: { ...prev[day], start: e.target.value } }))}
+                        className="border rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-teal" />
+                      <span className="text-sm text-gray-400">to</span>
+                      <input type="time" value={availability[day]?.end || '17:00'}
+                        onChange={e => setAvailability(prev => ({ ...prev, [day]: { ...prev[day], end: e.target.value } }))}
+                        className="border rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-teal" />
+                    </>
+                  ) : (
+                    <span className="text-sm text-gray-400 italic">Unavailable</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
+            <input value={timezone} onChange={e => setTimezone(e.target.value)} placeholder="America/New_York"
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal" />
+            <p className="text-xs text-gray-400 mt-1">Use IANA timezone format (e.g. America/New_York, Europe/London)</p>
           </div>
           {msg && <p className={`text-sm ${msg.includes('ailed') || msg.includes('taken') ? 'text-red-500' : 'text-green-600'}`}>{msg}</p>}
           <button type="submit" disabled={saving}

@@ -16,10 +16,11 @@ export default function Projects() {
 
   const [projects, setProjects] = useState([])
   const [templates, setTemplates] = useState([])
+  const [deals, setDeals] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showModal, setShowModal] = useState(false)
-  const [form, setForm] = useState({ name: '', description: '', template_id: '', include_tasks: true })
+  const [form, setForm] = useState({ name: '', description: '', template_id: '', include_tasks: true, deal_id: '' })
   const [saving, setSaving] = useState(false)
   const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch] = useState('')
@@ -33,6 +34,8 @@ export default function Projects() {
       ])
       setProjects(projData)
       setTemplates(tmplData)
+      // Load deals for linkage (best-effort)
+      axios.get('/api/deals', headers).then(r => setDeals(r.data ?? [])).catch(() => {})
     } catch (err) {
       setError('Failed to load projects')
     } finally {
@@ -68,7 +71,7 @@ export default function Projects() {
     try {
       await axios.post('/api/projects', form, headers)
       setShowModal(false)
-      setForm({ name: '', description: '', template_id: '', include_tasks: true })
+      setForm({ name: '', description: '', template_id: '', include_tasks: true, deal_id: '' })
       setError('')
       loadProjects()
     } catch (err) {
@@ -79,7 +82,7 @@ export default function Projects() {
   }
 
   const handleUseTemplate = (templateId) => {
-    setForm({ name: '', description: '', template_id: templateId, include_tasks: true })
+    setForm({ name: '', description: '', template_id: templateId, include_tasks: true, deal_id: '' })
     setShowModal(true)
   }
 
@@ -93,7 +96,7 @@ export default function Projects() {
           <p className="text-sm text-gray-600">Plan and track work across teams.</p>
         </div>
         <button
-          onClick={() => { setForm({ name: '', description: '', template_id: '', include_tasks: true }); setShowModal(true) }}
+          onClick={() => { setForm({ name: '', description: '', template_id: '', include_tasks: true, deal_id: '' }); setShowModal(true) }}
           className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none"
         >
           New Project
@@ -231,6 +234,21 @@ export default function Projects() {
                   placeholder="Deployment plan for data sources"
                 />
               </div>
+              {deals.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Link to Deal (optional)</label>
+                  <select
+                    className="mt-1 w-full rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
+                    value={form.deal_id}
+                    onChange={(e) => setForm({ ...form, deal_id: e.target.value })}
+                  >
+                    <option value="">— None —</option>
+                    {deals.map(d => (
+                      <option key={d.id} value={d.id}>{d.title}{d.contact_name ? ` · ${d.contact_name}` : ''}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {selectedTemplate && (
                 <div className="flex items-center gap-2">
                   <input

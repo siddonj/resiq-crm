@@ -482,7 +482,7 @@ async function cloneProjectFromTemplate(templateId, user, { name, description, i
 
 // POST /api/projects
 router.post('/', async (req, res) => {
-  const { name, description, team_id, template_id, include_tasks } = req.body || {};
+  const { name, description, team_id, template_id, include_tasks, deal_id } = req.body || {};
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Name is required' });
   }
@@ -501,10 +501,10 @@ router.post('/', async (req, res) => {
 
   try {
     const { rows } = await pool.query(
-      `INSERT INTO projects (name, description, team_id, owner_id)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO projects (name, description, team_id, owner_id, deal_id)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [name.trim(), description || null, team_id || null, req.user.id]
+      [name.trim(), description || null, team_id || null, req.user.id, deal_id || null]
     );
     const project = rows[0];
 

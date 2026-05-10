@@ -14,9 +14,10 @@ const PRIORITIES = {
 export default function HelpDesk() {
   const { token } = useAuth()
   const [tickets, setTickets] = useState([])
+  const [contacts, setContacts] = useState([])
   const [loading, setLoading] = useState(true)
   const [showNewTicketModal, setShowNewTicketModal] = useState(false)
-  const [newTicket, setNewTicket] = useState({ subject: '', description: '', priority: 'medium' })
+  const [newTicket, setNewTicket] = useState({ subject: '', description: '', priority: 'medium', contact_id: '' })
   const [error, setError] = useState('')
   const [filter, setFilter] = useState('all')
   const [selectedTicket, setSelectedTicket] = useState(null)
@@ -25,6 +26,13 @@ export default function HelpDesk() {
   const wsRef = useRef(null)
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
+
+  useEffect(() => {
+    if (!token) return
+    axios.get('/api/contacts', authHeaders)
+      .then(r => setContacts(r.data?.contacts ?? r.data ?? []))
+      .catch(() => {})
+  }, [token])
 
   // Initialize WebSocket connection
   useEffect(() => {
@@ -114,7 +122,7 @@ export default function HelpDesk() {
 
     try {
       await axios.post('/api/tickets', newTicket, authHeaders)
-      setNewTicket({ subject: '', description: '', priority: 'medium' })
+      setNewTicket({ subject: '', description: '', priority: 'medium', contact_id: '' })
       setShowNewTicketModal(false)
       fetchTickets()
     } catch (err) {
@@ -341,6 +349,21 @@ export default function HelpDesk() {
                   <option value="urgent">Urgent</option>
                 </select>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Linked Contact
+                </label>
+                <select
+                  value={newTicket.contact_id}
+                  onChange={e => setNewTicket({ ...newTicket, contact_id: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                >
+                  <option value="">— None —</option>
+                  {contacts.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}{c.company ? ` (${c.company})` : ''}</option>
+                  ))}
+                </select>
+              </div>
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
@@ -408,6 +431,13 @@ export default function HelpDesk() {
                   <p className="text-sm text-navy mt-1">{selectedTicket.ticket.assigned_to_name || 'Unassigned'}</p>
                 </div>
               </div>
+
+              {selectedTicket.ticket.contact_name && (
+                <div>
+                  <label className="text-xs font-medium text-gray-600">Linked Contact</label>
+                  <p className="text-sm text-teal font-medium mt-1">{selectedTicket.ticket.contact_name}</p>
+                </div>
+              )}
 
               {selectedTicket.ticket.description && (
                 <div>
