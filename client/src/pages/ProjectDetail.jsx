@@ -11,6 +11,7 @@ import TaskDetail from '../components/projects/TaskDetail'
 import ProjectHeader from '../components/projects/ProjectHeader'
 import MembersPanel from '../components/projects/MembersPanel'
 import SavedViewsDropdown from '../components/projects/SavedViewsDropdown'
+import SprintBoard from '../components/projects/SprintBoard'
 
 export default function ProjectDetail() {
   const { projectId } = useParams()
@@ -23,6 +24,8 @@ export default function ProjectDetail() {
   const [types, setTypes] = useState([])
   const [workflows, setWorkflows] = useState([])
   const [relations, setRelations] = useState([])
+  const [sprints, setSprints] = useState([])
+  const [backlogTasks, setBacklogTasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [view, setView] = useState('grid')
@@ -35,7 +38,11 @@ export default function ProjectDetail() {
   const loadProject = async () => {
     setLoading(true)
     try {
-      const { data } = await axios.get(`/api/projects/${projectId}`, headers)
+      const [{ data }, { data: sprintsData }, { data: backlogData }] = await Promise.all([
+        axios.get(`/api/projects/${projectId}`, headers),
+        axios.get(`/api/projects/${projectId}/sprints`, headers).catch(() => ({ data: [] })),
+        axios.get(`/api/projects/${projectId}/backlog`, headers).catch(() => ({ data: [] })),
+      ])
       setProject(data.project)
       setColumns(data.columns || [])
       setTasks(data.tasks || [])
@@ -43,6 +50,8 @@ export default function ProjectDetail() {
       setWorkflows(data.workflows || [])
       setRelations(data.relations || [])
       setMembers(data.members || [])
+      setSprints(sprintsData || [])
+      setBacklogTasks(backlogData || [])
       setError('')
     } catch (err) {
       setError('Failed to load project')
@@ -179,6 +188,7 @@ export default function ProjectDetail() {
                 { key: 'kanban', label: 'Kanban' },
                 { key: 'gantt', label: 'Gantt' },
                 { key: 'calendar', label: 'Calendar' },
+                { key: 'sprints', label: 'Sprints' },
               ].map(({ key, label }) => (
                 <button
                   key={key}
@@ -261,6 +271,15 @@ export default function ProjectDetail() {
               onAddTask={handleAddTask}
               onUpdateTask={handleUpdateTask}
               onTaskClick={(task) => setSelectedTask(task)}
+            />
+          )}
+          {view === 'sprints' && (
+            <SprintBoard
+              projectId={projectId}
+              sprints={sprints}
+              backlogTasks={backlogTasks}
+              columns={columns}
+              onReload={loadProject}
             />
           )}
         </div>

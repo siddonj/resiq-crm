@@ -575,7 +575,7 @@ router.get('/:id/tasks', async (req, res) => {
 });
 
 router.post('/:id/tasks', async (req, res) => {
-  const { name, description, values, position, parent_id, type_id, estimated_hours, spent_hours } = req.body || {};
+  const { name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
 
   try {
@@ -590,10 +590,10 @@ router.post('/:id/tasks', async (req, res) => {
 
     const taskId = await generateTaskId();
     const { rows } = await pool.query(
-      `INSERT INTO project_tasks (project_id, task_id, name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO project_tasks (project_id, task_id, name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
-      [req.params.id, taskId, name.trim(), description || null, values || {}, taskPosition, parent_id || null, type_id || null, estimated_hours || null, spent_hours || 0, req.user.id]
+      [req.params.id, taskId, name.trim(), description || null, values || {}, taskPosition, parent_id || null, type_id || null, estimated_hours || null, spent_hours || 0, story_points || null, req.user.id]
     );
 
     logAction(req.user.id, req.user.email, 'create', 'project_task', rows[0].id, rows[0].name);
@@ -606,7 +606,7 @@ router.post('/:id/tasks', async (req, res) => {
 });
 
 router.put('/:id/tasks/:taskId', async (req, res) => {
-  const { name, description, values, position, parent_id, type_id, estimated_hours, spent_hours } = req.body || {};
+  const { name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points } = req.body || {};
   try {
     if (parent_id !== undefined) {
       const cyclic = await wouldCreateCycle(req.params.id, req.params.taskId, parent_id);
@@ -622,10 +622,11 @@ router.put('/:id/tasks/:taskId', async (req, res) => {
              type_id = COALESCE($6, type_id),
              estimated_hours = COALESCE($7, estimated_hours),
              spent_hours = COALESCE($8, spent_hours),
+             story_points = COALESCE($9, story_points),
              updated_at = NOW()
-       WHERE id = $9 AND project_id = $10
+       WHERE id = $10 AND project_id = $11
        RETURNING *`,
-      [name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, req.params.taskId, req.params.id]
+       [name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points, req.params.taskId, req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Task not found' });
     logAction(req.user.id, req.user.email, 'update', 'project_task', rows[0].id, rows[0].name);
@@ -1517,6 +1518,229 @@ router.post('/:id/save-as-template', async (req, res) => {
     res.json(rows[0]);
   } catch (err) {
     console.error('Error saving as template:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Sprints ────────────────────────────────────────────────────
+
+// GET /api/projects/:id/sprints
+router.get('/:id/sprints', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM sprints WHERE project_id = $1 ORDER BY created_at DESC',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing sprints:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/sprints', async (req, res) => {
+  const { name, goal, start_date, end_date } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO sprints (project_id, name, goal, start_date, end_date)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [req.params.id, name.trim(), goal || null, start_date || null, end_date || null]
+    );
+    logAction(req.user.id, req.user.email, 'create', 'sprint', rows[0].id, rows[0].name);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('Error creating sprint:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/:id/sprints/:sprintId', async (req, res) => {
+  const { name, goal, start_date, end_date, status } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE sprints
+         SET name = COALESCE($1, name),
+             goal = COALESCE($2, goal),
+             start_date = COALESCE($3, start_date),
+             end_date = COALESCE($4, end_date),
+             status = COALESCE($5, status),
+             updated_at = NOW()
+       WHERE id = $6 AND project_id = $7
+       RETURNING *`,
+      [name, goal, start_date, end_date, status, req.params.sprintId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Sprint not found' });
+    logAction(req.user.id, req.user.email, 'update', 'sprint', rows[0].id, rows[0].name);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error updating sprint:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/sprints/:sprintId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM sprints WHERE id = $1 AND project_id = $2 RETURNING id',
+      [req.params.sprintId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Sprint not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'sprint', rows[0].id, rows[0].id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting sprint:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Sprint task management
+router.get('/:id/sprints/:sprintId/tasks', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT st.*, t.name AS task_name, t.task_id, t.values, t.status
+       FROM sprint_tasks st
+       JOIN project_tasks t ON t.id = st.task_id
+       WHERE st.sprint_id = $1
+       ORDER BY st.position ASC, st.created_at ASC`,
+      [req.params.sprintId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing sprint tasks:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/sprints/:sprintId/tasks', async (req, res) => {
+  const { task_id, story_points, position } = req.body || {};
+  if (!task_id) return res.status(400).json({ error: 'task_id is required' });
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO sprint_tasks (sprint_id, task_id, story_points, position)
+       VALUES ($1, $2, $3, COALESCE($4, 0))
+       ON CONFLICT (sprint_id, task_id) DO UPDATE SET story_points = $3, position = COALESCE($4, sprint_tasks.position)
+       RETURNING *`,
+      [req.params.sprintId, task_id, story_points, position]
+    );
+    logAction(req.user.id, req.user.email, 'add', 'sprint_task', rows[0].id, `task ${task_id} -> sprint ${req.params.sprintId}`);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('Error adding sprint task:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/sprints/:sprintId/tasks/:taskId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM sprint_tasks WHERE sprint_id = $1 AND task_id = $2 RETURNING id',
+      [req.params.sprintId, req.params.taskId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Task not found in sprint' });
+    logAction(req.user.id, req.user.email, 'remove', 'sprint_task', rows[0].id, rows[0].id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error removing sprint task:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Backlog: tasks not in any sprint for this project
+router.get('/:id/backlog', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT t.*
+       FROM project_tasks t
+       WHERE t.project_id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM sprint_tasks st
+           JOIN sprints s ON s.id = st.sprint_id
+           WHERE st.task_id = t.id AND s.project_id = $1
+         )
+       ORDER BY t.position ASC, t.created_at ASC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error loading backlog:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Burndown data for a sprint
+router.get('/:id/sprints/:sprintId/burndown', async (req, res) => {
+  try {
+    const { rows: sprintRows } = await pool.query(
+      'SELECT * FROM sprints WHERE id = $1 AND project_id = $2',
+      [req.params.sprintId, req.params.id]
+    );
+    if (!sprintRows[0]) return res.status(404).json({ error: 'Sprint not found' });
+    const sprint = sprintRows[0];
+
+    const { rows: totalRows } = await pool.query(
+      'SELECT COALESCE(SUM(story_points), 0) AS total FROM sprint_tasks WHERE sprint_id = $1',
+      [req.params.sprintId]
+    );
+    const totalPoints = Number(totalRows[0].total) || 0;
+
+    // Simple linear ideal burndown
+    const start = sprint.start_date ? new Date(sprint.start_date) : new Date(sprint.created_at);
+    const end = sprint.end_date ? new Date(sprint.end_date) : new Date(start.getTime() + 14 * 86400000);
+    const days = Math.max(1, Math.ceil((end - start) / 86400000));
+
+    const ideal = [];
+    for (let i = 0; i <= days; i++) {
+      ideal.push({ day: i, remaining: Math.round(totalPoints * (1 - i / days)) });
+    }
+
+    // Actual: count done tasks per day (simplified — assumes status column exists in values)
+    // For now, return placeholder actual data
+    const actual = [];
+    for (let i = 0; i <= days; i++) {
+      const d = new Date(start.getTime() + i * 86400000);
+      const { rows: doneRows } = await pool.query(
+        `SELECT COALESCE(SUM(st.story_points), 0) AS done
+         FROM sprint_tasks st
+         JOIN project_tasks t ON t.id = st.task_id
+         WHERE st.sprint_id = $1
+           AND t.values->>'status' = 'Done'
+           AND t.updated_at::date <= $2`,
+        [req.params.sprintId, d.toISOString().slice(0, 10)]
+      );
+      const done = Number(doneRows[0].done) || 0;
+      actual.push({ day: i, date: d.toISOString().slice(0, 10), remaining: totalPoints - done });
+    }
+
+    res.json({ sprint, total_points: totalPoints, ideal, actual });
+  } catch (err) {
+    console.error('Error generating burndown:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Velocity: avg story points per completed sprint
+router.get('/:id/velocity', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.id, s.name, s.end_date,
+              COALESCE(SUM(st.story_points), 0) AS total_points
+       FROM sprints s
+       LEFT JOIN sprint_tasks st ON st.sprint_id = s.id
+       WHERE s.project_id = $1 AND s.status = 'closed'
+       GROUP BY s.id, s.name, s.end_date
+       ORDER BY s.end_date DESC
+       LIMIT 10`,
+      [req.params.id]
+    );
+    const velocities = rows.map((r) => ({ ...r, total_points: Number(r.total_points) }));
+    const avg = velocities.length ? Math.round(velocities.reduce((sum, v) => sum + v.total_points, 0) / velocities.length) : 0;
+    res.json({ sprints: velocities, average: avg });
+  } catch (err) {
+    console.error('Error calculating velocity:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

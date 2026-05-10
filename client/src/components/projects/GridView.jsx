@@ -502,6 +502,11 @@ export default function GridView({ columns = [], tasks = [], types = [], workflo
                           {task.subtask_count}
                         </span>
                       )}
+                      {task.story_points > 0 && (
+                        <span className="text-[10px] bg-purple-100 text-purple-700 rounded-full px-1.5 py-0.5 ml-1" title="Story points">
+                          {task.story_points} pts
+                        </span>
+                      )}
                     </div>
                     {(() => {
                       const rels = relationMap.get(task.id) || []

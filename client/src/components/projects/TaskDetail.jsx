@@ -51,6 +51,7 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
   const [editTypeId, setEditTypeId] = useState(task.type_id || '')
   const [editEstimated, setEditEstimated] = useState(task.estimated_hours || '')
   const [editSpent, setEditSpent] = useState(task.spent_hours || '')
+  const [editStoryPoints, setEditStoryPoints] = useState(task.story_points || '')
   const [subtaskName, setSubtaskName] = useState('')
   const [subtasks, setSubtasks] = useState([])
   const [commentText, setCommentText] = useState('')
@@ -102,6 +103,7 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
         type_id: editTypeId || null,
         estimated_hours: editEstimated === '' ? null : Number(editEstimated),
         spent_hours: editSpent === '' ? null : Number(editSpent),
+        story_points: editStoryPoints === '' ? null : Number(editStoryPoints),
       }, headers)
       onTaskUpdated(data)
       setError('')
@@ -424,6 +426,17 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
                     className="mt-1 w-full rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
                     value={editSpent}
                     onChange={(e) => setEditSpent(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Story Points</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    className="mt-1 w-full rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                    value={editStoryPoints}
+                    onChange={(e) => setEditStoryPoints(e.target.value)}
                   />
                 </div>
               </div>
