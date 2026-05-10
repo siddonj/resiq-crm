@@ -15,10 +15,11 @@ export default function Projects() {
   const headers = { headers: { Authorization: `Bearer ${token}` } }
 
   const [projects, setProjects] = useState([])
+  const [templates, setTemplates] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showModal, setShowModal] = useState(false)
-  const [form, setForm] = useState({ name: '', description: '' })
+  const [form, setForm] = useState({ name: '', description: '', template_id: '', include_tasks: true })
   const [saving, setSaving] = useState(false)
   const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch] = useState('')
@@ -26,8 +27,12 @@ export default function Projects() {
   const loadProjects = async () => {
     setLoading(true)
     try {
-      const { data } = await axios.get('/api/projects', headers)
-      setProjects(data)
+      const [{ data: projData }, { data: tmplData }] = await Promise.all([
+        axios.get('/api/projects', headers),
+        axios.get('/api/projects/templates', headers),
+      ])
+      setProjects(projData)
+      setTemplates(tmplData)
     } catch (err) {
       setError('Failed to load projects')
     } finally {
@@ -63,7 +68,7 @@ export default function Projects() {
     try {
       await axios.post('/api/projects', form, headers)
       setShowModal(false)
-      setForm({ name: '', description: '' })
+      setForm({ name: '', description: '', template_id: '', include_tasks: true })
       setError('')
       loadProjects()
     } catch (err) {
@@ -73,6 +78,13 @@ export default function Projects() {
     }
   }
 
+  const handleUseTemplate = (templateId) => {
+    setForm({ name: '', description: '', template_id: templateId, include_tasks: true })
+    setShowModal(true)
+  }
+
+  const selectedTemplate = templates.find((t) => t.id === form.template_id)
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex items-center justify-between">
@@ -81,15 +93,38 @@ export default function Projects() {
           <p className="text-sm text-gray-600">Plan and track work across teams.</p>
         </div>
         <button
-          onClick={() => setShowModal(true)}
+          onClick={() => { setForm({ name: '', description: '', template_id: '', include_tasks: true }); setShowModal(true) }}
           className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none"
         >
           New Project
         </button>
       </div>
 
+      {/* Templates */}
+      {templates.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Templates</h2>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {templates.map((t) => (
+              <div
+                key={t.id}
+                className="border rounded-lg p-3 hover:border-indigo-500 hover:shadow-sm cursor-pointer transition-all bg-gray-50"
+                onClick={() => handleUseTemplate(t.id)}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">📋</span>
+                  <h3 className="text-sm font-semibold text-gray-900 truncate">{t.name}</h3>
+                </div>
+                <p className="mt-1 text-xs text-gray-600 line-clamp-2">{t.description || 'No description'}</p>
+                <div className="mt-2 text-[10px] text-gray-500">Use template</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Filter bar */}
-      <div className="mt-6 flex flex-col sm:flex-row sm:items-center gap-3">
+      <div className="mt-8 flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
           {STATUS_TABS.map((tab) => (
             <button
@@ -170,7 +205,12 @@ export default function Projects() {
       {showModal && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-            <h2 className="text-lg font-semibold text-gray-900">Create Project</h2>
+            <h2 className="text-lg font-semibold text-gray-900">
+              {selectedTemplate ? `Create from "${selectedTemplate.name}"` : 'Create Project'}
+            </h2>
+            {selectedTemplate && (
+              <p className="text-xs text-gray-600 mt-1">This will copy columns, views, types, and workflows from the template.</p>
+            )}
             <div className="mt-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Name</label>
@@ -178,7 +218,7 @@ export default function Projects() {
                   className="mt-1 w-full rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="Rollout Plan"
+                  placeholder={selectedTemplate ? `${selectedTemplate.name} (Copy)` : 'Rollout Plan'}
                 />
               </div>
               <div>
@@ -191,6 +231,34 @@ export default function Projects() {
                   placeholder="Deployment plan for data sources"
                 />
               </div>
+              {selectedTemplate && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="include_tasks"
+                    className="h-4 w-4 text-indigo-600"
+                    checked={form.include_tasks}
+                    onChange={(e) => setForm({ ...form, include_tasks: e.target.checked })}
+                  />
+                  <label htmlFor="include_tasks" className="text-sm text-gray-700">Include task skeletons</label>
+                </div>
+              )}
+              {!selectedTemplate && templates.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Or start from template</label>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {templates.map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => setForm({ ...form, template_id: t.id })}
+                        className={`text-xs px-2 py-1 rounded border ${form.template_id === t.id ? 'bg-indigo-50 border-indigo-300 text-indigo-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                      >
+                        📋 {t.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="mt-6 flex justify-end gap-3">
               <button

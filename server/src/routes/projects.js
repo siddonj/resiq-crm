@@ -246,11 +246,149 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Helper: clone a project from template
+async function cloneProjectFromTemplate(templateId, user, { name, description, include_tasks }) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: templateRows } = await client.query('SELECT * FROM projects WHERE id = $1', [templateId]);
+    if (!templateRows[0]) throw new Error('Template not found');
+    const template = templateRows[0];
+
+    const { rows: projRows } = await client.query(
+      `INSERT INTO projects (name, description, team_id, owner_id, template_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [name.trim() || `${template.name} (Copy)`, description || template.description, template.team_id, user.id, templateId]
+    );
+    const newProject = projRows[0];
+
+    // Copy columns
+    const { rows: columns } = await client.query(
+      'SELECT * FROM project_columns WHERE project_id = $1 ORDER BY position ASC',
+      [templateId]
+    );
+    const colIdMap = new Map();
+    for (const col of columns) {
+      const { rows: colRows } = await client.query(
+        `INSERT INTO project_columns (project_id, name, key, type, config, position, is_required)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [newProject.id, col.name, col.key, col.type, col.config, col.position, col.is_required]
+      );
+      colIdMap.set(col.id, colRows[0].id);
+    }
+
+    // Copy views
+    const { rows: views } = await client.query(
+      'SELECT * FROM project_views WHERE project_id = $1',
+      [templateId]
+    );
+    for (const view of views) {
+      await client.query(
+        `INSERT INTO project_views (project_id, name, type, config, created_by, is_default)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [newProject.id, view.name, view.type, view.config, user.id, view.is_default]
+      );
+    }
+
+    // Copy types
+    const { rows: types } = await client.query(
+      'SELECT * FROM project_task_types WHERE project_id = $1 ORDER BY position ASC',
+      [templateId]
+    );
+    const typeIdMap = new Map();
+    for (const t of types) {
+      const { rows: typeRows } = await client.query(
+        `INSERT INTO project_task_types (project_id, name, color, icon, position)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [newProject.id, t.name, t.color, t.icon, t.position]
+      );
+      typeIdMap.set(t.id, typeRows[0].id);
+    }
+
+    // Copy workflows
+    const { rows: workflows } = await client.query(
+      'SELECT * FROM project_workflows WHERE project_id = $1',
+      [templateId]
+    );
+    for (const w of workflows) {
+      await client.query(
+        `INSERT INTO project_workflows (project_id, from_status, to_status, role_required, required_fields)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [newProject.id, w.from_status, w.to_status, w.role_required, w.required_fields]
+      );
+    }
+
+    // Optionally copy tasks as skeletons
+    if (include_tasks) {
+      const { rows: templateTasks } = await client.query(
+        'SELECT * FROM project_tasks WHERE project_id = $1 ORDER BY position ASC, created_at ASC',
+        [templateId]
+      );
+      const taskIdMap = new Map();
+      for (const t of templateTasks) {
+        const taskId = await generateTaskId();
+        const { rows: taskRows } = await client.query(
+          `INSERT INTO project_tasks (project_id, task_id, name, description, values, position, parent_id, created_by, type_id, estimated_hours)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           RETURNING *`,
+          [
+            newProject.id,
+            taskId,
+            t.name,
+            t.description,
+            '{}',
+            t.position,
+            null,
+            user.id,
+            t.type_id ? typeIdMap.get(t.type_id) : null,
+            t.estimated_hours
+          ]
+        );
+        taskIdMap.set(t.id, taskRows[0].id);
+      }
+      // Fix parent_id references
+      for (const t of templateTasks) {
+        if (t.parent_id && taskIdMap.has(t.parent_id)) {
+          await client.query(
+            'UPDATE project_tasks SET parent_id = $1 WHERE id = $2',
+            [taskIdMap.get(t.parent_id), taskIdMap.get(t.id)]
+          );
+        }
+      }
+    }
+
+    await client.query('COMMIT');
+    logAction(user.id, user.email, 'clone', 'project', newProject.id, newProject.name);
+    return newProject;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // POST /api/projects
 router.post('/', async (req, res) => {
-  const { name, description, team_id } = req.body || {};
+  const { name, description, team_id, template_id, include_tasks } = req.body || {};
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Name is required' });
+  }
+
+  // If template_id provided, delegate to clone logic
+  if (template_id) {
+    try {
+      const newProject = await cloneProjectFromTemplate(template_id, req.user, { name, description, include_tasks: !!include_tasks });
+      return res.status(201).json(newProject);
+    } catch (err) {
+      if (err.message === 'Template not found') return res.status(404).json({ error: 'Template not found' });
+      console.error('Error cloning from template:', err);
+      return res.status(500).json({ error: 'Server error' });
+    }
   }
 
   try {
@@ -1332,6 +1470,53 @@ router.delete('/:id/tasks/:taskId/time-entries/:entryId', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting time entry:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Templates ──────────────────────────────────────────────────
+
+// GET /api/projects/templates
+router.get('/templates', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.*, u.name AS owner_name
+       FROM projects p
+       LEFT JOIN users u ON u.id = p.owner_id
+       WHERE p.is_template = TRUE
+       ORDER BY p.created_at DESC`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing templates:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/projects/:id/clone
+router.post('/:id/clone', async (req, res) => {
+  try {
+    const newProject = await cloneProjectFromTemplate(req.params.id, req.user, req.body || {});
+    res.status(201).json(newProject);
+  } catch (err) {
+    if (err.message === 'Template not found') return res.status(404).json({ error: 'Template not found' });
+    console.error('Error cloning project:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/projects/:id/save-as-template
+router.post('/:id/save-as-template', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE projects SET is_template = TRUE, updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Project not found' });
+    logAction(req.user.id, req.user.email, 'save_as_template', 'project', rows[0].id, rows[0].name);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error saving as template:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

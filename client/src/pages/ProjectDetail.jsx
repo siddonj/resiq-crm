@@ -87,6 +87,17 @@ export default function ProjectDetail() {
     }
   }
 
+  const handleSaveAsTemplate = async () => {
+    try {
+      const { data } = await axios.post(`/api/projects/${projectId}/save-as-template`, {}, headers)
+      setProject(data)
+      setError('')
+      alert('Project saved as template. It will appear in the template gallery.')
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save as template')
+    }
+  }
+
   const handleBulkDelete = async (taskIds) => {
     try {
       await axios.post(`/api/projects/${projectId}/tasks/bulk-delete`, { task_ids: taskIds }, headers)
@@ -154,6 +165,7 @@ export default function ProjectDetail() {
       <ProjectHeader
         project={project}
         onStatusChange={handleStatusChange}
+        onSaveAsTemplate={handleSaveAsTemplate}
       />
 
       {error && <div className="mt-3 text-sm text-red-600">{error}</div>}
