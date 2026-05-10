@@ -123,21 +123,8 @@ async function getTasksInTreeOrder(projectId) {
     );
     rows = res.rows;
   } catch (err) {
-    console.error('getTasksInTreeOrder error (falling back to basic query):', err.message);
-    const res = await pool.query(
-      `SELECT t.*, COALESCE(sc.subtask_count, 0) AS subtask_count
-       FROM project_tasks t
-       LEFT JOIN (
-         SELECT parent_id, COUNT(*) AS subtask_count
-         FROM project_tasks
-         WHERE project_id = $1 AND parent_id IS NOT NULL
-         GROUP BY parent_id
-       ) sc ON sc.parent_id = t.id
-       WHERE t.project_id = $1
-       ORDER BY t.position ASC, t.created_at ASC`,
-      [projectId]
-    );
-    rows = res.rows;
+    console.error('getTasksInTreeOrder error (table may not exist):', err.message);
+    return [];
   }
 
   const taskMap = new Map();
