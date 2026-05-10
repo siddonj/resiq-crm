@@ -12,6 +12,7 @@ import ProjectHeader from '../components/projects/ProjectHeader'
 import MembersPanel from '../components/projects/MembersPanel'
 import SavedViewsDropdown from '../components/projects/SavedViewsDropdown'
 import SprintBoard from '../components/projects/SprintBoard'
+import TeamPlanner from '../components/projects/TeamPlanner'
 
 export default function ProjectDetail() {
   const { projectId } = useParams()
@@ -189,6 +190,7 @@ export default function ProjectDetail() {
                 { key: 'gantt', label: 'Gantt' },
                 { key: 'calendar', label: 'Calendar' },
                 { key: 'sprints', label: 'Sprints' },
+                { key: 'team-planner', label: 'Team Planner' },
               ].map(({ key, label }) => (
                 <button
                   key={key}
@@ -279,6 +281,15 @@ export default function ProjectDetail() {
               sprints={sprints}
               backlogTasks={backlogTasks}
               columns={columns}
+              onReload={loadProject}
+            />
+          )}
+          {view === 'team-planner' && (
+            <TeamPlanner
+              projectId={projectId}
+              tasks={tasks}
+              members={members}
+              users={users}
               onReload={loadProject}
             />
           )}

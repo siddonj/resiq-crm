@@ -1789,4 +1789,106 @@ router.get('/:id/velocity', async (req, res) => {
   }
 });
 
+// ── Task Schedule (Team Planner) ───────────────────────────────
+
+router.get('/:id/tasks/:taskId/schedule', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT tad.*, u.email, u.name AS user_name
+       FROM task_assignee_dates tad
+       JOIN users u ON u.id = tad.user_id
+       WHERE tad.task_id = $1
+       ORDER BY tad.start_date ASC`,
+      [req.params.taskId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing schedule:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/tasks/:taskId/schedule', async (req, res) => {
+  const { user_id, start_date, end_date, allocation_percent } = req.body || {};
+  if (!user_id || !start_date || !end_date) {
+    return res.status(400).json({ error: 'user_id, start_date, and end_date are required' });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO task_assignee_dates (task_id, user_id, start_date, end_date, allocation_percent)
+       VALUES ($1, $2, $3, $4, COALESCE($5, 100))
+       ON CONFLICT (task_id, user_id) DO UPDATE SET
+         start_date = EXCLUDED.start_date,
+         end_date = EXCLUDED.end_date,
+         allocation_percent = EXCLUDED.allocation_percent,
+         updated_at = NOW()
+       RETURNING *`,
+      [req.params.taskId, user_id, start_date, end_date, allocation_percent]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('Error saving schedule:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/tasks/:taskId/schedule/:scheduleId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM task_assignee_dates WHERE id = $1 AND task_id = $2 RETURNING id',
+      [req.params.scheduleId, req.params.taskId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Schedule not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting schedule:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Workload Summary ───────────────────────────────────────────
+
+router.get('/:id/workload', async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const dateFilter = from && to ? `AND tad.start_date <= $3 AND tad.end_date >= $2` : '';
+    const params = [req.params.id];
+    if (from && to) { params.push(from, to); }
+
+    // Get all project members + their scheduled tasks
+    const { rows: assignments } = await pool.query(
+      `SELECT tad.*, t.name AS task_name, t.task_id,
+              u.email, u.name AS user_name
+       FROM task_assignee_dates tad
+       JOIN project_tasks t ON t.id = tad.task_id
+       JOIN users u ON u.id = tad.user_id
+       WHERE t.project_id = $1 ${dateFilter}
+       ORDER BY tad.start_date ASC`,
+      params
+    );
+
+    // Aggregate workload per user per day
+    const { rows: daily } = await pool.query(
+      `SELECT
+         tad.user_id,
+         u.name AS user_name,
+         tad.start_date + generate_series(0, tad.end_date - tad.start_date) AS work_date,
+         SUM(tad.allocation_percent) AS total_allocation
+       FROM task_assignee_dates tad
+       JOIN project_tasks t ON t.id = tad.task_id
+       JOIN users u ON u.id = tad.user_id
+       WHERE t.project_id = $1 ${dateFilter}
+       GROUP BY tad.user_id, u.name, tad.start_date + generate_series(0, tad.end_date - tad.start_date)
+       ORDER BY work_date ASC`,
+      params
+    );
+
+    res.json({ assignments, daily });
+  } catch (err) {
+    console.error('Error loading workload:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

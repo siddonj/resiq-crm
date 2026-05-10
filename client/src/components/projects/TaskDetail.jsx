@@ -10,6 +10,7 @@ const TABS = [
   { key: 'assignees', label: 'Assignees' },
   { key: 'dependencies', label: 'Dependencies' },
   { key: 'relations', label: 'Relations' },
+  { key: 'schedule', label: 'Schedule' },
   { key: 'time', label: 'Time' },
 ]
 
@@ -68,6 +69,13 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
   const [relDelay, setRelDelay] = useState('')
   const [relations, setRelations] = useState([])
 
+  // Schedule state
+  const [schedule, setSchedule] = useState([])
+  const [schedUserId, setSchedUserId] = useState('')
+  const [schedStart, setSchedStart] = useState('')
+  const [schedEnd, setSchedEnd] = useState('')
+  const [schedAlloc, setSchedAlloc] = useState(100)
+
   // Time tracking state
   const [timeEntries, setTimeEntries] = useState([])
   const [logHours, setLogHours] = useState('')
@@ -87,6 +95,7 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
     if (tab === 'assignees') await loadAssignees()
     if (tab === 'dependencies') await loadDeps()
     if (tab === 'relations') await loadRelations()
+    if (tab === 'schedule') await loadSchedule()
     if (tab === 'time') await loadTimeEntries()
   }
 
@@ -289,6 +298,50 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
   const availableDepTasks = tasks.filter((t) => t.id !== task.id && !linkedDepIds.has(t.id))
   const linkedRelIds = new Set(relations.map((r) => r.to_task_id === task.id ? r.from_task_id : r.to_task_id))
   const availableRelTasks = tasks.filter((t) => t.id !== task.id && !linkedRelIds.has(t.id))
+
+  // ── Schedule ────────────────────────────────────────────────
+
+  const loadSchedule = async () => {
+    setLoading('schedule', true)
+    try {
+      const { data } = await axios.get(`${base}/schedule`, headers)
+      setSchedule(data)
+    } catch { setError('Failed to load schedule') }
+    finally { setLoading('schedule', false) }
+  }
+
+  const handleAddSchedule = async () => {
+    if (!schedUserId || !schedStart || !schedEnd) {
+      setError('User, start date, and end date are required')
+      return
+    }
+    try {
+      await axios.post(`${base}/schedule`, {
+        user_id: schedUserId,
+        start_date: schedStart,
+        end_date: schedEnd,
+        allocation_percent: Number(schedAlloc) || 100,
+      }, headers)
+      setSchedUserId('')
+      setSchedStart('')
+      setSchedEnd('')
+      setSchedAlloc(100)
+      await loadSchedule()
+      onTaskUpdated?.()
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save schedule')
+    }
+  }
+
+  const handleDeleteSchedule = async (id) => {
+    try {
+      await axios.delete(`${base}/schedule/${id}`, headers)
+      await loadSchedule()
+      onTaskUpdated?.()
+    } catch {
+      setError('Failed to delete schedule')
+    }
+  }
 
   // ── Time Entries ─────────────────────────────────────────────
 
@@ -736,6 +789,77 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
                       </div>
                     )
                   })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'schedule' && (
+            <div className="space-y-4">
+              <div className="bg-gray-50 rounded-lg p-3 space-y-3">
+                <h4 className="text-sm font-medium text-gray-800">Assign Schedule</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <select
+                    className="rounded-md border-gray-300 text-sm"
+                    value={schedUserId}
+                    onChange={(e) => setSchedUserId(e.target.value)}
+                  >
+                    <option value="">Select user</option>
+                    {users.map((u) => (
+                      <option key={u.id} value={u.id}>{u.name || u.email}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    className="rounded-md border-gray-300 text-sm"
+                    placeholder="Allocation %"
+                    value={schedAlloc}
+                    onChange={(e) => setSchedAlloc(e.target.value)}
+                  />
+                  <input
+                    type="date"
+                    className="rounded-md border-gray-300 text-sm"
+                    value={schedStart}
+                    onChange={(e) => setSchedStart(e.target.value)}
+                  />
+                  <input
+                    type="date"
+                    className="rounded-md border-gray-300 text-sm"
+                    value={schedEnd}
+                    onChange={(e) => setSchedEnd(e.target.value)}
+                  />
+                </div>
+                <button
+                  onClick={handleAddSchedule}
+                  className="px-3 py-1.5 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+                >
+                  Save Schedule
+                </button>
+              </div>
+
+              {loading('schedule') ? (
+                <div className="text-sm text-gray-500">Loading schedule…</div>
+              ) : schedule.length === 0 ? (
+                <div className="text-sm text-gray-500">No schedule set.</div>
+              ) : (
+                <div className="space-y-1">
+                  {schedule.map((s) => (
+                    <div key={s.id} className="flex items-center justify-between text-sm py-1.5 px-2 bg-gray-50 rounded">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-gray-800">{s.user_name || s.email}</span>
+                        <span className="text-gray-400">{s.start_date} → {s.end_date}</span>
+                        <span className="text-xs bg-indigo-100 text-indigo-700 rounded px-1.5">{s.allocation_percent}%</span>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteSchedule(s.id)}
+                        className="text-xs text-red-500 hover:text-red-700"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
