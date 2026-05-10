@@ -20,6 +20,8 @@ export default function ProjectDetail() {
   const [project, setProject] = useState(null)
   const [columns, setColumns] = useState([])
   const [tasks, setTasks] = useState([])
+  const [types, setTypes] = useState([])
+  const [workflows, setWorkflows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [view, setView] = useState('grid')
@@ -36,6 +38,8 @@ export default function ProjectDetail() {
       setProject(data.project)
       setColumns(data.columns || [])
       setTasks(data.tasks || [])
+      setTypes(data.types || [])
+      setWorkflows(data.workflows || [])
       setMembers(data.members || [])
       setError('')
     } catch (err) {
@@ -203,6 +207,8 @@ export default function ProjectDetail() {
             <GridView
               columns={columns}
               tasks={tasks}
+              types={types}
+              workflows={workflows}
               filterText={filterText}
               onAddTask={handleAddTask}
               onUpdateTask={handleUpdateTask}
@@ -268,6 +274,8 @@ export default function ProjectDetail() {
           task={selectedTask}
           tasks={tasks}
           users={users}
+          types={types}
+          workflows={workflows}
           onClose={() => setSelectedTask(null)}
           onTaskUpdated={(updated) => {
             setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))

@@ -25,7 +25,7 @@ const RACI_ROLES = [
   { value: 'informed', label: 'Informed' },
 ]
 
-export default function TaskDetail({ projectId, task, tasks = [], users = [], onClose, onTaskUpdated }) {
+export default function TaskDetail({ projectId, task, tasks = [], users = [], types = [], workflows = [], onClose, onTaskUpdated }) {
   const { token } = useAuth()
   const headers = { headers: { Authorization: `Bearer ${token}` } }
   const base = `/api/projects/${projectId}/tasks/${task.id}`
@@ -36,6 +36,9 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], on
   // Tab state
   const [editName, setEditName] = useState(task.name || '')
   const [editDesc, setEditDesc] = useState(task.description || '')
+  const [editTypeId, setEditTypeId] = useState(task.type_id || '')
+  const [editEstimated, setEditEstimated] = useState(task.estimated_hours || '')
+  const [editSpent, setEditSpent] = useState(task.spent_hours || '')
   const [subtaskName, setSubtaskName] = useState('')
   const [subtasks, setSubtasks] = useState([])
   const [commentText, setCommentText] = useState('')
@@ -68,7 +71,13 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], on
   const handleSaveDetails = async () => {
     if (!editName.trim()) return
     try {
-      const { data } = await axios.put(base, { name: editName.trim(), description: editDesc }, headers)
+      const { data } = await axios.put(base, {
+        name: editName.trim(),
+        description: editDesc,
+        type_id: editTypeId || null,
+        estimated_hours: editEstimated === '' ? null : Number(editEstimated),
+        spent_hours: editSpent === '' ? null : Number(editSpent),
+      }, headers)
       onTaskUpdated(data)
       setError('')
     } catch (err) {
@@ -227,9 +236,19 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], on
       <div className="bg-white w-full max-w-xl h-full shadow-xl flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
-          <div>
-            <h2 className="text-base font-semibold text-gray-900">{task.task_id || '#'}</h2>
-            <p className="text-xs text-gray-600">{task.name}</p>
+          <div className="flex items-center gap-2">
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">{task.task_id || '#'}</h2>
+              <p className="text-xs text-gray-600">{task.name}</p>
+            </div>
+            {task.type_name && (
+              <span
+                className="inline-flex items-center gap-1 text-xs font-medium rounded-full px-2 py-0.5"
+                style={{ backgroundColor: task.type_color + '22', color: task.type_color }}
+              >
+                {task.type_icon || '●'} {task.type_name}
+              </span>
+            )}
           </div>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-800 text-xl leading-none">&times;</button>
         </div>
@@ -267,6 +286,43 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], on
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Type</label>
+                <select
+                  className="mt-1 w-full rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                  value={editTypeId}
+                  onChange={(e) => setEditTypeId(e.target.value)}
+                >
+                  <option value="">— Select type —</option>
+                  {types.map((t) => (
+                    <option key={t.id} value={t.id}>{t.icon || '●'} {t.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Estimated Hours</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    className="mt-1 w-full rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                    value={editEstimated}
+                    onChange={(e) => setEditEstimated(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Spent Hours</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    className="mt-1 w-full rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                    value={editSpent}
+                    onChange={(e) => setEditSpent(e.target.value)}
+                  />
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Description</label>

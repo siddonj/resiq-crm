@@ -56,11 +56,29 @@ async function wouldCreateCycle(projectId, taskId, newParentId) {
   return false;
 }
 
+async function getProjectTypes(projectId) {
+  const { rows } = await pool.query(
+    'SELECT * FROM project_task_types WHERE project_id = $1 ORDER BY position ASC, created_at ASC',
+    [projectId]
+  );
+  return rows;
+}
+
+async function getProjectWorkflows(projectId) {
+  const { rows } = await pool.query(
+    'SELECT * FROM project_workflows WHERE project_id = $1 ORDER BY created_at ASC',
+    [projectId]
+  );
+  return rows;
+}
+
 async function getTasksInTreeOrder(projectId) {
   const { rows } = await pool.query(
     `SELECT t.*,
-            COALESCE(sc.subtask_count, 0) AS subtask_count
+            COALESCE(sc.subtask_count, 0) AS subtask_count,
+            ptt.name AS type_name, ptt.color AS type_color, ptt.icon AS type_icon
      FROM project_tasks t
+     LEFT JOIN project_task_types ptt ON ptt.id = t.type_id
      LEFT JOIN (
        SELECT parent_id, COUNT(*) AS subtask_count
        FROM project_tasks
@@ -119,13 +137,19 @@ async function fetchProjectBundle(projectId) {
 
   if (!projectRes.rows[0]) return null;
 
-  const treeTasks = await getTasksInTreeOrder(projectId);
+  const [treeTasks, types, workflows] = await Promise.all([
+    getTasksInTreeOrder(projectId),
+    getProjectTypes(projectId),
+    getProjectWorkflows(projectId),
+  ]);
 
   return {
     project: projectRes.rows[0],
     columns: columnsRes.rows,
     tasks: treeTasks,
     members: membersRes.rows,
+    types,
+    workflows,
   };
 }
 
@@ -396,7 +420,7 @@ router.get('/:id/tasks', async (req, res) => {
 });
 
 router.post('/:id/tasks', async (req, res) => {
-  const { name, description, values, position, parent_id } = req.body || {};
+  const { name, description, values, position, parent_id, type_id, estimated_hours, spent_hours } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
 
   try {
@@ -411,10 +435,10 @@ router.post('/:id/tasks', async (req, res) => {
 
     const taskId = await generateTaskId();
     const { rows } = await pool.query(
-      `INSERT INTO project_tasks (project_id, task_id, name, description, values, position, parent_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO project_tasks (project_id, task_id, name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
-      [req.params.id, taskId, name.trim(), description || null, values || {}, taskPosition, parent_id || null, req.user.id]
+      [req.params.id, taskId, name.trim(), description || null, values || {}, taskPosition, parent_id || null, type_id || null, estimated_hours || null, spent_hours || 0, req.user.id]
     );
 
     logAction(req.user.id, req.user.email, 'create', 'project_task', rows[0].id, rows[0].name);
@@ -427,7 +451,7 @@ router.post('/:id/tasks', async (req, res) => {
 });
 
 router.put('/:id/tasks/:taskId', async (req, res) => {
-  const { name, description, values, position, parent_id } = req.body || {};
+  const { name, description, values, position, parent_id, type_id, estimated_hours, spent_hours } = req.body || {};
   try {
     if (parent_id !== undefined) {
       const cyclic = await wouldCreateCycle(req.params.id, req.params.taskId, parent_id);
@@ -440,10 +464,13 @@ router.put('/:id/tasks/:taskId', async (req, res) => {
              values = COALESCE($3, values),
              position = COALESCE($4, position),
              parent_id = COALESCE($5, parent_id),
+             type_id = COALESCE($6, type_id),
+             estimated_hours = COALESCE($7, estimated_hours),
+             spent_hours = COALESCE($8, spent_hours),
              updated_at = NOW()
-       WHERE id = $6 AND project_id = $7
+       WHERE id = $9 AND project_id = $10
        RETURNING *`,
-      [name, description, values, position, parent_id, req.params.taskId, req.params.id]
+      [name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, req.params.taskId, req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Task not found' });
     logAction(req.user.id, req.user.email, 'update', 'project_task', rows[0].id, rows[0].name);
@@ -956,6 +983,120 @@ router.delete('/:id/members/:memberId', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing member:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Task Types ────────────────────────────────────────────────
+
+router.get('/:id/types', async (req, res) => {
+  try {
+    const rows = await getProjectTypes(req.params.id);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing types:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/types', async (req, res) => {
+  const { name, color, icon, position } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO project_task_types (project_id, name, color, icon, position)
+       VALUES ($1, $2, $3, $4, COALESCE($5, 0))
+       RETURNING *`,
+      [req.params.id, name.trim(), color || '#3B82F6', icon || 'task', position]
+    );
+    logAction(req.user.id, req.user.email, 'create', 'project_task_type', rows[0].id, rows[0].name);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'A type with that name already exists' });
+    console.error('Error creating type:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/:id/types/:typeId', async (req, res) => {
+  const { name, color, icon, position } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE project_task_types
+         SET name = COALESCE($1, name),
+             color = COALESCE($2, color),
+             icon = COALESCE($3, icon),
+             position = COALESCE($4, position)
+       WHERE id = $5 AND project_id = $6
+       RETURNING *`,
+      [name, color, icon, position, req.params.typeId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Type not found' });
+    logAction(req.user.id, req.user.email, 'update', 'project_task_type', rows[0].id, rows[0].name);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error updating type:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/types/:typeId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM project_task_types WHERE id = $1 AND project_id = $2 RETURNING id',
+      [req.params.typeId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Type not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_task_type', rows[0].id, rows[0].id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting type:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Workflows ─────────────────────────────────────────────────
+
+router.get('/:id/workflows', async (req, res) => {
+  try {
+    const rows = await getProjectWorkflows(req.params.id);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing workflows:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/workflows', async (req, res) => {
+  const { from_status, to_status, role_required, required_fields } = req.body || {};
+  if (!from_status || !to_status) return res.status(400).json({ error: 'from_status and to_status are required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO project_workflows (project_id, from_status, to_status, role_required, required_fields)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [req.params.id, from_status, to_status, role_required || null, required_fields || null]
+    );
+    logAction(req.user.id, req.user.email, 'create', 'project_workflow', rows[0].id, `${from_status} → ${to_status}`);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'That transition already exists' });
+    console.error('Error creating workflow:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/workflows/:workflowId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM project_workflows WHERE id = $1 AND project_id = $2 RETURNING id',
+      [req.params.workflowId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Workflow not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_workflow', rows[0].id, rows[0].id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting workflow:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

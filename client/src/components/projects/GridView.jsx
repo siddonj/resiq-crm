@@ -9,12 +9,13 @@ const INPUT_BY_TYPE = {
   checkbox: 'checkbox',
 }
 
-export default function GridView({ columns = [], tasks = [], filterText = '', onAddTask, onUpdateTask, onTaskClick, onBulkDelete, onBulkUpdate, onReload }) {
+export default function GridView({ columns = [], tasks = [], types = [], workflows = [], filterText = '', onAddTask, onUpdateTask, onTaskClick, onBulkDelete, onBulkUpdate, onReload }) {
   const { token } = useAuth()
   const headers = { headers: { Authorization: `Bearer ${token}` } }
   const projectId = tasks[0]?.project_id
 
   const [newTaskName, setNewTaskName] = useState('')
+  const [newTaskTypeId, setNewTaskTypeId] = useState('')
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [bulkStatusTarget, setBulkStatusTarget] = useState('')
   const [expandedIds, setExpandedIds] = useState(new Set())
@@ -25,6 +26,28 @@ export default function GridView({ columns = [], tasks = [], filterText = '', on
   const statusCol = useMemo(() => columns.find((c) => c.type === 'dropdown' || c.type === 'status'), [columns])
   const statusOptions = statusCol?.config?.options || []
   const progressCol = useMemo(() => columns.find((c) => c.type === 'progress' || c.key === 'progress'), [columns])
+
+  // Build workflow map: currentStatus -> [allowedNextStatuses]
+  const workflowMap = useMemo(() => {
+    const map = {}
+    if (!Array.isArray(workflows) || workflows.length === 0) return map
+    for (const w of workflows) {
+      const from = w.from_status
+      const to = w.to_status
+      if (!map[from]) map[from] = []
+      if (!map[from].includes(to)) map[from].push(to)
+    }
+    return map
+  }, [workflows])
+
+  const getValidStatuses = (currentStatus) => {
+    if (!currentStatus) return statusOptions
+    const allowed = workflowMap[currentStatus]
+    if (!allowed || allowed.length === 0) return statusOptions
+    // Always allow keeping current status
+    const result = [currentStatus, ...allowed.filter((s) => s !== currentStatus)]
+    return result
+  }
 
   // Build task map and visibility
   const taskMap = useMemo(() => {
@@ -109,15 +132,28 @@ export default function GridView({ columns = [], tasks = [], filterText = '', on
     setBulkStatusTarget('')
   }
 
+  const defaultTypeId = useMemo(() => {
+    const sorted = [...types].sort((a, b) => a.position - b.position)
+    return sorted[0]?.id || ''
+  }, [types])
+
+  useMemo(() => {
+    if (defaultTypeId && !newTaskTypeId) setNewTaskTypeId(defaultTypeId)
+  }, [defaultTypeId, newTaskTypeId])
+
   const handleAdd = () => {
     if (!newTaskName.trim()) return
-    onAddTask({ name: newTaskName.trim(), values: {} })
+    const payload = { name: newTaskName.trim(), values: {} }
+    if (newTaskTypeId) payload.type_id = newTaskTypeId
+    onAddTask(payload)
     setNewTaskName('')
   }
 
   const handleAddSubtask = (parentId, name) => {
     if (!name.trim()) return
-    onAddTask({ name: name.trim(), parent_id: parentId, values: {} })
+    const payload = { name: name.trim(), parent_id: parentId, values: {} }
+    if (newTaskTypeId) payload.type_id = newTaskTypeId
+    onAddTask(payload)
     setSubtaskInputs((p) => ({ ...p, [parentId]: '' }))
     setExpandedIds((prev) => new Set(prev).add(parentId))
   }
@@ -200,6 +236,9 @@ export default function GridView({ columns = [], tasks = [], filterText = '', on
     }
 
     if (column.type === 'dropdown' && Array.isArray(column.config?.options)) {
+      // Workflow-aware status dropdown
+      const isStatusCol = statusCol && column.id === statusCol.id
+      const options = isStatusCol ? getValidStatuses(value) : column.config.options
       return (
         <select
           className="w-full border-none bg-transparent focus:ring-0 text-sm"
@@ -208,7 +247,7 @@ export default function GridView({ columns = [], tasks = [], filterText = '', on
           onClick={(e) => e.stopPropagation()}
         >
           <option value="">—</option>
-          {column.config.options.map((opt) => (
+          {options.map((opt) => (
             <option key={opt} value={opt}>{opt}</option>
           ))}
         </select>
@@ -273,6 +312,18 @@ export default function GridView({ columns = [], tasks = [], filterText = '', on
             onChange={(e) => setNewTaskName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { handleAdd(); e.preventDefault() } }}
           />
+          {types.length > 0 && (
+            <select
+              className="rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+              value={newTaskTypeId}
+              onChange={(e) => setNewTaskTypeId(e.target.value)}
+              title="Task type"
+            >
+              {types.map((t) => (
+                <option key={t.id} value={t.id}>{t.icon || '●'} {t.name}</option>
+              ))}
+            </select>
+          )}
           <button
             onClick={handleAdd}
             className="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
@@ -339,6 +390,7 @@ export default function GridView({ columns = [], tasks = [], filterText = '', on
               </th>
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b">Task</th>
               <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b">Task ID</th>
+              <th className="px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b">Type</th>
               {orderedColumns.map((col) => (
                 <th key={col.id} className="px-3 py-2 text-left text-xs font-semibold text-gray-600 border-b">
                   {col.name}
@@ -350,7 +402,7 @@ export default function GridView({ columns = [], tasks = [], filterText = '', on
           <tbody>
             {filteredTasks.length === 0 ? (
               <tr>
-                <td className="px-3 py-3 text-sm text-gray-600" colSpan={4 + orderedColumns.length}>
+                <td className="px-3 py-3 text-sm text-gray-600" colSpan={5 + orderedColumns.length}>
                   {filterText ? 'No tasks match your search.' : 'No tasks yet.'}
                 </td>
               </tr>
@@ -412,6 +464,19 @@ export default function GridView({ columns = [], tasks = [], filterText = '', on
                     )}
                   </td>
                   <td className="px-3 py-2 align-top border-b text-gray-700">{task.task_id || '—'}</td>
+                  <td className="px-3 py-2 align-top border-b">
+                    {task.type_name ? (
+                      <span
+                        className="inline-flex items-center gap-1 text-xs font-medium rounded-full px-2 py-0.5"
+                        style={{ backgroundColor: task.type_color + '22', color: task.type_color }}
+                        title={task.type_name}
+                      >
+                        {task.type_icon || '●'} {task.type_name}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400">—</span>
+                    )}
+                  </td>
                   {orderedColumns.map((col) => (
                     <td key={col.id} className="px-3 py-2 align-top border-b">
                       {renderCellInput(task, col)}
