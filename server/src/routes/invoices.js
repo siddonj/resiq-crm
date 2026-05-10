@@ -409,4 +409,193 @@ router.delete('/subscriptions/:id', auth, async (req, res) => {
   }
 });
 
+// ── Vendors ──────────────────────────────────────────────────────
+
+router.get('/vendors', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM vendors WHERE user_id=$1 ORDER BY name ASC',
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/vendors', auth, async (req, res) => {
+  const { name, email, phone, address, city, state, postal_code, country, tax_number, notes } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO vendors (user_id, name, email, phone, address, city, state, postal_code, country, tax_number, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [req.user.id, name.trim(), email || null, phone || null, address || null, city || null, state || null, postal_code || null, country || null, tax_number || null, notes || null]
+    );
+    logAction(req.user.id, req.user.email, 'create', 'vendor', rows[0].id, rows[0].name);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/vendors/:id', auth, async (req, res) => {
+  const { name, email, phone, address, city, state, postal_code, country, tax_number, notes } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE vendors
+         SET name = COALESCE($1, name),
+             email = COALESCE($2, email),
+             phone = COALESCE($3, phone),
+             address = COALESCE($4, address),
+             city = COALESCE($5, city),
+             state = COALESCE($6, state),
+             postal_code = COALESCE($7, postal_code),
+             country = COALESCE($8, country),
+             tax_number = COALESCE($9, tax_number),
+             notes = COALESCE($10, notes),
+             updated_at = NOW()
+       WHERE id = $11 AND user_id = $12
+       RETURNING *`,
+      [name, email, phone, address, city, state, postal_code, country, tax_number, notes, req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'update', 'vendor', rows[0].id, rows[0].name);
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/vendors/:id', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM vendors WHERE id=$1 AND user_id=$2 RETURNING name',
+      [req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'vendor', req.params.id, rows[0].name);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Expenses ─────────────────────────────────────────────────────
+
+router.get('/expenses', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT e.*, v.name AS vendor_name
+       FROM expenses e
+       LEFT JOIN vendors v ON v.id = e.vendor_id
+       WHERE e.user_id=$1
+       ORDER BY e.expense_date DESC, e.created_at DESC`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/expenses', auth, async (req, res) => {
+  const { vendor_id, category, description, amount, tax_amount, currency, expense_date, receipt_url, billable, notes } = req.body || {};
+  if (!description || !description.trim()) return res.status(400).json({ error: 'Description is required' });
+  if (amount == null || isNaN(Number(amount))) return res.status(400).json({ error: 'Valid amount is required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO expenses (user_id, vendor_id, category, description, amount, tax_amount, currency, expense_date, receipt_url, billable, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [req.user.id, vendor_id || null, category || null, description.trim(), amount, tax_amount || 0, currency || 'USD', expense_date || new Date().toISOString().slice(0, 10), receipt_url || null, billable || false, notes || null]
+    );
+    logAction(req.user.id, req.user.email, 'create', 'expense', rows[0].id, rows[0].description);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/expenses/:id', auth, async (req, res) => {
+  const { vendor_id, category, description, amount, tax_amount, currency, expense_date, receipt_url, billable, notes } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE expenses
+         SET vendor_id = COALESCE($1, vendor_id),
+             category = COALESCE($2, category),
+             description = COALESCE($3, description),
+             amount = COALESCE($4, amount),
+             tax_amount = COALESCE($5, tax_amount),
+             currency = COALESCE($6, currency),
+             expense_date = COALESCE($7, expense_date),
+             receipt_url = COALESCE($8, receipt_url),
+             billable = COALESCE($9, billable),
+             notes = COALESCE($10, notes),
+             updated_at = NOW()
+       WHERE id = $11 AND user_id = $12
+       RETURNING *`,
+      [vendor_id, category, description, amount, tax_amount, currency, expense_date, receipt_url, billable !== undefined ? billable : null, notes, req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'update', 'expense', rows[0].id, rows[0].description);
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/expenses/:id', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM expenses WHERE id=$1 AND user_id=$2 RETURNING description',
+      [req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'expense', req.params.id, rows[0].description);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Expense Categories ───────────────────────────────────────────
+
+router.get('/expense-categories', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM expense_categories WHERE user_id=$1 ORDER BY name ASC',
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/expense-categories', auth, async (req, res) => {
+  const { name, color } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO expense_categories (user_id, name, color) VALUES ($1,$2,$3) RETURNING *',
+      [req.user.id, name.trim(), color || '#6B7280']
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/expense-categories/:id', auth, async (req, res) => {
+  try {
+    await pool.query(
+      'DELETE FROM expense_categories WHERE id=$1 AND user_id=$2',
+      [req.params.id, req.user.id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

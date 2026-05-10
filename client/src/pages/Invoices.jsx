@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext'
 import AskAIBtn from '../components/AskAIBtn'
 import RecurringInvoices from '../components/invoices/RecurringInvoices'
 import Subscriptions from '../components/invoices/Subscriptions'
+import Expenses from '../components/invoices/Expenses'
+import Vendors from '../components/invoices/Vendors'
 
 const STATUS_COLORS = {
   draft: 'bg-gray-100 text-gray-600',
@@ -402,6 +404,8 @@ export default function Invoices() {
   const [tab, setTab] = useState('invoices')
   const [contacts, setContacts] = useState([])
   const [deals, setDeals] = useState([])
+  const [vendors, setVendors] = useState([])
+  const [categories, setCategories] = useState([])
 
   const headers = { Authorization: `Bearer ${token}` }
 
@@ -410,16 +414,20 @@ export default function Invoices() {
     try {
       const params = {}
       if (filterStatus) params.status = filterStatus
-      const [invRes, propRes, contRes, dealRes] = await Promise.all([
+      const [invRes, propRes, contRes, dealRes, vendRes, catRes] = await Promise.all([
         axios.get('/api/invoices', { headers, params }),
         axios.get('/api/proposals', { headers }),
         axios.get('/api/contacts', { headers }).catch(() => ({ data: [] })),
         axios.get('/api/deals', { headers }).catch(() => ({ data: [] })),
+        axios.get('/api/invoices/vendors', { headers }).catch(() => ({ data: [] })),
+        axios.get('/api/invoices/expense-categories', { headers }).catch(() => ({ data: [] })),
       ])
       setInvoices(invRes.data)
       setProposals(propRes.data.filter(p => p.status === 'signed'))
       setContacts(contRes.data)
       setDeals(dealRes.data)
+      setVendors(vendRes.data)
+      setCategories(catRes.data)
     } catch (err) {
       console.error(err)
     } finally {
@@ -497,7 +505,7 @@ export default function Invoices() {
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b mb-4">
-        {['invoices', 'recurring', 'subscriptions'].map(t => (
+        {['invoices', 'recurring', 'subscriptions', 'expenses', 'vendors'].map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -514,6 +522,14 @@ export default function Invoices() {
 
       {tab === 'subscriptions' && (
         <Subscriptions token={token} contacts={contacts} />
+      )}
+
+      {tab === 'expenses' && (
+        <Expenses vendors={vendors} categories={categories} onReload={load} />
+      )}
+
+      {tab === 'vendors' && (
+        <Vendors onReload={load} />
       )}
 
       {tab === 'invoices' && (
