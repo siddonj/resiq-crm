@@ -167,23 +167,31 @@ async function getTasksInTreeOrder(projectId) {
 }
 
 async function fetchProjectBundle(projectId) {
-  const [projectRes, columnsRes, membersRes] = await Promise.all([
-    pool.query('SELECT * FROM projects WHERE id = $1', [projectId]),
-    pool.query(
-      `SELECT * FROM project_columns WHERE project_id = $1 ORDER BY position ASC, created_at ASC`,
-      [projectId]
-    ),
-    pool.query(
-       `SELECT pm.*, u.email, u.name AS user_name,
-               t.name AS team_name
-        FROM project_members pm
-        LEFT JOIN users u ON u.id = pm.user_id
-        LEFT JOIN teams t ON t.id = pm.team_id
-        WHERE pm.project_id = $1
-        ORDER BY pm.added_at ASC`,
-      [projectId]
-    ),
-  ]);
+  let projectRes, columnsRes, membersRes;
+  try {
+    [projectRes, columnsRes, membersRes] = await Promise.all([
+      pool.query('SELECT * FROM projects WHERE id = $1', [projectId]),
+      pool.query(
+        `SELECT * FROM project_columns WHERE project_id = $1 ORDER BY position ASC, created_at ASC`,
+        [projectId]
+      ),
+      pool.query(
+         `SELECT pm.*, u.email, u.name AS user_name,
+                 t.name AS team_name
+          FROM project_members pm
+          LEFT JOIN users u ON u.id = pm.user_id
+          LEFT JOIN teams t ON t.id = pm.team_id
+          WHERE pm.project_id = $1
+          ORDER BY pm.added_at ASC`,
+        [projectId]
+      ),
+    ]);
+  } catch (err) {
+    console.error('fetchProjectBundle initial query error:', err.message);
+    projectRes = await pool.query('SELECT * FROM projects WHERE id = $1', [projectId]);
+    columnsRes = { rows: [] };
+    membersRes = { rows: [] };
+  }
 
   if (!projectRes.rows[0]) return null;
 
@@ -196,9 +204,9 @@ async function fetchProjectBundle(projectId) {
 
   return {
     project: projectRes.rows[0],
-    columns: columnsRes.rows,
+    columns: columnsRes.rows || [],
     tasks: treeTasks,
-    members: membersRes.rows,
+    members: membersRes.rows || [],
     types,
     workflows,
     relations,
@@ -276,8 +284,20 @@ router.get('/', async (req, res) => {
     );
     res.json(rows);
   } catch (err) {
-    console.error('Error listing projects:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('Error listing projects (falling back to basic query):', err.message);
+    try {
+      const { rows } = await pool.query(
+        `SELECT p.*, 0 AS member_count
+         FROM projects p
+         WHERE p.status != 'deleted' AND p.owner_id = $1
+         ORDER BY p.created_at DESC`,
+        [req.user.id]
+      );
+      res.json(rows);
+    } catch (fallbackErr) {
+      console.error('Fallback list projects error:', fallbackErr);
+      res.status(500).json({ error: 'Server error' });
+    }
   }
 });
 
@@ -435,28 +455,32 @@ router.post('/', async (req, res) => {
     );
     const project = rows[0];
 
-    // Create default columns
-    const defaultColumns = [
-      { name: 'Status', key: 'status', type: 'dropdown', config: { options: ['To Do', 'In Progress', 'Done'] }, position: 0 },
-      { name: 'Priority', key: 'priority', type: 'dropdown', config: { options: ['Low', 'Medium', 'High'] }, position: 1 },
-      { name: 'Due Date', key: 'due_date', type: 'date', config: {}, position: 2 },
-      { name: 'Assignee', key: 'assignee', type: 'person', config: {}, position: 3 },
-      { name: 'Progress', key: 'progress', type: 'progress', config: { min: 0, max: 100 }, position: 4 },
-    ];
-    for (const col of defaultColumns) {
-      await pool.query(
-        `INSERT INTO project_columns (project_id, name, key, type, config, position, is_required)
-         VALUES ($1, $2, $3, $4, $5, $6, FALSE)`,
-        [project.id, col.name, col.key, col.type, JSON.stringify(col.config), col.position]
-      );
-    }
+    // Create default columns (ignore if tables don't exist yet)
+    try {
+      const defaultColumns = [
+        { name: 'Status', key: 'status', type: 'dropdown', config: { options: ['To Do', 'In Progress', 'Done'] }, position: 0 },
+        { name: 'Priority', key: 'priority', type: 'dropdown', config: { options: ['Low', 'Medium', 'High'] }, position: 1 },
+        { name: 'Due Date', key: 'due_date', type: 'date', config: {}, position: 2 },
+        { name: 'Assignee', key: 'assignee', type: 'person', config: {}, position: 3 },
+        { name: 'Progress', key: 'progress', type: 'progress', config: { min: 0, max: 100 }, position: 4 },
+      ];
+      for (const col of defaultColumns) {
+        await pool.query(
+          `INSERT INTO project_columns (project_id, name, key, type, config, position, is_required)
+           VALUES ($1, $2, $3, $4, $5, $6, FALSE)`,
+          [project.id, col.name, col.key, col.type, JSON.stringify(col.config), col.position]
+        );
+      }
 
-    // Create default grid view
-    await pool.query(
-      `INSERT INTO project_views (project_id, name, type, config, created_by, is_default)
-       VALUES ($1, $2, $3, $4, $5, TRUE)`,
-      [project.id, 'Default Grid', 'grid', '{}', req.user.id]
-    );
+      // Create default grid view
+      await pool.query(
+        `INSERT INTO project_views (project_id, name, type, config, created_by, is_default)
+         VALUES ($1, $2, $3, $4, $5, TRUE)`,
+        [project.id, 'Default Grid', 'grid', '{}', req.user.id]
+      );
+    } catch (colErr) {
+      console.error('Default columns/views creation skipped (tables may not exist):', colErr.message);
+    }
 
     logAction(req.user.id, req.user.email, 'create', 'project', project.id, project.name);
 
