@@ -15,6 +15,7 @@ import SprintBoard from '../components/projects/SprintBoard'
 import TeamPlanner from '../components/projects/TeamPlanner'
 import BaselineComparison from '../components/projects/BaselineComparison'
 import PhaseTimeline from '../components/projects/PhaseTimeline'
+import MeetingsList from '../components/projects/MeetingsList'
 
 export default function ProjectDetail() {
   const { projectId } = useParams()
@@ -31,6 +32,7 @@ export default function ProjectDetail() {
   const [backlogTasks, setBacklogTasks] = useState([])
   const [baselines, setBaselines] = useState([])
   const [phases, setPhases] = useState([])
+  const [meetings, setMeetings] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [view, setView] = useState('grid')
@@ -58,6 +60,7 @@ export default function ProjectDetail() {
       setSprints(sprintsData || [])
       setBacklogTasks(backlogData || [])
       setPhases(data.phases || [])
+      setMeetings(data.meetings || [])
       loadBaselines()
       setError('')
     } catch (err) {
@@ -221,6 +224,7 @@ export default function ProjectDetail() {
                 { key: 'team-planner', label: 'Team Planner' },
                 { key: 'baselines', label: 'Baselines' },
                 { key: 'phases', label: 'Phases' },
+                { key: 'meetings', label: 'Meetings' },
               ].map(({ key, label }) => (
                 <button
                   key={key}
@@ -337,6 +341,15 @@ export default function ProjectDetail() {
               users={users}
               members={members}
               onPhasesChanged={loadProject}
+            />
+          )}
+          {view === 'meetings' && (
+            <MeetingsList
+              projectId={projectId}
+              meetings={meetings}
+              tasks={tasks}
+              members={members}
+              onReload={loadProject}
             />
           )}
         </div>

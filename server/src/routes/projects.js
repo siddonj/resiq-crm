@@ -122,6 +122,48 @@ async function getProjectPhases(projectId) {
   }
 }
 
+async function getProjectMeetings(projectId) {
+  try {
+    const { rows: meetings } = await pool.query(
+      `SELECT pm.*, u.name AS created_by_name
+       FROM project_meetings pm
+       LEFT JOIN users u ON u.id = pm.created_by
+       WHERE pm.project_id = $1
+       ORDER BY pm.start_time ASC`,
+      [projectId]
+    );
+    const meetingIds = meetings.map((m) => m.id);
+    let attendees = [];
+    let linkedTasks = [];
+    if (meetingIds.length > 0) {
+      const { rows: attRows } = await pool.query(
+        `SELECT pma.*, u.name AS user_name, u.email AS user_email
+         FROM project_meeting_attendees pma
+         LEFT JOIN users u ON u.id = pma.user_id
+         WHERE pma.meeting_id = ANY($1)`,
+        [meetingIds]
+      );
+      attendees = attRows;
+      const { rows: taskRows } = await pool.query(
+        `SELECT pmt.*, pt.name AS task_name, pt.task_id AS task_task_id
+         FROM project_meeting_tasks pmt
+         LEFT JOIN project_tasks pt ON pt.id = pmt.task_id
+         WHERE pmt.meeting_id = ANY($1)`,
+        [meetingIds]
+      );
+      linkedTasks = taskRows;
+    }
+    return meetings.map((m) => ({
+      ...m,
+      attendees: attendees.filter((a) => a.meeting_id === m.id),
+      linked_tasks: linkedTasks.filter((t) => t.meeting_id === m.id),
+    }));
+  } catch (err) {
+    console.error('getProjectMeetings error (table may not exist):', err.message);
+    return [];
+  }
+}
+
 async function getTasksInTreeOrder(projectId) {
   let rows;
   try {
@@ -202,12 +244,13 @@ async function fetchProjectBundle(projectId) {
 
   if (!projectRes.rows[0]) return null;
 
-  const [treeTasks, types, workflows, relations, phases] = await Promise.all([
+  const [treeTasks, types, workflows, relations, phases, meetings] = await Promise.all([
     getTasksInTreeOrder(projectId),
     getProjectTypes(projectId),
     getProjectWorkflows(projectId),
     getProjectTaskRelations(projectId),
     getProjectPhases(projectId),
+    getProjectMeetings(projectId),
   ]);
 
   return {
@@ -219,6 +262,7 @@ async function fetchProjectBundle(projectId) {
     workflows,
     relations,
     phases,
+    meetings,
   };
 }
 
@@ -2180,6 +2224,157 @@ router.delete('/:id/phases/:phaseId/gate', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Error revoking gate:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Meetings ─────────────────────────────────────────────────────
+
+router.get('/:id/meetings', async (req, res) => {
+  try {
+    const meetings = await getProjectMeetings(req.params.id);
+    res.json(meetings);
+  } catch (err) {
+    console.error('Error listing meetings:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/meetings', async (req, res) => {
+  const { title, start_time, end_time, location, agenda, minutes, attendee_ids, task_ids } = req.body || {};
+  if (!title || !title.trim()) return res.status(400).json({ error: 'Title is required' });
+  if (!start_time) return res.status(400).json({ error: 'Start time is required' });
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO project_meetings (project_id, title, start_time, end_time, location, agenda, minutes, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [req.params.id, title.trim(), start_time, end_time || null, location || null, agenda || null, minutes || null, req.user.id]
+    );
+    const meeting = rows[0];
+
+    if (Array.isArray(attendee_ids) && attendee_ids.length > 0) {
+      const values = attendee_ids.map((uid, i) => `($1, $${i + 2})`).join(', ');
+      await pool.query(
+        `INSERT INTO project_meeting_attendees (meeting_id, user_id) VALUES ${values} ON CONFLICT DO NOTHING`,
+        [meeting.id, ...attendee_ids]
+      );
+    }
+
+    if (Array.isArray(task_ids) && task_ids.length > 0) {
+      const values = task_ids.map((tid, i) => `($1, $${i + 2})`).join(', ');
+      await pool.query(
+        `INSERT INTO project_meeting_tasks (meeting_id, task_id) VALUES ${values} ON CONFLICT DO NOTHING`,
+        [meeting.id, ...task_ids]
+      );
+    }
+
+    logAction(req.user.id, req.user.email, 'create', 'project_meeting', meeting.id, meeting.title);
+    res.status(201).json(meeting);
+  } catch (err) {
+    console.error('Error creating meeting:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/:id/meetings/:meetingId', async (req, res) => {
+  const { title, start_time, end_time, location, agenda, minutes } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE project_meetings
+         SET title = COALESCE($1, title),
+             start_time = COALESCE($2, start_time),
+             end_time = COALESCE($3, end_time),
+             location = COALESCE($4, location),
+             agenda = COALESCE($5, agenda),
+             minutes = COALESCE($6, minutes)
+       WHERE id = $7 AND project_id = $8
+       RETURNING *`,
+      [title, start_time, end_time, location, agenda, minutes, req.params.meetingId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Meeting not found' });
+    logAction(req.user.id, req.user.email, 'update', 'project_meeting', rows[0].id, rows[0].title);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error updating meeting:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/meetings/:meetingId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM project_meetings WHERE id = $1 AND project_id = $2 RETURNING id, title',
+      [req.params.meetingId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Meeting not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_meeting', rows[0].id, rows[0].title);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting meeting:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Meeting attendees
+router.post('/:id/meetings/:meetingId/attendees', async (req, res) => {
+  const { user_id, status } = req.body || {};
+  if (!user_id) return res.status(400).json({ error: 'user_id is required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO project_meeting_attendees (meeting_id, user_id, status)
+       VALUES ($1, $2, COALESCE($3, 'pending'))
+       ON CONFLICT (meeting_id, user_id) DO UPDATE SET status = COALESCE($3, project_meeting_attendees.status)
+       RETURNING *`,
+      [req.params.meetingId, user_id, status]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error adding attendee:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/meetings/:meetingId/attendees/:userId', async (req, res) => {
+  try {
+    await pool.query(
+      'DELETE FROM project_meeting_attendees WHERE meeting_id = $1 AND user_id = $2',
+      [req.params.meetingId, req.params.userId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error removing attendee:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Meeting tasks
+router.post('/:id/meetings/:meetingId/tasks', async (req, res) => {
+  const { task_id } = req.body || {};
+  if (!task_id) return res.status(400).json({ error: 'task_id is required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO project_meeting_tasks (meeting_id, task_id) VALUES ($1, $2)
+       ON CONFLICT DO NOTHING RETURNING *`,
+      [req.params.meetingId, task_id]
+    );
+    res.json(rows[0] || { meeting_id: req.params.meetingId, task_id });
+  } catch (err) {
+    console.error('Error linking task to meeting:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/meetings/:meetingId/tasks/:taskId', async (req, res) => {
+  try {
+    await pool.query(
+      'DELETE FROM project_meeting_tasks WHERE meeting_id = $1 AND task_id = $2',
+      [req.params.meetingId, req.params.taskId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error unlinking task from meeting:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
