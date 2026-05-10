@@ -9,7 +9,7 @@ const INPUT_BY_TYPE = {
   checkbox: 'checkbox',
 }
 
-export default function GridView({ columns = [], tasks = [], types = [], workflows = [], filterText = '', onAddTask, onUpdateTask, onTaskClick, onBulkDelete, onBulkUpdate, onReload }) {
+export default function GridView({ columns = [], tasks = [], types = [], workflows = [], relations = [], filterText = '', onAddTask, onUpdateTask, onTaskClick, onBulkDelete, onBulkUpdate, onReload }) {
   const { token } = useAuth()
   const headers = { headers: { Authorization: `Bearer ${token}` } }
   const projectId = tasks[0]?.project_id
@@ -55,6 +55,38 @@ export default function GridView({ columns = [], tasks = [], types = [], workflo
     tasks.forEach((t) => map.set(t.id, t))
     return map
   }, [tasks])
+
+  // Build relation map per task
+  const relationMap = useMemo(() => {
+    const map = new Map()
+    for (const r of relations) {
+      if (!map.has(r.from_task_id)) map.set(r.from_task_id, [])
+      if (!map.has(r.to_task_id)) map.set(r.to_task_id, [])
+      map.get(r.from_task_id).push({ ...r, direction: 'outgoing' })
+      map.get(r.to_task_id).push({ ...r, direction: 'incoming' })
+    }
+    return map
+  }, [relations])
+
+  const RELATION_ICONS = {
+    precedes: '→',
+    follows: '←',
+    blocks: '⊸',
+    blocked_by: '⊷',
+    duplicates: '⩗',
+    relates_to: '↔',
+    part_of: '⊂',
+  }
+
+  const RELATION_LABELS = {
+    precedes: 'precedes',
+    follows: 'follows',
+    blocks: 'blocks',
+    blocked_by: 'blocked by',
+    duplicates: 'duplicates',
+    relates_to: 'relates to',
+    part_of: 'part of',
+  }
 
   // Auto-expand all initially
   useMemo(() => {
@@ -444,6 +476,28 @@ export default function GridView({ columns = [], tasks = [], types = [], workflo
                         </span>
                       )}
                     </div>
+                    {(() => {
+                      const rels = relationMap.get(task.id) || []
+                      if (rels.length === 0) return null
+                      return (
+                        <div className="flex flex-wrap gap-1 mt-1" style={{ paddingLeft: `${(task.depth * 24) + 20}px` }}>
+                          {rels.map((rel, idx) => {
+                            const otherId = rel.direction === 'outgoing' ? rel.to_task_id : rel.from_task_id
+                            const otherTask = taskMap.get(otherId)
+                            const label = `${RELATION_ICONS[rel.relation_type] || '•'} ${RELATION_LABELS[rel.relation_type] || rel.relation_type} ${otherTask?.task_id || otherTask?.name?.slice(0, 12) || '…'}`
+                            return (
+                              <span
+                                key={`${rel.id}-${idx}`}
+                                className="text-[10px] bg-indigo-50 text-indigo-700 rounded px-1.5 py-0.5 border border-indigo-100"
+                                title={label}
+                              >
+                                {label}
+                              </span>
+                            )
+                          })}
+                        </div>
+                      )
+                    })()}
                     {task.subtask_count > 0 && expandedIds.has(task.id) && (
                       <div className="mt-1 flex items-center gap-2" style={{ paddingLeft: `${(task.depth + 1) * 24}px` }}>
                         <input

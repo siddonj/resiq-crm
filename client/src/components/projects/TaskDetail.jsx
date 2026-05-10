@@ -9,6 +9,17 @@ const TABS = [
   { key: 'attachments', label: 'Attachments' },
   { key: 'assignees', label: 'Assignees' },
   { key: 'dependencies', label: 'Dependencies' },
+  { key: 'relations', label: 'Relations' },
+]
+
+const RELATION_TYPES = [
+  { value: 'precedes', label: 'Precedes' },
+  { value: 'follows', label: 'Follows' },
+  { value: 'blocks', label: 'Blocks' },
+  { value: 'blocked_by', label: 'Blocked by' },
+  { value: 'duplicates', label: 'Duplicates' },
+  { value: 'relates_to', label: 'Relates to' },
+  { value: 'part_of', label: 'Part of' },
 ]
 
 const DEPENDENCY_TYPES = [
@@ -50,6 +61,10 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
   const [depTaskId, setDepTaskId] = useState('')
   const [depType, setDepType] = useState('finish_to_start')
   const [deps, setDeps] = useState([])
+  const [relTaskId, setRelTaskId] = useState('')
+  const [relType, setRelType] = useState('relates_to')
+  const [relDelay, setRelDelay] = useState('')
+  const [relations, setRelations] = useState([])
 
   const [loadingTab, setLoadingTab] = useState({})
 
@@ -62,6 +77,7 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
     if (tab === 'attachments') await loadAttachments()
     if (tab === 'assignees') await loadAssignees()
     if (tab === 'dependencies') await loadDeps()
+    if (tab === 'relations') await loadRelations()
   }
 
   useEffect(() => { loadTabData(activeTab) }, [activeTab])
@@ -227,9 +243,41 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
     } catch { setError('Failed to remove dependency') }
   }
 
+  // ── Relations ────────────────────────────────────────────────
+
+  const loadRelations = async () => {
+    setLoading('relations', true)
+    try {
+      const { data } = await axios.get(`${base}/relations`, headers)
+      setRelations(data)
+    } catch { setError('Failed to load relations') }
+    finally { setLoading('relations', false) }
+  }
+
+  const handleAddRelation = async () => {
+    if (!relTaskId) return
+    try {
+      await axios.post(`${base}/relations`, { to_task_id: relTaskId, relation_type: relType, delay_days: relDelay ? Number(relDelay) : 0 }, headers)
+      setRelTaskId('')
+      setRelDelay('')
+      loadRelations()
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to add relation')
+    }
+  }
+
+  const handleRemoveRelation = async (id) => {
+    try {
+      await axios.delete(`${base}/relations/${id}`, headers)
+      loadRelations()
+    } catch { setError('Failed to remove relation') }
+  }
+
   // Filter available tasks for dependency (exclude self + already linked)
   const linkedDepIds = new Set(deps.map((d) => d.depends_on_task_id))
   const availableDepTasks = tasks.filter((t) => t.id !== task.id && !linkedDepIds.has(t.id))
+  const linkedRelIds = new Set(relations.map((r) => r.to_task_id === task.id ? r.from_task_id : r.to_task_id))
+  const availableRelTasks = tasks.filter((t) => t.id !== task.id && !linkedRelIds.has(t.id))
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-start justify-end z-50">
@@ -558,6 +606,68 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
                       <button onClick={() => handleRemoveDep(d.id)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'relations' && (
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <select
+                  className="flex-1 rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                  value={relTaskId}
+                  onChange={(e) => setRelTaskId(e.target.value)}
+                >
+                  <option value="">Select related task</option>
+                  {availableRelTasks.map((t) => (
+                    <option key={t.id} value={t.id}>{t.task_id ? `${t.task_id}: ` : ''}{t.name}</option>
+                  ))}
+                </select>
+                <select
+                  className="rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                  value={relType}
+                  onChange={(e) => setRelType(e.target.value)}
+                >
+                  {RELATION_TYPES.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  placeholder="Delay"
+                  className="w-20 rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                  value={relDelay}
+                  onChange={(e) => setRelDelay(e.target.value)}
+                />
+                <button
+                  onClick={handleAddRelation}
+                  className="px-3 py-1.5 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+                >
+                  Link
+                </button>
+              </div>
+              {loading('relations') ? (
+                <div className="text-sm text-gray-600">Loading…</div>
+              ) : relations.length === 0 ? (
+                <div className="text-sm text-gray-500">No relations.</div>
+              ) : (
+                <div className="space-y-1">
+                  {relations.map((r) => {
+                    const isOutgoing = r.from_task_id === task.id
+                    const otherName = isOutgoing ? (r.to_task_name || r.to_task_task_id) : (r.from_task_name || r.from_task_task_id)
+                    const typeLabel = RELATION_TYPES.find((rt) => rt.value === r.relation_type)?.label || r.relation_type
+                    return (
+                      <div key={r.id} className="flex items-center justify-between py-1 px-2 bg-gray-50 rounded text-sm">
+                        <div>
+                          <span className="text-gray-800">{otherName}</span>
+                          <span className="mx-2 text-xs text-gray-500">{typeLabel}</span>
+                          {r.delay_days > 0 && <span className="text-xs text-gray-500">+{r.delay_days}d</span>}
+                        </div>
+                        <button onClick={() => handleRemoveRelation(r.id)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>

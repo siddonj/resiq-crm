@@ -72,6 +72,21 @@ async function getProjectWorkflows(projectId) {
   return rows;
 }
 
+async function getProjectTaskRelations(projectId) {
+  const { rows } = await pool.query(
+    `SELECT ptr.*,
+            ft.name AS from_task_name, ft.task_id AS from_task_task_id,
+            tt.name AS to_task_name, tt.task_id AS to_task_task_id
+     FROM project_task_relations ptr
+     JOIN project_tasks ft ON ft.id = ptr.from_task_id
+     JOIN project_tasks tt ON tt.id = ptr.to_task_id
+     WHERE ptr.project_id = $1
+     ORDER BY ptr.created_at ASC`,
+    [projectId]
+  );
+  return rows;
+}
+
 async function getTasksInTreeOrder(projectId) {
   const { rows } = await pool.query(
     `SELECT t.*,
@@ -137,10 +152,11 @@ async function fetchProjectBundle(projectId) {
 
   if (!projectRes.rows[0]) return null;
 
-  const [treeTasks, types, workflows] = await Promise.all([
+  const [treeTasks, types, workflows, relations] = await Promise.all([
     getTasksInTreeOrder(projectId),
     getProjectTypes(projectId),
     getProjectWorkflows(projectId),
+    getProjectTaskRelations(projectId),
   ]);
 
   return {
@@ -150,6 +166,7 @@ async function fetchProjectBundle(projectId) {
     members: membersRes.rows,
     types,
     workflows,
+    relations,
   };
 }
 
@@ -719,6 +736,102 @@ router.delete('/:id/tasks/:taskId/dependencies/:depId', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing dependency:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Task Relations (Phase 2) ──────────────────────────────────
+
+// Helper: detect circular precedes/follows chains
+async function wouldCreatePrecedesCycle(projectId, fromTaskId, toTaskId) {
+  const visited = new Set();
+  const queue = [toTaskId];
+  while (queue.length) {
+    const current = queue.shift();
+    if (current === fromTaskId) return true;
+    if (visited.has(current)) continue;
+    visited.add(current);
+    const { rows } = await pool.query(
+      `SELECT to_task_id FROM project_task_relations
+       WHERE project_id = $1 AND from_task_id = $2 AND relation_type IN ('precedes', 'follows')`,
+      [projectId, current]
+    );
+    for (const r of rows) queue.push(r.to_task_id);
+  }
+  return false;
+}
+
+router.get('/:id/tasks/:taskId/relations', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT ptr.*,
+              ft.name AS from_task_name, ft.task_id AS from_task_task_id,
+              tt.name AS to_task_name, tt.task_id AS to_task_task_id
+       FROM project_task_relations ptr
+       JOIN project_tasks ft ON ft.id = ptr.from_task_id
+       JOIN project_tasks tt ON tt.id = ptr.to_task_id
+       WHERE ptr.project_id = $1
+         AND (ptr.from_task_id = $2 OR ptr.to_task_id = $2)
+       ORDER BY ptr.created_at ASC`,
+      [req.params.id, req.params.taskId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing relations:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/tasks/:taskId/relations', async (req, res) => {
+  const { to_task_id, relation_type, delay_days } = req.body || {};
+  if (!to_task_id) return res.status(400).json({ error: 'to_task_id is required' });
+  if (!relation_type) return res.status(400).json({ error: 'relation_type is required' });
+
+  const validTypes = ['precedes', 'follows', 'blocks', 'blocked_by', 'duplicates', 'relates_to', 'part_of'];
+  if (!validTypes.includes(relation_type)) {
+    return res.status(400).json({ error: `Invalid relation_type. Must be one of: ${validTypes.join(', ')}` });
+  }
+
+  const projectId = req.params.id;
+  const fromTaskId = req.params.taskId;
+
+  if (fromTaskId === to_task_id) {
+    return res.status(400).json({ error: 'Cannot relate a task to itself' });
+  }
+
+  try {
+    // Prevent circular precedes/follows chains
+    if (relation_type === 'precedes' || relation_type === 'follows') {
+      const cyclic = await wouldCreatePrecedesCycle(projectId, fromTaskId, to_task_id);
+      if (cyclic) return res.status(400).json({ error: 'This relation would create a cycle' });
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO project_task_relations (project_id, from_task_id, to_task_id, relation_type, delay_days)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (from_task_id, to_task_id, relation_type) DO UPDATE SET delay_days = $5
+       RETURNING *`,
+      [projectId, fromTaskId, to_task_id, relation_type, delay_days || 0]
+    );
+    logAction(req.user.id, req.user.email, 'create', 'task_relation', rows[0].id, `${relation_type} ${fromTaskId}→${to_task_id}`);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('Error adding relation:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/tasks/:taskId/relations/:relId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM project_task_relations WHERE id = $1 AND project_id = $2 RETURNING id',
+      [req.params.relId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Relation not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'task_relation', rows[0].id, rows[0].id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error removing relation:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
