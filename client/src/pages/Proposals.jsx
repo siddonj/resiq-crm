@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import AskAIBtn from '../components/AskAIBtn'
@@ -495,6 +495,7 @@ const EMPTY_FORM = () => ({
 export default function Proposals() {
   const { token, user } = useAuth()
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
 
   const [proposals, setProposals] = useState([])
   const [deals, setDeals] = useState([])
@@ -591,6 +592,27 @@ export default function Proposals() {
       setProposals(prev => prev.filter(p => p.id !== id))
     } catch (err) {
       console.error(err)
+    }
+  }
+
+  const handleCreateInvoice = async (proposal) => {
+    try {
+      const lineItems = (proposal.line_items || [])
+        .filter(i => i.description)
+        .map(i => ({ description: i.description, quantity: i.quantity, rate: i.rate, tax: i.tax ?? 0 }))
+      const total = proposalTotal(proposal.line_items)
+      const payload = {
+        title: `Invoice — ${proposal.title}`,
+        proposal_id: proposal.id,
+        line_items: lineItems,
+        notes: `Generated from proposal: ${proposal.title}`,
+        due_date: null,
+      }
+      await axios.post('/api/invoices', payload, authHeaders)
+      navigate('/invoices')
+    } catch (err) {
+      console.error(err)
+      alert('Failed to create invoice. Please try again.')
     }
   }
 
@@ -702,6 +724,12 @@ export default function Proposals() {
                     <button onClick={() => openEdit(proposal)}
                       className="text-xs text-gray-500 hover:text-teal border border-gray-200 px-3 py-1.5 rounded-lg transition-colors">
                       Edit
+                    </button>
+                  )}
+                  {proposal.status === 'signed' && (
+                    <button onClick={() => handleCreateInvoice(proposal)}
+                      className="text-xs text-teal font-semibold border border-teal px-3 py-1.5 rounded-lg hover:bg-teal/5 transition-colors">
+                      Create Invoice
                     </button>
                   )}
                   <button onClick={() => handleDelete(proposal.id)}

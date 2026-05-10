@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import './RedditLeads.css';
 
 const RedditLeads = () => {
+  const { token } = useAuth();
+  const navigate = useNavigate();
   const [leads, setLeads] = useState([]);
   const [stats, setStats] = useState(null);
   const [bySubreddit, setBySubreddit] = useState([]);
@@ -30,7 +34,7 @@ const RedditLeads = () => {
       });
 
       const res = await fetch(`/api/reddit-leads?${params}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       setLeads(data.leads);
@@ -44,13 +48,13 @@ const RedditLeads = () => {
   const fetchStats = async () => {
     try {
       const res = await fetch('/api/reddit-leads/stats/summary', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       setStats(data);
 
       const subRes = await fetch('/api/reddit-leads/stats/by-subreddit', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
       const subData = await subRes.json();
       setBySubreddit(subData);
@@ -66,7 +70,7 @@ const RedditLeads = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           subreddits: searchParams.subreddits,
@@ -95,7 +99,7 @@ const RedditLeads = () => {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ status: newStatus }),
       });
@@ -114,13 +118,39 @@ const RedditLeads = () => {
     try {
       await fetch(`/api/reddit-leads/${leadId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       setLeads(leads.filter((l) => l.id !== leadId));
       fetchStats();
     } catch (error) {
       console.error('Error deleting lead:', error);
+    }
+  };
+
+  const handleConvertToContact = async (lead) => {
+    try {
+      const name = lead.author || 'Reddit Lead';
+      const notes = `Imported from Reddit r/${lead.subreddit}\n\nPost: ${lead.post_title}\n\n${lead.post_url}`;
+      const res = await fetch('/api/contacts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name,
+          email: lead.contact_email || '',
+          notes,
+          tags: ['reddit-lead', lead.subreddit].filter(Boolean),
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to create contact');
+      await handleStatusChange(lead.id, 'converted');
+      navigate('/contacts');
+    } catch (error) {
+      console.error('Error converting lead:', error);
+      alert('Failed to add contact. Please try again.');
     }
   };
 
@@ -313,6 +343,15 @@ const RedditLeads = () => {
                     <option value="converted">Converted</option>
                     <option value="rejected">Rejected</option>
                   </select>
+
+                  <button
+                    className="btn btn-small"
+                    style={{ background: '#0d9488', color: '#fff', border: 'none' }}
+                    onClick={() => handleConvertToContact(lead)}
+                    title="Import this lead as a Contact in the CRM"
+                  >
+                    + Add to CRM
+                  </button>
 
                   <button
                     className="btn btn-small btn-danger"

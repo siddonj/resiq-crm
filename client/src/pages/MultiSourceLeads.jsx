@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import './MultiSourceLeads.css';
 
 function MultiSourceLeads() {
+  const { token } = useAuth();
+  const navigate = useNavigate();
   const [leads, setLeads] = useState([]);
   const [stats, setStats] = useState({
     totalLeads: 0,
@@ -39,7 +43,9 @@ function MultiSourceLeads() {
       if (filters.source !== 'all') params.append('source', filters.source);
       params.append('minRelevance', filters.minRelevance);
 
-      const response = await fetch(`/api/multi-source-leads?${params}`);
+      const response = await fetch(`/api/multi-source-leads?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
       if (response.ok) {
         const data = await response.json();
@@ -53,8 +59,8 @@ function MultiSourceLeads() {
   const loadStats = async () => {
     try {
       const [summaryRes, bySourceRes] = await Promise.all([
-        fetch('/api/multi-source-leads/stats/summary'),
-        fetch('/api/multi-source-leads/stats/by-source'),
+        fetch('/api/multi-source-leads/stats/summary', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/multi-source-leads/stats/by-source', { headers: { Authorization: `Bearer ${token}` } }),
       ]);
 
       if (summaryRes.ok) {
@@ -96,6 +102,7 @@ function MultiSourceLeads() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           sources: searchConfig.sources,
@@ -123,7 +130,6 @@ function MultiSourceLeads() {
 
   const updateLeadStatus = async (leadId, newStatus) => {
     try {
-      const token = localStorage.getItem('token');
       await fetch(`/api/multi-source-leads/${leadId}`, {
         method: 'PATCH',
         headers: {
@@ -143,7 +149,6 @@ function MultiSourceLeads() {
 
   const deleteLead = async (leadId) => {
     try {
-      const token = localStorage.getItem('token');
       await fetch(`/api/multi-source-leads/${leadId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
@@ -153,6 +158,33 @@ function MultiSourceLeads() {
       loadStats();
     } catch (err) {
       console.error('Error deleting lead:', err);
+    }
+  };
+
+  const convertToCrmContact = async (lead) => {
+    try {
+      const name = lead.author || lead.title || 'Multi-Source Lead';
+      const notes = `Imported from ${lead.source?.toUpperCase() || 'external source'}\n\nTitle: ${lead.title || ''}\n${lead.url || ''}`;
+      const res = await fetch('/api/contacts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name,
+          email: lead.email || '',
+          company: lead.company || '',
+          notes,
+          tags: [lead.source, 'multi-source-lead'].filter(Boolean),
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to create contact');
+      await updateLeadStatus(lead.id, 'converted');
+      navigate('/contacts');
+    } catch (err) {
+      console.error('Error converting lead:', err);
+      alert('Failed to add contact. Please try again.');
     }
   };
 
@@ -373,6 +405,15 @@ function MultiSourceLeads() {
                     <option value="converted">Converted</option>
                     <option value="rejected">Rejected</option>
                   </select>
+
+                  <button
+                    onClick={() => convertToCrmContact(lead)}
+                    className="btn-search"
+                    style={{ padding: '4px 10px', fontSize: '12px' }}
+                    title="Import as CRM Contact"
+                  >
+                    + Add to CRM
+                  </button>
 
                   <button
                     onClick={() => deleteLead(lead.id)}
