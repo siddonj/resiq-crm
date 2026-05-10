@@ -835,6 +835,8 @@ export default function Invoices() {
           </table>
         </div>
       )}
+      </>
+      )}
 
       {showModal && (
         <InvoiceModal
