@@ -268,7 +268,7 @@ export default function OutboundAutomation() {
   const dataQualityIssues = dataQualityQuery.data?.issues ?? []
   const dataQualitySummary = dataQualityQuery.data?.summary ?? null
   const loadingDataQuality = dataQualityQuery.isLoading
-  const dataQualityMergeOperations = mergeOpsQuery.data?.mergeOperations ?? []
+  const dataQualityMergeOperations = mergeOpsQuery.data ?? []
   const loadingDataQualityMergeOperations = mergeOpsQuery.isLoading
   const multifamilyObjects = mfObjectsQuery.data ?? []
   const loadingMultifamily = mfObjectsQuery.isLoading
@@ -290,10 +290,10 @@ export default function OutboundAutomation() {
   const emailLimit = analytics?.dailySendLimits?.email ?? null
   const linkedinLimit = analytics?.dailySendLimits?.linkedin ?? null
   const linkedinWorkload = linkedinTaskBoard?.workload ?? {}
-  const linkedinApprovedTasks = linkedinTaskBoard?.approved ?? []
-  const linkedinDraftedTasks = linkedinTaskBoard?.drafted ?? []
-  const linkedinPendingTasks = linkedinTaskBoard?.pending ?? []
-  const linkedinCompletedTasks = linkedinTaskBoard?.completed ?? []
+  const linkedinApprovedTasks = linkedinTaskBoard?.board?.approved ?? []
+  const linkedinDraftedTasks = linkedinTaskBoard?.board?.drafted ?? []
+  const linkedinPendingTasks = linkedinTaskBoard?.board?.pending ?? []
+  const linkedinCompletedTasks = linkedinTaskBoard?.board?.completed ?? []
   const filterScopedObjects = filters.objectType
     ? multifamilyObjects.filter((o) => o.object_type === filters.objectType)
     : multifamilyObjects
