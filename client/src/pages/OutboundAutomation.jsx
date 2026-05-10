@@ -268,7 +268,7 @@ export default function OutboundAutomation() {
   const dataQualityIssues = dataQualityQuery.data?.issues ?? []
   const dataQualitySummary = dataQualityQuery.data?.summary ?? null
   const loadingDataQuality = dataQualityQuery.isLoading
-  const dataQualityMergeOperations = mergeOpsQuery.data ?? []
+  const dataQualityMergeOperations = mergeOpsQuery.data?.mergeOperations ?? []
   const loadingDataQualityMergeOperations = mergeOpsQuery.isLoading
   const multifamilyObjects = mfObjectsQuery.data ?? []
   const loadingMultifamily = mfObjectsQuery.isLoading
@@ -285,10 +285,10 @@ export default function OutboundAutomation() {
 
   // Derived stat aliases
   const slaCounts = slaSummary ?? {}
-  const leadsStats = analytics ?? {}
-  const campaignStats = analytics ?? {}
-  const emailLimit = analytics?.emailLimit ?? null
-  const linkedinLimit = analytics?.linkedinLimit ?? null
+  const leadsStats = analytics?.leads ?? {}
+  const campaignStats = analytics?.campaigns ?? {}
+  const emailLimit = analytics?.dailySendLimits?.email ?? null
+  const linkedinLimit = analytics?.dailySendLimits?.linkedin ?? null
   const linkedinWorkload = linkedinTaskBoard?.workload ?? {}
   const linkedinApprovedTasks = linkedinTaskBoard?.approved ?? []
   const linkedinDraftedTasks = linkedinTaskBoard?.drafted ?? []
@@ -1204,7 +1204,7 @@ export default function OutboundAutomation() {
         handleSaveGoal={handleSaveGoal}
         forecastGoals={forecastSummary?.goals ?? null}
         forecastSummary={forecastSummary}
-        forecastGap={forecastSummary?.gap ?? null}
+        forecastGap={forecastSummary?.gapToGoal ?? null}
         loadingAttribution={loadingAttribution}
         attributionSummary={attributionSummary}
         attributionSources={attributionSummary?.sources ?? []}
@@ -1243,10 +1243,10 @@ export default function OutboundAutomation() {
         dataQualityMergeOperations={dataQualityMergeOperations}
         dataQualityStatusFilter={dataQualityStatusFilter}
         setDataQualityStatusFilter={setDataQualityStatusFilter}
-        dataQualityOpenCount={dataQualitySummary?.openCount ?? 0}
-        dataQualityOpenBlockingCount={dataQualitySummary?.openBlockingCount ?? 0}
-        dataQualityResolvedCount={dataQualitySummary?.resolvedCount ?? 0}
-        dataQualityMergeCount30d={dataQualitySummary?.mergeCount30d ?? 0}
+        dataQualityOpenCount={dataQualitySummary?.open_count ?? 0}
+        dataQualityOpenBlockingCount={dataQualitySummary?.open_blocking_count ?? 0}
+        dataQualityResolvedCount={dataQualitySummary?.resolved_count ?? 0}
+        dataQualityMergeCount30d={dataQualitySummary?.merge_count_30d ?? 0}
         loadingDataQuality={loadingDataQuality}
         loadingDataQualityMergeOperations={loadingDataQualityMergeOperations}
         busyKey={busyKey}
@@ -1556,7 +1556,7 @@ export default function OutboundAutomation() {
 
       <DraftInbox
         draftInbox={draftInbox}
-        draftInboxCounts={draftInboxSummary?.counts ?? {}}
+        draftInboxCounts={draftInboxSummary ?? {}}
         loadingDraftInbox={loadingDraftInbox}
         busyKey={busyKey}
         refreshDraftInbox={refreshDraftInbox}
