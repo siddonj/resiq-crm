@@ -102,6 +102,26 @@ async function getProjectTaskRelations(projectId) {
   }
 }
 
+async function getProjectPhases(projectId) {
+  try {
+    const { rows: phases } = await pool.query(
+      `SELECT pp.*,
+              COALESCE(pg.approved_at IS NOT NULL, FALSE) AS gate_approved,
+              pg.approver_id AS gate_approver_id,
+              pg.notes AS gate_notes
+       FROM project_phases pp
+       LEFT JOIN project_phase_gates pg ON pg.phase_id = pp.id
+       WHERE pp.project_id = $1
+       ORDER BY pp.position ASC, pp.created_at ASC`,
+      [projectId]
+    );
+    return phases;
+  } catch (err) {
+    console.error('getProjectPhases error (table may not exist):', err.message);
+    return [];
+  }
+}
+
 async function getTasksInTreeOrder(projectId) {
   let rows;
   try {
@@ -182,11 +202,12 @@ async function fetchProjectBundle(projectId) {
 
   if (!projectRes.rows[0]) return null;
 
-  const [treeTasks, types, workflows, relations] = await Promise.all([
+  const [treeTasks, types, workflows, relations, phases] = await Promise.all([
     getTasksInTreeOrder(projectId),
     getProjectTypes(projectId),
     getProjectWorkflows(projectId),
     getProjectTaskRelations(projectId),
+    getProjectPhases(projectId),
   ]);
 
   return {
@@ -197,6 +218,7 @@ async function fetchProjectBundle(projectId) {
     types,
     workflows,
     relations,
+    phases,
   };
 }
 
@@ -638,7 +660,7 @@ router.get('/:id/tasks', async (req, res) => {
 });
 
 router.post('/:id/tasks', async (req, res) => {
-  const { name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points } = req.body || {};
+  const { name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points, phase_id } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
 
   try {
@@ -653,10 +675,10 @@ router.post('/:id/tasks', async (req, res) => {
 
     const taskId = await generateTaskId();
     const { rows } = await pool.query(
-      `INSERT INTO project_tasks (project_id, task_id, name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `INSERT INTO project_tasks (project_id, task_id, name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points, phase_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
-      [req.params.id, taskId, name.trim(), description || null, values || {}, taskPosition, parent_id || null, type_id || null, estimated_hours || null, spent_hours || 0, story_points || null, req.user.id]
+      [req.params.id, taskId, name.trim(), description || null, values || {}, taskPosition, parent_id || null, type_id || null, estimated_hours || null, spent_hours || 0, story_points || null, phase_id || null, req.user.id]
     );
 
     logAction(req.user.id, req.user.email, 'create', 'project_task', rows[0].id, rows[0].name);
@@ -669,7 +691,7 @@ router.post('/:id/tasks', async (req, res) => {
 });
 
 router.put('/:id/tasks/:taskId', async (req, res) => {
-  const { name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points } = req.body || {};
+  const { name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points, phase_id } = req.body || {};
   try {
     if (parent_id !== undefined) {
       const cyclic = await wouldCreateCycle(req.params.id, req.params.taskId, parent_id);
@@ -686,10 +708,11 @@ router.put('/:id/tasks/:taskId', async (req, res) => {
              estimated_hours = COALESCE($7, estimated_hours),
              spent_hours = COALESCE($8, spent_hours),
              story_points = COALESCE($9, story_points),
+             phase_id = COALESCE($10, phase_id),
              updated_at = NOW()
-       WHERE id = $10 AND project_id = $11
+       WHERE id = $11 AND project_id = $12
        RETURNING *`,
-       [name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points, req.params.taskId, req.params.id]
+       [name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points, phase_id, req.params.taskId, req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Task not found' });
     logAction(req.user.id, req.user.email, 'update', 'project_task', rows[0].id, rows[0].name);
@@ -2034,6 +2057,129 @@ router.get('/:id/baselines/:baselineId/compare', async (req, res) => {
     });
   } catch (err) {
     console.error('Error comparing baseline:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Project Phases ─────────────────────────────────────────────
+
+router.get('/:id/phases', async (req, res) => {
+  try {
+    const phases = await getProjectPhases(req.params.id);
+    res.json(phases);
+  } catch (err) {
+    console.error('Error listing phases:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/phases', async (req, res) => {
+  const { name, position, deliverables } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO project_phases (project_id, name, position, deliverables)
+       VALUES ($1, $2, COALESCE($3, 0), COALESCE($4, '[]'::jsonb))
+       RETURNING *`,
+      [req.params.id, name.trim(), position, JSON.stringify(deliverables || [])]
+    );
+    logAction(req.user.id, req.user.email, 'create', 'project_phase', rows[0].id, rows[0].name);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('Error creating phase:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/:id/phases/:phaseId', async (req, res) => {
+  const { name, position, status, deliverables, started_at, completed_at } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE project_phases
+         SET name = COALESCE($1, name),
+             position = COALESCE($2, position),
+             status = COALESCE($3, status),
+             deliverables = COALESCE($4, deliverables),
+             started_at = COALESCE($5, started_at),
+             completed_at = COALESCE($6, completed_at),
+             updated_at = NOW()
+       WHERE id = $7 AND project_id = $8
+       RETURNING *`,
+      [name, position, status, deliverables ? JSON.stringify(deliverables) : null, started_at, completed_at, req.params.phaseId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Phase not found' });
+    logAction(req.user.id, req.user.email, 'update', 'project_phase', rows[0].id, rows[0].name);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error updating phase:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/phases/:phaseId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM project_phases WHERE id = $1 AND project_id = $2 RETURNING id',
+      [req.params.phaseId, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Phase not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_phase', rows[0].id, rows[0].id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting phase:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Phase Gate Approval ────────────────────────────────────────
+
+router.post('/:id/phases/:phaseId/gate', async (req, res) => {
+  const { notes } = req.body || {};
+  try {
+    // Check if already approved
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM project_phase_gates WHERE phase_id = $1',
+      [req.params.phaseId]
+    );
+    let result;
+    if (existing[0]) {
+      const { rows } = await pool.query(
+        `UPDATE project_phase_gates
+           SET approver_id = $1, approved_at = NOW(), notes = COALESCE($2, notes)
+         WHERE phase_id = $3
+         RETURNING *`,
+        [req.user.id, notes, req.params.phaseId]
+      );
+      result = rows[0];
+    } else {
+      const { rows } = await pool.query(
+        `INSERT INTO project_phase_gates (phase_id, approver_id, approved_at, notes)
+         VALUES ($1, $2, NOW(), $3)
+         RETURNING *`,
+        [req.params.phaseId, req.user.id, notes]
+      );
+      result = rows[0];
+    }
+    logAction(req.user.id, req.user.email, 'approve', 'phase_gate', result.id, `phase ${req.params.phaseId}`);
+    res.json(result);
+  } catch (err) {
+    console.error('Error approving gate:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/phases/:phaseId/gate', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM project_phase_gates WHERE phase_id = $1 RETURNING id',
+      [req.params.phaseId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Gate not found' });
+    logAction(req.user.id, req.user.email, 'revoke', 'phase_gate', rows[0].id, `phase ${req.params.phaseId}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error revoking gate:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

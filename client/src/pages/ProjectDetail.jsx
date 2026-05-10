@@ -14,6 +14,7 @@ import SavedViewsDropdown from '../components/projects/SavedViewsDropdown'
 import SprintBoard from '../components/projects/SprintBoard'
 import TeamPlanner from '../components/projects/TeamPlanner'
 import BaselineComparison from '../components/projects/BaselineComparison'
+import PhaseTimeline from '../components/projects/PhaseTimeline'
 
 export default function ProjectDetail() {
   const { projectId } = useParams()
@@ -29,6 +30,7 @@ export default function ProjectDetail() {
   const [sprints, setSprints] = useState([])
   const [backlogTasks, setBacklogTasks] = useState([])
   const [baselines, setBaselines] = useState([])
+  const [phases, setPhases] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [view, setView] = useState('grid')
@@ -55,6 +57,7 @@ export default function ProjectDetail() {
       setMembers(data.members || [])
       setSprints(sprintsData || [])
       setBacklogTasks(backlogData || [])
+      setPhases(data.phases || [])
       loadBaselines()
       setError('')
     } catch (err) {
@@ -194,9 +197,13 @@ export default function ProjectDetail() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <ProjectHeader
         project={project}
+        phases={phases}
+        users={users}
+        members={members}
         onStatusChange={handleStatusChange}
         onSaveAsTemplate={handleSaveAsTemplate}
         onSaveBaseline={handleSaveBaseline}
+        onPhasesChanged={loadProject}
       />
 
       {error && <div className="mt-3 text-sm text-red-600">{error}</div>}
@@ -205,7 +212,7 @@ export default function ProjectDetail() {
         <div className="flex-1">
           <div className="flex items-center gap-3 border-b pb-2 mb-4 flex-wrap">
             <div className="flex items-center gap-3">
-              {[
+              {              [
                 { key: 'grid', label: 'Grid' },
                 { key: 'kanban', label: 'Kanban' },
                 { key: 'gantt', label: 'Gantt' },
@@ -213,6 +220,7 @@ export default function ProjectDetail() {
                 { key: 'sprints', label: 'Sprints' },
                 { key: 'team-planner', label: 'Team Planner' },
                 { key: 'baselines', label: 'Baselines' },
+                { key: 'phases', label: 'Phases' },
               ].map(({ key, label }) => (
                 <button
                   key={key}
@@ -322,6 +330,15 @@ export default function ProjectDetail() {
               onBaselineChange={loadBaselines}
             />
           )}
+          {view === 'phases' && (
+            <PhaseTimeline
+              projectId={projectId}
+              phases={phases}
+              users={users}
+              members={members}
+              onPhasesChanged={loadProject}
+            />
+          )}
         </div>
 
         <div className="w-full lg:w-80 space-y-6">
@@ -351,6 +368,7 @@ export default function ProjectDetail() {
           types={types}
           workflows={workflows}
           relations={relations}
+          phases={phases}
           onClose={() => setSelectedTask(null)}
           onTaskUpdated={(updated) => {
             setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)))

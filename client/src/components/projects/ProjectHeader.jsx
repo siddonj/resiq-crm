@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import PhaseTimeline from './PhaseTimeline'
 
-export default function ProjectHeader({ project, onStatusChange, onSaveAsTemplate, onSaveBaseline }) {
+export default function ProjectHeader({ project, phases = [], users = [], members = [], onStatusChange, onSaveAsTemplate, onSaveBaseline, onPhasesChanged }) {
   const [showBaselineForm, setShowBaselineForm] = useState(false)
   const [baselineName, setBaselineName] = useState('')
 
@@ -108,6 +109,14 @@ export default function ProjectHeader({ project, onStatusChange, onSaveAsTemplat
           </div>
         )}
       </div>
+
+      <PhaseTimeline
+        projectId={project?.id}
+        phases={phases}
+        users={users}
+        members={members}
+        onPhasesChanged={onPhasesChanged}
+      />
     </div>
   )
 }

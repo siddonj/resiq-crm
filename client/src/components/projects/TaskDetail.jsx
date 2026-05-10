@@ -38,7 +38,7 @@ const RACI_ROLES = [
   { value: 'informed', label: 'Informed' },
 ]
 
-export default function TaskDetail({ projectId, task, tasks = [], users = [], types = [], workflows = [], onClose, onTaskUpdated }) {
+export default function TaskDetail({ projectId, task, tasks = [], users = [], types = [], workflows = [], phases = [], onClose, onTaskUpdated }) {
   const { token } = useAuth()
   const headers = { headers: { Authorization: `Bearer ${token}` } }
   const base = `/api/projects/${projectId}/tasks/${task.id}`
@@ -50,6 +50,7 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
   const [editName, setEditName] = useState(task.name || '')
   const [editDesc, setEditDesc] = useState(task.description || '')
   const [editTypeId, setEditTypeId] = useState(task.type_id || '')
+  const [editPhaseId, setEditPhaseId] = useState(task.phase_id || '')
   const [editEstimated, setEditEstimated] = useState(task.estimated_hours || '')
   const [editSpent, setEditSpent] = useState(task.spent_hours || '')
   const [editStoryPoints, setEditStoryPoints] = useState(task.story_points || '')
@@ -110,6 +111,7 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
         name: editName.trim(),
         description: editDesc,
         type_id: editTypeId || null,
+        phase_id: editPhaseId || null,
         estimated_hours: editEstimated === '' ? null : Number(editEstimated),
         spent_hours: editSpent === '' ? null : Number(editSpent),
         story_points: editStoryPoints === '' ? null : Number(editStoryPoints),
@@ -455,6 +457,19 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
                   <option value="">— Select type —</option>
                   {types.map((t) => (
                     <option key={t.id} value={t.id}>{t.icon || '●'} {t.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Phase</label>
+                <select
+                  className="mt-1 w-full rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                  value={editPhaseId}
+                  onChange={(e) => setEditPhaseId(e.target.value)}
+                >
+                  <option value="">— No phase —</option>
+                  {phases.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
                   ))}
                 </select>
               </div>
