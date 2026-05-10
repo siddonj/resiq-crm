@@ -6,6 +6,7 @@ import RecurringInvoices from '../components/invoices/RecurringInvoices'
 import Subscriptions from '../components/invoices/Subscriptions'
 import Expenses from '../components/invoices/Expenses'
 import Vendors from '../components/invoices/Vendors'
+import Products from '../components/invoices/Products'
 
 const STATUS_COLORS = {
   draft: 'bg-gray-100 text-gray-600',
@@ -82,6 +83,47 @@ function generateHTML(invoice, authorName) {
     </div>
   ` : ''
 
+  const payments = invoice.payments || []
+  const balance = (invoice.balance !== undefined ? invoice.balance : total - (invoice.paid_amount || 0))
+  const paidAmount = invoice.paid_amount || payments.reduce((s, p) => s + Number(p.amount), 0)
+
+  const paymentsHTML = payments.length > 0 ? `
+    <div style="margin-top:20px">
+      <h3 style="font-size:13px;font-weight:600;color:#6b7280;margin:0 0 8px;text-transform:uppercase;letter-spacing:.05em">Payment History</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="background:#f9fafb">
+            <th style="padding:8px 12px;text-align:left;border:1px solid #e5e7eb;color:#6b7280;font-weight:500">Date</th>
+            <th style="padding:8px 12px;text-align:left;border:1px solid #e5e7eb;color:#6b7280;font-weight:500">Method</th>
+            <th style="padding:8px 12px;text-align:right;border:1px solid #e5e7eb;color:#6b7280;font-weight:500">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${payments.map(p => `
+            <tr>
+              <td style="padding:8px 12px;border:1px solid #e5e7eb">${new Date(p.payment_date || p.created_at).toLocaleDateString()}</td>
+              <td style="padding:8px 12px;border:1px solid #e5e7eb">${p.method || '—'}</td>
+              <td style="padding:8px 12px;text-align:right;border:1px solid #e5e7eb;font-weight:500">$${Number(p.amount).toFixed(2)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  ` : ''
+
+  const balanceHTML = (paidAmount > 0 || balance < total) ? `
+    <div style="margin-top:12px;padding:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:12px;color:#6b7280">Total: $${total.toFixed(2)}</div>
+        <div style="font-size:12px;color:#15803d">Paid: $${Number(paidAmount).toFixed(2)}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:11px;color:#6b7280">Balance Due</div>
+        <div style="font-size:18px;font-weight:700;color:${balance > 0 ? '#dc2626' : '#15803d'}">$${Number(balance).toFixed(2)}</div>
+      </div>
+    </div>
+  ` : ''
+
   const paidHTML = invoice.status === 'paid' ? `
     <div style="margin-top:28px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px">
       <p style="color:#15803d;font-weight:600;font-size:14px;margin:0">PAID${invoice.paid_at ? ` — ${new Date(invoice.paid_at).toLocaleDateString()}` : ''}</p>
@@ -114,6 +156,8 @@ function generateHTML(invoice, authorName) {
     </div>
     ${lineItemHTML}
     ${invoice.notes ? `<div style="margin-top:28px"><h3 style="font-size:13px;font-weight:600;color:#6b7280;margin:0 0 8px;text-transform:uppercase;letter-spacing:.05em">Notes</h3><p style="font-size:14px;color:#374151;white-space:pre-wrap;margin:0">${invoice.notes}</p></div>` : ''}
+    ${paymentsHTML}
+    ${balanceHTML}
     ${paymentHTML}
     ${paidHTML}
   </div>
@@ -122,7 +166,7 @@ function generateHTML(invoice, authorName) {
 }
 
 // ── Invoice Form Modal ──────────────────────────────────────────────────────
-function InvoiceModal({ invoice, proposals, onClose, onSave }) {
+function InvoiceModal({ invoice, proposals, products = [], onClose, onSave }) {
   const [title, setTitle] = useState(invoice?.title || '')
   const [proposalId, setProposalId] = useState(invoice?.proposal_id || '')
   const [lineItems, setLineItems] = useState(
@@ -230,8 +274,36 @@ function InvoiceModal({ invoice, proposals, onClose, onSave }) {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-medium text-gray-700">Line Items</label>
-              <button type="button" onClick={() => setLineItems(l => [...l, newLineItem()])}
-                className="text-xs text-teal hover:underline">+ Add item</button>
+              <div className="flex items-center gap-2">
+                {products.length > 0 && (
+                  <select
+                    className="text-xs border rounded px-2 py-1"
+                    onChange={(e) => {
+                      const pid = e.target.value
+                      if (!pid) return
+                      const prod = products.find(p => p.id === pid)
+                      if (prod) {
+                        setLineItems(l => [...l, {
+                          id: Math.random().toString(36).slice(2),
+                          description: prod.name + (prod.description ? ` — ${prod.description}` : ''),
+                          quantity: 1,
+                          rate: Number(prod.price) || 0,
+                          tax: Number(prod.tax_rate) || 0,
+                          discount: 0,
+                        }])
+                      }
+                      e.target.value = ''
+                    }}
+                  >
+                    <option value="">+ Add from library</option>
+                    {products.map(p => (
+                      <option key={p.id} value={p.id}>{p.name} (${Number(p.price).toFixed(2)})</option>
+                    ))}
+                  </select>
+                )}
+                <button type="button" onClick={() => setLineItems(l => [...l, newLineItem()])}
+                  className="text-xs text-teal hover:underline">+ Add item</button>
+              </div>
             </div>
             <div className="space-y-2">
               {lineItems.map(item => (
@@ -389,6 +461,70 @@ function StripeModal({ invoice, onClose, onSave }) {
   )
 }
 
+// ── Record Payment Modal ─────────────────────────────────────────────────────
+function RecordPaymentModal({ invoice, onClose, onSave }) {
+  const [amount, setAmount] = useState('')
+  const [method, setMethod] = useState('stripe')
+  const [transactionId, setTransactionId] = useState('')
+  const [saving, setSaving] = useState(false)
+  const { token } = useAuth()
+
+  async function handleSave() {
+    if (!amount || Number(amount) <= 0) return
+    setSaving(true)
+    try {
+      const res = await axios.post(`/api/invoices/${invoice.id}/payments`,
+        { amount: Number(amount), method, transaction_id: transactionId || null },
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+      onSave(res.data)
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to record payment')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+        <h2 className="text-lg font-semibold text-navy mb-4">Record Payment</h2>
+        <p className="text-sm text-gray-500 mb-3">{invoice.invoice_number} — {invoice.title}</p>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Amount</label>
+            <input type="number" min="0" step="any" value={amount} onChange={e => setAmount(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Method</label>
+            <select value={method} onChange={e => setMethod(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal">
+              <option value="stripe">Stripe</option>
+              <option value="paypal">PayPal</option>
+              <option value="bank_transfer">Bank Transfer</option>
+              <option value="cash">Cash</option>
+              <option value="check">Check</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-600 mb-1">Transaction ID (optional)</label>
+            <input value={transactionId} onChange={e => setTransactionId(e.target.value)}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal" />
+          </div>
+        </div>
+        <div className="flex justify-end gap-3 mt-4">
+          <button onClick={onClose} className="px-4 py-2 text-sm border rounded-lg text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            className="px-4 py-2 text-sm bg-teal text-white rounded-lg hover:bg-teal/90 disabled:opacity-50">
+            {saving ? 'Saving…' : 'Record Payment'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Page ────────────────────────────────────────────────────────────────
 export default function Invoices() {
   const { token } = useAuth()
@@ -401,11 +537,14 @@ export default function Invoices() {
   const [editingInvoice, setEditingInvoice] = useState(null)
   const [previewInvoice, setPreviewInvoice] = useState(null)
   const [stripeInvoice, setStripeInvoice] = useState(null)
+  const [recordPaymentInvoice, setRecordPaymentInvoice] = useState(null)
+  const [paymentInvoice, setPaymentInvoice] = useState(null)
   const [tab, setTab] = useState('invoices')
   const [contacts, setContacts] = useState([])
   const [deals, setDeals] = useState([])
   const [vendors, setVendors] = useState([])
   const [categories, setCategories] = useState([])
+  const [products, setProducts] = useState([])
 
   const headers = { Authorization: `Bearer ${token}` }
 
@@ -414,13 +553,14 @@ export default function Invoices() {
     try {
       const params = {}
       if (filterStatus) params.status = filterStatus
-      const [invRes, propRes, contRes, dealRes, vendRes, catRes] = await Promise.all([
+      const [invRes, propRes, contRes, dealRes, vendRes, catRes, prodRes] = await Promise.all([
         axios.get('/api/invoices', { headers, params }),
         axios.get('/api/proposals', { headers }),
         axios.get('/api/contacts', { headers }).catch(() => ({ data: [] })),
         axios.get('/api/deals', { headers }).catch(() => ({ data: [] })),
         axios.get('/api/invoices/vendors', { headers }).catch(() => ({ data: [] })),
         axios.get('/api/invoices/expense-categories', { headers }).catch(() => ({ data: [] })),
+        axios.get('/api/invoices/products/all', { headers }).catch(() => ({ data: [] })),
       ])
       setInvoices(invRes.data)
       setProposals(propRes.data.filter(p => p.status === 'signed'))
@@ -428,6 +568,7 @@ export default function Invoices() {
       setDeals(dealRes.data)
       setVendors(vendRes.data)
       setCategories(catRes.data)
+      setProducts(prodRes.data)
     } catch (err) {
       console.error(err)
     } finally {
@@ -505,7 +646,7 @@ export default function Invoices() {
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b mb-4">
-        {['invoices', 'recurring', 'subscriptions', 'expenses', 'vendors'].map(t => (
+        {['invoices', 'recurring', 'subscriptions', 'expenses', 'vendors', 'products'].map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -530,6 +671,10 @@ export default function Invoices() {
 
       {tab === 'vendors' && (
         <Vendors onReload={load} />
+      )}
+
+      {tab === 'products' && (
+        <Products onReload={load} />
       )}
 
       {tab === 'invoices' && (
@@ -636,6 +781,12 @@ export default function Invoices() {
                             ✏️
                           </button>
                         )}
+                        {inv.status !== 'paid' && inv.status !== 'cancelled' && (
+                          <button onClick={() => setRecordPaymentInvoice(inv)}
+                            className="text-xs text-gray-400 hover:text-green-600 transition-colors" title="Record Payment">
+                            💵
+                          </button>
+                        )}
                         <button onClick={() => handleDelete(inv.id)}
                           className="text-xs text-gray-300 hover:text-red-500 transition-colors" title="Delete">
                           🗑
@@ -654,6 +805,7 @@ export default function Invoices() {
         <InvoiceModal
           invoice={editingInvoice}
           proposals={proposals}
+          products={products}
           onClose={() => { setShowModal(false); setEditingInvoice(null) }}
           onSave={handleSave}
         />
@@ -662,16 +814,18 @@ export default function Invoices() {
         <PreviewModal invoice={previewInvoice} onClose={() => setPreviewInvoice(null)} />
       )}
       {stripeInvoice && (
-        <StripeModal
+        <StripePaymentLinkModal
           invoice={stripeInvoice}
           onClose={() => setStripeInvoice(null)}
-          onSave={saved => {
-            setInvoices(inv => inv.map(i => i.id === saved.id ? saved : i))
-            setStripeInvoice(null)
-          }}
+          onUpdate={handleSave}
         />
       )}
-      </>
+      {recordPaymentInvoice && (
+        <RecordPaymentModal
+          invoice={recordPaymentInvoice}
+          onClose={() => setRecordPaymentInvoice(null)}
+          onSave={() => { setRecordPaymentInvoice(null); loadInvoices() }}
+        />
       )}
     </div>
   )

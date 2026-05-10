@@ -59,7 +59,32 @@ router.get('/:id', auth, async (req, res) => {
       WHERE i.id = $1 AND i.user_id = $2
     `, [req.params.id, req.user.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    res.json(result.rows[0]);
+    const invoice = result.rows[0];
+
+    // Load payments
+    let payments = [];
+    try {
+      const payRes = await pool.query(
+        `SELECT * FROM invoice_payments WHERE invoice_id = $1 ORDER BY payment_date DESC, created_at DESC`,
+        [req.params.id]
+      );
+      payments = payRes.rows;
+    } catch (_) { /* table may not exist */ }
+
+    // Calculate totals
+    const lineTotal = (items) => items.reduce((sum, item) => {
+      const gross = Number(item.quantity || 0) * Number(item.rate || 0);
+      const discounted = gross * (1 - Number(item.discount || 0) / 100);
+      return sum + discounted * (1 + Number(item.tax || 0) / 100);
+    }, 0);
+    const total = lineTotal(invoice.line_items || []);
+    const paid = payments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    invoice.payments = payments;
+    invoice.total = total;
+    invoice.paid = paid;
+    invoice.balance = Math.max(0, total - paid);
+
+    res.json(invoice);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -592,6 +617,138 @@ router.delete('/expense-categories/:id', auth, async (req, res) => {
       'DELETE FROM expense_categories WHERE id=$1 AND user_id=$2',
       [req.params.id, req.user.id]
     );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Products (Item Library) ─────────────────────────────────────
+
+router.get('/products/all', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM products WHERE user_id=$1 ORDER BY name ASC',
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/products', auth, async (req, res) => {
+  const { name, description, sku, cost, price, tax_rate, unit } = req.body || {};
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO products (user_id, name, description, sku, cost, price, tax_rate, unit)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [req.user.id, name.trim(), description || null, sku || null, cost || 0, price || 0, tax_rate || 0, unit || 'item']
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/products/:id', auth, async (req, res) => {
+  const { name, description, sku, cost, price, tax_rate, unit } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE products
+         SET name=COALESCE($1,name), description=COALESCE($2,description), sku=COALESCE($3,sku),
+             cost=COALESCE($4,cost), price=COALESCE($5,price), tax_rate=COALESCE($6,tax_rate),
+             unit=COALESCE($7,unit), updated_at=NOW()
+       WHERE id=$8 AND user_id=$9 RETURNING *`,
+      [name, description, sku, cost, price, tax_rate, unit, req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Product not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/products/:id', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM products WHERE id=$1 AND user_id=$2 RETURNING name',
+      [req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Product not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Invoice Payments (Partial Payments) ─────────────────────────
+
+router.get('/:id/payments', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM invoice_payments WHERE invoice_id=$1 ORDER BY payment_date DESC, created_at DESC',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/payments', auth, async (req, res) => {
+  const { amount, payment_date, method, transaction_id, notes } = req.body || {};
+  if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'Amount must be greater than 0' });
+  try {
+    // Verify invoice exists and belongs to user
+    const invRes = await pool.query(
+      'SELECT * FROM invoices WHERE id=$1 AND user_id=$2',
+      [req.params.id, req.user.id]
+    );
+    if (!invRes.rows[0]) return res.status(404).json({ error: 'Invoice not found' });
+
+    const { rows } = await pool.query(
+      `INSERT INTO invoice_payments (invoice_id, amount, payment_date, method, transaction_id, notes)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [req.params.id, amount, payment_date || new Date().toISOString().slice(0,10), method || 'other', transaction_id || null, notes || null]
+    );
+
+    // Auto-update invoice status if fully paid
+    const lineTotal = (items) => items.reduce((sum, item) => {
+      const gross = Number(item.quantity || 0) * Number(item.rate || 0);
+      const discounted = gross * (1 - Number(item.discount || 0) / 100);
+      return sum + discounted * (1 + Number(item.tax || 0) / 100);
+    }, 0);
+    const total = lineTotal(invRes.rows[0].line_items || []);
+    const payRes = await pool.query(
+      'SELECT COALESCE(SUM(amount),0) AS paid FROM invoice_payments WHERE invoice_id=$1',
+      [req.params.id]
+    );
+    const paid = Number(payRes.rows[0].paid);
+    if (paid >= total && invRes.rows[0].status !== 'paid') {
+      await pool.query(
+        `UPDATE invoices SET status='paid', paid_at=NOW() WHERE id=$1`,
+        [req.params.id]
+      );
+    }
+
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/payments/:paymentId', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `DELETE FROM invoice_payments
+       WHERE id=$1 AND invoice_id=$2
+       AND invoice_id IN (SELECT id FROM invoices WHERE id=$2 AND user_id=$3)
+       RETURNING id`,
+      [req.params.paymentId, req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Payment not found' });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
