@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import AskAIBtn from '../components/AskAIBtn'
+import RecurringInvoices from '../components/invoices/RecurringInvoices'
+import Subscriptions from '../components/invoices/Subscriptions'
 
 const STATUS_COLORS = {
   draft: 'bg-gray-100 text-gray-600',
@@ -397,6 +399,9 @@ export default function Invoices() {
   const [editingInvoice, setEditingInvoice] = useState(null)
   const [previewInvoice, setPreviewInvoice] = useState(null)
   const [stripeInvoice, setStripeInvoice] = useState(null)
+  const [tab, setTab] = useState('invoices')
+  const [contacts, setContacts] = useState([])
+  const [deals, setDeals] = useState([])
 
   const headers = { Authorization: `Bearer ${token}` }
 
@@ -405,12 +410,16 @@ export default function Invoices() {
     try {
       const params = {}
       if (filterStatus) params.status = filterStatus
-      const [invRes, propRes] = await Promise.all([
+      const [invRes, propRes, contRes, dealRes] = await Promise.all([
         axios.get('/api/invoices', { headers, params }),
         axios.get('/api/proposals', { headers }),
+        axios.get('/api/contacts', { headers }).catch(() => ({ data: [] })),
+        axios.get('/api/deals', { headers }).catch(() => ({ data: [] })),
       ])
       setInvoices(invRes.data)
       setProposals(propRes.data.filter(p => p.status === 'signed'))
+      setContacts(contRes.data)
+      setDeals(dealRes.data)
     } catch (err) {
       console.error(err)
     } finally {
@@ -486,6 +495,29 @@ export default function Invoices() {
         </button>
       </div>
 
+      {/* Tabs */}
+      <div className="flex items-center gap-1 border-b mb-4">
+        {['invoices', 'recurring', 'subscriptions'].map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-4 py-2 text-sm capitalize ${tab === t ? 'border-b-2 border-teal text-teal font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'recurring' && (
+        <RecurringInvoices token={token} contacts={contacts} deals={deals} proposals={proposals} />
+      )}
+
+      {tab === 'subscriptions' && (
+        <Subscriptions token={token} contacts={contacts} />
+      )}
+
+      {tab === 'invoices' && (
+      <>
       {/* Stats bar */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         {['draft', 'sent', 'paid', 'overdue'].map(s => (
@@ -622,6 +654,8 @@ export default function Invoices() {
             setStripeInvoice(null)
           }}
         />
+      )}
+      </>
       )}
     </div>
   )

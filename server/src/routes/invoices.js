@@ -174,4 +174,239 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
+// ── Recurring Invoices ───────────────────────────────────────────
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split('T')[0];
+}
+function addMonths(date, months) {
+  const d = new Date(date);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().split('T')[0];
+}
+function nextDate(date, frequency) {
+  switch (frequency) {
+    case 'weekly': return addDays(date, 7);
+    case 'biweekly': return addDays(date, 14);
+    case 'monthly': return addMonths(date, 1);
+    case 'quarterly': return addMonths(date, 3);
+    case 'semiannually': return addMonths(date, 6);
+    case 'annually': return addMonths(date, 12);
+    default: return addMonths(date, 1);
+  }
+}
+
+router.get('/recurring/all', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT ri.*, c.name AS contact_name, d.title AS deal_title
+       FROM recurring_invoices ri
+       LEFT JOIN contacts c ON c.id = ri.contact_id
+       LEFT JOIN deals d ON d.id = ri.deal_id
+       WHERE ri.user_id = $1
+       ORDER BY ri.next_send_date ASC`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing recurring invoices:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/recurring', auth, async (req, res) => {
+  const { title, deal_id, contact_id, frequency, start_date, end_date, line_items, notes, due_days, auto_send } = req.body || {};
+  if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
+  if (!frequency) return res.status(400).json({ error: 'Frequency is required' });
+  if (!start_date) return res.status(400).json({ error: 'Start date is required' });
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO recurring_invoices (user_id, deal_id, contact_id, title, frequency, start_date, end_date, next_send_date, line_items, notes, due_days, auto_send)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING *`,
+      [req.user.id, deal_id || null, contact_id || null, title.trim(), frequency, start_date, end_date || null, start_date, JSON.stringify(line_items || []), notes || null, due_days || 14, auto_send || false]
+    );
+    logAction(req.user.id, req.user.email, 'create', 'recurring_invoice', rows[0].id, rows[0].title);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('Error creating recurring invoice:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/recurring/:id', auth, async (req, res) => {
+  const { title, deal_id, contact_id, frequency, end_date, line_items, notes, due_days, auto_send, status, next_send_date } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE recurring_invoices
+         SET title = COALESCE($1, title),
+             deal_id = COALESCE($2, deal_id),
+             contact_id = COALESCE($3, contact_id),
+             frequency = COALESCE($4, frequency),
+             end_date = COALESCE($5, end_date),
+             line_items = COALESCE($6, line_items),
+             notes = COALESCE($7, notes),
+             due_days = COALESCE($8, due_days),
+             auto_send = COALESCE($9, auto_send),
+             status = COALESCE($10, status),
+             next_send_date = COALESCE($11, next_send_date),
+             updated_at = NOW()
+       WHERE id = $12 AND user_id = $13
+       RETURNING *`,
+      [title, deal_id, contact_id, frequency, end_date, line_items ? JSON.stringify(line_items) : null, notes, due_days, auto_send, status, next_send_date, req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'update', 'recurring_invoice', rows[0].id, rows[0].title);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error updating recurring invoice:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/recurring/:id', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM recurring_invoices WHERE id=$1 AND user_id=$2 RETURNING title',
+      [req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'recurring_invoice', req.params.id, rows[0].title);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Generate invoice from recurring invoice
+router.post('/recurring/:id/generate', auth, async (req, res) => {
+  try {
+    const { rows: riRows } = await pool.query(
+      `SELECT * FROM recurring_invoices WHERE id = $1 AND user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (!riRows[0]) return res.status(404).json({ error: 'Recurring invoice not found' });
+    const ri = riRows[0];
+
+    // Generate invoice number
+    const seqResult = await pool.query(`SELECT nextval('invoice_number_seq') AS num`);
+    const invoice_number = `INV-${seqResult.rows[0].num}`;
+
+    // Calculate due date
+    const dueDate = ri.due_days ? addDays(ri.next_send_date, ri.due_days) : null;
+
+    const { rows: invRows } = await pool.query(
+      `INSERT INTO invoices (user_id, deal_id, invoice_number, title, line_items, notes, due_date, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft') RETURNING *`,
+      [req.user.id, ri.deal_id, invoice_number, ri.title, JSON.stringify(ri.line_items), ri.notes, dueDate]
+    );
+    const invoice = invRows[0];
+
+    // Log generation
+    await pool.query(
+      `INSERT INTO recurring_invoice_logs (recurring_invoice_id, invoice_id, status) VALUES ($1, $2, 'generated')`,
+      [ri.id, invoice.id]
+    );
+
+    // Advance next_send_date
+    const newNext = nextDate(ri.next_send_date, ri.frequency);
+    let newStatus = ri.status;
+    if (ri.end_date && newNext > ri.end_date) newStatus = 'completed';
+    await pool.query(
+      `UPDATE recurring_invoices SET next_send_date = $1, status = $2, updated_at = NOW() WHERE id = $3`,
+      [newNext, newStatus, ri.id]
+    );
+
+    logAction(req.user.id, req.user.email, 'generate', 'invoice_from_recurring', invoice.id, ri.title);
+    res.status(201).json(invoice);
+  } catch (err) {
+    console.error('Error generating invoice:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Subscriptions ────────────────────────────────────────────────
+
+router.get('/subscriptions/all', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.*, c.name AS contact_name
+       FROM subscriptions s
+       LEFT JOIN contacts c ON c.id = s.contact_id
+       WHERE s.user_id = $1
+       ORDER BY s.next_billing_date ASC`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing subscriptions:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/subscriptions', auth, async (req, res) => {
+  const { contact_id, plan_name, description, amount, frequency, start_date, end_date } = req.body || {};
+  if (!contact_id) return res.status(400).json({ error: 'contact_id is required' });
+  if (!plan_name?.trim()) return res.status(400).json({ error: 'Plan name is required' });
+  if (!amount || amount <= 0) return res.status(400).json({ error: 'Amount must be > 0' });
+  if (!frequency) return res.status(400).json({ error: 'Frequency is required' });
+  if (!start_date) return res.status(400).json({ error: 'Start date is required' });
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO subscriptions (user_id, contact_id, plan_name, description, amount, frequency, start_date, end_date, next_billing_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [req.user.id, contact_id, plan_name.trim(), description || null, amount, frequency, start_date, end_date || null, start_date]
+    );
+    logAction(req.user.id, req.user.email, 'create', 'subscription', rows[0].id, rows[0].plan_name);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('Error creating subscription:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.put('/subscriptions/:id', auth, async (req, res) => {
+  const { plan_name, description, amount, frequency, end_date, status, next_billing_date } = req.body || {};
+  try {
+    const { rows } = await pool.query(
+      `UPDATE subscriptions
+         SET plan_name = COALESCE($1, plan_name),
+             description = COALESCE($2, description),
+             amount = COALESCE($3, amount),
+             frequency = COALESCE($4, frequency),
+             end_date = COALESCE($5, end_date),
+             status = COALESCE($6, status),
+             next_billing_date = COALESCE($7, next_billing_date),
+             updated_at = NOW()
+       WHERE id = $8 AND user_id = $9
+       RETURNING *`,
+      [plan_name, description, amount, frequency, end_date, status, next_billing_date, req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'update', 'subscription', rows[0].id, rows[0].plan_name);
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error updating subscription:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/subscriptions/:id', auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM subscriptions WHERE id=$1 AND user_id=$2 RETURNING plan_name',
+      [req.params.id, req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'subscription', req.params.id, rows[0].plan_name);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;
