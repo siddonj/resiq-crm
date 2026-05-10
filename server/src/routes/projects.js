@@ -478,6 +478,23 @@ router.post('/', async (req, res) => {
   }
 });
 
+// GET /api/projects/templates (must be BEFORE /:id)
+router.get('/templates', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.*, u.name AS owner_name
+       FROM projects p
+       LEFT JOIN users u ON u.id = p.owner_id
+       WHERE p.is_template = TRUE
+       ORDER BY p.created_at DESC`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing templates:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // GET /api/projects/:id
 router.get('/:id', async (req, res) => {
   try {
@@ -1517,25 +1534,6 @@ router.delete('/:id/tasks/:taskId/time-entries/:entryId', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting time entry:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// ── Templates ──────────────────────────────────────────────────
-
-// GET /api/projects/templates
-router.get('/templates', async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT p.*, u.name AS owner_name
-       FROM projects p
-       LEFT JOIN users u ON u.id = p.owner_id
-       WHERE p.is_template = TRUE
-       ORDER BY p.created_at DESC`
-    );
-    res.json(rows);
-  } catch (err) {
-    console.error('Error listing templates:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
