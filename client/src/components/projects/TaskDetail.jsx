@@ -10,6 +10,7 @@ const TABS = [
   { key: 'assignees', label: 'Assignees' },
   { key: 'dependencies', label: 'Dependencies' },
   { key: 'relations', label: 'Relations' },
+  { key: 'time', label: 'Time' },
 ]
 
 const RELATION_TYPES = [
@@ -66,6 +67,13 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
   const [relDelay, setRelDelay] = useState('')
   const [relations, setRelations] = useState([])
 
+  // Time tracking state
+  const [timeEntries, setTimeEntries] = useState([])
+  const [logHours, setLogHours] = useState('')
+  const [logDescription, setLogDescription] = useState('')
+  const [logBillable, setLogBillable] = useState(true)
+  const [logDate, setLogDate] = useState(() => new Date().toISOString().slice(0, 10))
+
   const [loadingTab, setLoadingTab] = useState({})
 
   const loading = (key) => !!loadingTab[key]
@@ -78,6 +86,7 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
     if (tab === 'assignees') await loadAssignees()
     if (tab === 'dependencies') await loadDeps()
     if (tab === 'relations') await loadRelations()
+    if (tab === 'time') await loadTimeEntries()
   }
 
   useEffect(() => { loadTabData(activeTab) }, [activeTab])
@@ -278,6 +287,52 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
   const availableDepTasks = tasks.filter((t) => t.id !== task.id && !linkedDepIds.has(t.id))
   const linkedRelIds = new Set(relations.map((r) => r.to_task_id === task.id ? r.from_task_id : r.to_task_id))
   const availableRelTasks = tasks.filter((t) => t.id !== task.id && !linkedRelIds.has(t.id))
+
+  // ── Time Entries ─────────────────────────────────────────────
+
+  const loadTimeEntries = async () => {
+    setLoading('time', true)
+    try {
+      const { data } = await axios.get(`${base}/time-entries`, headers)
+      setTimeEntries(data)
+    } catch { setError('Failed to load time entries') }
+    finally { setLoading('time', false) }
+  }
+
+  const handleAddTimeEntry = async () => {
+    if (!logHours || isNaN(logHours) || Number(logHours) <= 0) {
+      setError('Hours must be a positive number')
+      return
+    }
+    try {
+      await axios.post(`${base}/time-entries`, {
+        hours: Number(logHours),
+        description: logDescription,
+        billable: logBillable,
+        logged_at: logDate,
+      }, headers)
+      setLogHours('')
+      setLogDescription('')
+      setLogBillable(true)
+      setLogDate(new Date().toISOString().slice(0, 10))
+      loadTimeEntries()
+      onTaskUpdated?.({ ...task, spent_hours: (task.spent_hours || 0) + Number(logHours) })
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to log time')
+    }
+  }
+
+  const handleDeleteTimeEntry = async (entryId) => {
+    try {
+      await axios.delete(`${base}/time-entries/${entryId}`, headers)
+      loadTimeEntries()
+    } catch { setError('Failed to delete time entry') }
+  }
+
+  const totalLoggedHours = timeEntries.reduce((sum, e) => sum + Number(e.hours || 0), 0)
+  const estimated = Number(task.estimated_hours || 0)
+  const spent = Number(task.spent_hours || 0)
+  const timeProgress = estimated > 0 ? Math.min(100, Math.round((spent / estimated) * 100)) : 0
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-start justify-end z-50">
@@ -668,6 +723,105 @@ export default function TaskDetail({ projectId, task, tasks = [], users = [], ty
                       </div>
                     )
                   })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'time' && (
+            <div className="space-y-4">
+              {/* Spent vs Estimated */}
+              {estimated > 0 && (
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span className="text-gray-700">{spent.toFixed(1)}h spent</span>
+                    <span className="text-gray-500">of {estimated.toFixed(1)}h estimated</span>
+                  </div>
+                  <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${timeProgress > 100 ? 'bg-red-500' : 'bg-indigo-500'}`}
+                      style={{ width: `${Math.min(100, timeProgress)}%` }}
+                    />
+                  </div>
+                  {timeProgress > 100 && (
+                    <div className="text-xs text-red-600 mt-1">Over budget by {(spent - estimated).toFixed(1)}h</div>
+                  )}
+                </div>
+              )}
+
+              {/* Log time form */}
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    step="0.25"
+                    min="0.25"
+                    placeholder="Hours"
+                    className="w-24 rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                    value={logHours}
+                    onChange={(e) => setLogHours(e.target.value)}
+                  />
+                  <input
+                    type="date"
+                    className="w-36 rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                    value={logDate}
+                    onChange={(e) => setLogDate(e.target.value)}
+                  />
+                  <label className="flex items-center gap-1 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={logBillable}
+                      onChange={(e) => setLogBillable(e.target.checked)}
+                      className="h-4 w-4 text-indigo-600"
+                    />
+                    Billable
+                  </label>
+                </div>
+                <input
+                  type="text"
+                  placeholder="What did you work on?"
+                  className="w-full rounded-md border-gray-300 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 text-sm"
+                  value={logDescription}
+                  onChange={(e) => setLogDescription(e.target.value)}
+                />
+                <button
+                  onClick={handleAddTimeEntry}
+                  className="px-3 py-1.5 text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 w-fit"
+                >
+                  Log Time
+                </button>
+              </div>
+
+              {/* Time entries list */}
+              {loading('time') ? (
+                <div className="text-sm text-gray-600">Loading…</div>
+              ) : timeEntries.length === 0 ? (
+                <div className="text-sm text-gray-500">No time logged yet.</div>
+              ) : (
+                <div className="space-y-1">
+                  {timeEntries.map((e) => (
+                    <div key={e.id} className="flex items-center justify-between py-2 px-3 bg-gray-50 rounded text-sm">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-900">{Number(e.hours).toFixed(2)}h</span>
+                          {e.billable === false && <span className="text-[10px] bg-gray-200 text-gray-600 rounded px-1">Non-billable</span>}
+                          <span className="text-xs text-gray-500">{new Date(e.logged_at).toLocaleDateString()}</span>
+                        </div>
+                        {e.description && <div className="text-xs text-gray-600 mt-0.5 truncate">{e.description}</div>}
+                        <div className="text-[10px] text-gray-400">{e.user_name || e.email}</div>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteTimeEntry(e.id)}
+                        className="text-xs text-red-500 hover:text-red-700 ml-2"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between py-2 px-3 text-sm font-medium text-gray-700 border-t">
+                    <span>Total</span>
+                    <span>{totalLoggedHours.toFixed(2)}h</span>
+                  </div>
                 </div>
               )}
             </div>

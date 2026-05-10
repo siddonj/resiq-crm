@@ -20,6 +20,8 @@ export default function GridView({ columns = [], tasks = [], types = [], workflo
   const [bulkStatusTarget, setBulkStatusTarget] = useState('')
   const [expandedIds, setExpandedIds] = useState(new Set())
   const [subtaskInputs, setSubtaskInputs] = useState({})
+  const [quickLogTaskId, setQuickLogTaskId] = useState(null)
+  const [quickLogHours, setQuickLogHours] = useState('')
 
   const orderedColumns = useMemo(() => [...columns].sort((a, b) => a.position - b.position), [columns])
 
@@ -188,6 +190,21 @@ export default function GridView({ columns = [], tasks = [], types = [], workflo
     onAddTask(payload)
     setSubtaskInputs((p) => ({ ...p, [parentId]: '' }))
     setExpandedIds((prev) => new Set(prev).add(parentId))
+  }
+
+  const handleQuickLog = async (taskId) => {
+    if (!quickLogHours || isNaN(quickLogHours) || Number(quickLogHours) <= 0) return
+    try {
+      await axios.post(`/api/projects/${projectId}/tasks/${taskId}/time-entries`, {
+        hours: Number(quickLogHours),
+        description: 'Quick log from grid',
+      }, headers)
+      setQuickLogTaskId(null)
+      setQuickLogHours('')
+      onReload?.()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to log time')
+    }
   }
 
   const handleValueChange = (task, column, rawValue) => {
@@ -470,6 +487,16 @@ export default function GridView({ columns = [], tasks = [], types = [], workflo
                         onChange={(e) => { e.stopPropagation(); onUpdateTask(task.id, { name: e.target.value }) }}
                         onClick={(e) => e.stopPropagation()}
                       />
+                      {task.estimated_hours > 0 && (
+                        <div className="flex items-center gap-1 ml-1" title={`${Number(task.spent_hours || 0).toFixed(1)}h / ${Number(task.estimated_hours).toFixed(1)}h`}>
+                          <div className="w-12 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full ${(task.spent_hours || 0) > task.estimated_hours ? 'bg-red-500' : 'bg-indigo-500'}`}
+                              style={{ width: `${Math.min(100, Math.round(((task.spent_hours || 0) / task.estimated_hours) * 100))}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                       {task.subtask_count > 0 && (
                         <span className="text-[10px] bg-gray-100 text-gray-600 rounded-full px-1.5 py-0.5 ml-1">
                           {task.subtask_count}
@@ -538,6 +565,41 @@ export default function GridView({ columns = [], tasks = [], types = [], workflo
                   ))}
                   <td className="px-3 py-2 align-top border-b" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-1">
+                      {quickLogTaskId === task.id ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            step="0.25"
+                            min="0.25"
+                            placeholder="h"
+                            className="w-14 text-xs rounded border-gray-300 py-0.5"
+                            value={quickLogHours}
+                            onChange={(e) => setQuickLogHours(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { handleQuickLog(task.id); e.preventDefault() } }}
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => handleQuickLog(task.id)}
+                            className="text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            onClick={() => { setQuickLogTaskId(null); setQuickLogHours('') }}
+                            className="text-xs px-1.5 py-0.5 rounded hover:bg-gray-100 text-gray-600"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => { setQuickLogTaskId(task.id); setQuickLogHours('') }}
+                          title="Quick log time"
+                          className="text-xs px-1.5 py-0.5 rounded hover:bg-gray-100 text-gray-600"
+                        >
+                          🕐
+                        </button>
+                      )}
                       <button
                         onClick={() => handleIndent(task.id)}
                         title="Indent (make subtask)"

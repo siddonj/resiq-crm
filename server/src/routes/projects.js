@@ -1281,4 +1281,59 @@ router.post('/:id/tasks/bulk-update', async (req, res) => {
   }
 });
 
+// ── Time Entries ───────────────────────────────────────────────
+
+router.get('/:id/tasks/:taskId/time-entries', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT pte.*, u.name AS user_name, u.email
+       FROM project_time_entries pte
+       JOIN users u ON u.id = pte.user_id
+       WHERE pte.task_id = $1
+       ORDER BY pte.logged_at DESC, pte.created_at DESC`,
+      [req.params.taskId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing time entries:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/tasks/:taskId/time-entries', async (req, res) => {
+  const { hours, description, billable, hourly_rate, logged_at } = req.body || {};
+  if (!hours || isNaN(hours) || Number(hours) <= 0) {
+    return res.status(400).json({ error: 'hours must be a positive number' });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO project_time_entries (task_id, user_id, hours, description, billable, hourly_rate, logged_at)
+       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, CURRENT_DATE))
+       RETURNING *`,
+      [req.params.taskId, req.user.id, Number(hours), description || null, billable !== false, hourly_rate || 0, logged_at || null]
+    );
+    logAction(req.user.id, req.user.email, 'create', 'time_entry', rows[0].id, `${hours}h`);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    console.error('Error creating time entry:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/:id/tasks/:taskId/time-entries/:entryId', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'DELETE FROM project_time_entries WHERE id = $1 AND task_id = $2 RETURNING id',
+      [req.params.entryId, req.params.taskId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Time entry not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'time_entry', rows[0].id, rows[0].id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting time entry:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;
