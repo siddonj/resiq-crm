@@ -1,5 +1,4 @@
-import { toInt } from '../utils/formatting.jsx'
-import { MULTIFAMILY_OBJECT_TYPES } from '../utils/formatting.jsx'
+import { toInt, MULTIFAMILY_OBJECT_TYPES } from '../utils/formatting.jsx'
 
 const MULTIFAMILY_EXPLORER_ENTITY_TYPES = [
   { value: 'contact', label: 'Contacts' },

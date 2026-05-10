@@ -283,6 +283,32 @@ export default function OutboundAutomation() {
   const notificationUnreadCount = toInt(notificationsQuery.data?.unreadCount)
   const loadingNotifications = notificationsQuery.isLoading
 
+  // Derived stat aliases
+  const slaCounts = slaSummary ?? {}
+  const leadsStats = analytics ?? {}
+  const campaignStats = analytics ?? {}
+  const emailLimit = analytics?.emailLimit ?? null
+  const linkedinLimit = analytics?.linkedinLimit ?? null
+  const linkedinWorkload = linkedinTaskBoard?.workload ?? {}
+  const linkedinApprovedTasks = linkedinTaskBoard?.approved ?? []
+  const linkedinDraftedTasks = linkedinTaskBoard?.drafted ?? []
+  const linkedinPendingTasks = linkedinTaskBoard?.pending ?? []
+  const linkedinCompletedTasks = linkedinTaskBoard?.completed ?? []
+  const filterScopedObjects = filters.objectType
+    ? multifamilyObjects.filter((o) => o.object_type === filters.objectType)
+    : multifamilyObjects
+  const allVisibleLeadsSelected =
+    leads.length > 0 && leads.every((l) => selectedLeadMap[l.id])
+  const openEnrollmentByLead = sequenceEnrollments.reduce((acc, e) => {
+    if (e.status === 'active' || e.status === 'paused') acc[e.lead_id] = e
+    return acc
+  }, {})
+  const multifamilyObjectsByType = multifamilyObjects.reduce((acc, o) => {
+    if (!acc[o.object_type]) acc[o.object_type] = []
+    acc[o.object_type].push(o)
+    return acc
+  }, {})
+
   // Effects for derived local state
   useEffect(() => {
     if (workspaceConfigQuery.data) {
@@ -765,7 +791,7 @@ export default function OutboundAutomation() {
     const falseAction = buildRuleAction(workflowForm.falseActionType, workflowForm.falseActionValue)
     const rawConditionValue = String(workflowForm.conditionValue || '').trim()
     const parsedConditionValue =
-      rawConditionValue !== '' && /^-?d+(.d+)?$/.test(rawConditionValue)
+      rawConditionValue !== '' && /^-?\d+(\.\d+)?$/.test(rawConditionValue)
         ? Number(rawConditionValue)
         : rawConditionValue
     const payload = {
@@ -989,7 +1015,7 @@ export default function OutboundAutomation() {
               refreshDataQualityMergeOperations()
               refreshMultifamilyObjects()
               refreshMultifamilyEntities()
-              fetchSelectedObjectAssociations()
+              objectAssociationsQuery.refetch()
             }}
             className="text-sm bg-teal text-white px-4 py-2 rounded-lg hover:bg-teal/90 transition-colors"
           >
