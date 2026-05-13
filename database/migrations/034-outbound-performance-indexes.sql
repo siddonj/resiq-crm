@@ -8,8 +8,8 @@ CREATE INDEX IF NOT EXISTS idx_outbound_leads_dedupe ON outbound_leads(user_id, 
 CREATE INDEX IF NOT EXISTS idx_lead_events_user_type_date ON lead_source_events(user_id, event_type, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_lead_events_lead ON lead_source_events(lead_id);
 
-CREATE INDEX IF NOT EXISTS idx_outbound_drafts_user_status ON outbound_drafts(user_id, status);
-CREATE INDEX IF NOT EXISTS idx_outbound_drafts_lead ON outbound_drafts(lead_id);
+CREATE INDEX IF NOT EXISTS idx_outbound_message_drafts_user_status ON outbound_message_drafts(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_outbound_message_drafts_lead ON outbound_message_drafts(lead_id);
 
 CREATE INDEX IF NOT EXISTS idx_outbound_sequence_enrollments_user ON outbound_sequence_enrollments(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_outbound_sequence_enrollments_lead ON outbound_sequence_enrollments(lead_id, status);
@@ -19,8 +19,8 @@ CREATE INDEX IF NOT EXISTS idx_campaigns_user_status ON outbound_campaigns(user_
 CREATE INDEX IF NOT EXISTS idx_data_quality_issues_user_status ON data_quality_issues(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_data_quality_issues_lead ON data_quality_issues(lead_id);
 
-CREATE INDEX IF NOT EXISTS idx_linkedin_tasks_user_status ON linkedin_tasks(user_id, status);
-CREATE INDEX IF NOT EXISTS idx_linkedin_tasks_lead ON linkedin_tasks(lead_id);
+CREATE INDEX IF NOT EXISTS idx_linkedin_outreach_tasks_user_status ON linkedin_outreach_tasks(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_linkedin_outreach_tasks_lead ON linkedin_outreach_tasks(lead_id);
 
 CREATE INDEX IF NOT EXISTS idx_attribution_touchpoints_user ON attribution_touchpoints(user_id, lead_id);
 CREATE INDEX IF NOT EXISTS idx_attribution_touchpoints_stage ON attribution_touchpoints(attribution_stage);
