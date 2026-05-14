@@ -1,5 +1,31 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+
+const POPULAR_SEARCHES = [
+  'add contact',
+  'import csv',
+  'create deal',
+  'workflow rules',
+  'sequence enroll',
+  'project templates',
+  'invite employee',
+  'gmail sync',
+  'client portal',
+]
+
+function tokenizeSearch(value) {
+  return String(value || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 2)
+}
+
+function faqMatchesSearch(item, rawSearch, tokens) {
+  if (!rawSearch) return true
+  const haystack = `${item.q} ${item.a}`.toLowerCase()
+  if (haystack.includes(rawSearch)) return true
+  return tokens.some((token) => haystack.includes(token))
+}
 
 const QUICK_START = [
   {
@@ -321,16 +347,37 @@ export default function Help() {
   const [contactForm, setContactForm] = useState({ name: '', email: '', message: '' })
   const [submitted, setSubmitted] = useState(false)
 
+  useEffect(() => {
+    const requestedTab = searchParams.get('tab')
+    const requestedSearch = searchParams.get('q') || ''
+    if (requestedTab && TABS.some((tab) => tab.id === requestedTab)) {
+      setActiveTab(requestedTab)
+    }
+    if (requestedSearch) {
+      setSearch(requestedSearch)
+      setOpenFaq(null)
+    }
+  }, [searchParams])
+
   const toggleFaq = (key) => setOpenFaq(openFaq === key ? null : key)
+
+  const normalizedSearch = useMemo(() => search.trim().toLowerCase(), [search])
+  const searchTokens = useMemo(() => tokenizeSearch(normalizedSearch), [normalizedSearch])
+
+  const applyTopicSearch = (value) => {
+    setSearch(value)
+    setActiveTab('faq')
+    setOpenFaq(null)
+  }
 
   const filteredFaqs = FAQS.map(cat => ({
     ...cat,
     items: cat.items.filter(item =>
-      !search ||
-      item.q.toLowerCase().includes(search.toLowerCase()) ||
-      item.a.toLowerCase().includes(search.toLowerCase())
+      faqMatchesSearch(item, normalizedSearch, searchTokens)
     ),
   })).filter(cat => cat.items.length > 0)
+
+  const totalFaqMatches = filteredFaqs.reduce((sum, category) => sum + category.items.length, 0)
 
   const handleContact = (e) => {
     e.preventDefault()
@@ -419,15 +466,54 @@ export default function Help() {
       {/* FAQ */}
       {activeTab === 'faq' && (
         <div className="space-y-6">
-          <input
-            type="text"
-            placeholder="Search questions..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
-          />
+          <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+            <input
+              type="text"
+              placeholder="Search questions (example: invite employee, create workflow, import csv)"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-gray-500">Popular topics:</span>
+              {POPULAR_SEARCHES.map((topic) => (
+                <button
+                  key={topic}
+                  onClick={() => applyTopicSearch(topic)}
+                  className="text-xs border border-teal/30 text-teal rounded-full px-2.5 py-1 hover:bg-teal/5"
+                >
+                  {topic}
+                </button>
+              ))}
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  className="text-xs border border-gray-200 text-gray-600 rounded-full px-2.5 py-1 hover:bg-gray-50"
+                >
+                  Clear search
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-gray-500">
+              {search ? `${totalFaqMatches} result(s) for "${search}".` : 'Browse by keyword or choose a popular topic to jump to answers faster.'}
+            </p>
+          </div>
           {filteredFaqs.length === 0 ? (
-            <p className="text-sm text-gray-400">No results for "{search}".</p>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+              <p className="text-sm text-amber-800 font-medium">No direct matches for "{search}".</p>
+              <p className="text-xs text-amber-700 mt-1">Try shorter keywords like "workflow", "pipeline", "contacts", or "invite".</p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {POPULAR_SEARCHES.slice(0, 5).map((topic) => (
+                  <button
+                    key={`fallback-${topic}`}
+                    onClick={() => applyTopicSearch(topic)}
+                    className="text-xs border border-amber-300 text-amber-800 rounded-full px-2.5 py-1 hover:bg-amber-100"
+                  >
+                    {topic}
+                  </button>
+                ))}
+              </div>
+            </div>
           ) : filteredFaqs.map(cat => (
             <div key={cat.category}>
               <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">{cat.category}</h3>

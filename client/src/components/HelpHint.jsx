@@ -1,9 +1,19 @@
 import { Link } from 'react-router-dom'
 
+function normalizeTopic(topic) {
+  return String(topic || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 2)
+    .slice(0, 4)
+    .join(' ')
+}
+
 function buildHelpHref({ topic, tab }) {
   const params = new URLSearchParams()
   if (tab) params.set('tab', tab)
-  if (topic) params.set('q', topic)
+  const normalizedTopic = normalizeTopic(topic)
+  if (normalizedTopic) params.set('q', normalizedTopic)
   const query = params.toString()
   return query ? `/help?${query}` : '/help'
 }
