@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
   toInt,
@@ -126,8 +127,37 @@ const CONDITION_OPERATORS = [
   { value: 'contains', label: 'Contains' },
 ]
 
+const OUTBOUND_WORKSPACES = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'leads', label: 'Leads' },
+  { id: 'execution', label: 'Execution' },
+  { id: 'data', label: 'Data & Quality' },
+  { id: 'admin', label: 'Admin' },
+  { id: 'all', label: 'Show All' },
+]
+
+const OUTBOUND_BASE_SEGMENT = 'outbound-automation'
+const WORKSPACE_IDS = new Set(OUTBOUND_WORKSPACES.map((workspace) => workspace.id))
+
+function getWorkspaceSegment(pathname) {
+  const segments = String(pathname || '')
+    .split('/')
+    .filter(Boolean)
+  const outboundIndex = segments.indexOf(OUTBOUND_BASE_SEGMENT)
+  if (outboundIndex < 0) return null
+  return segments[outboundIndex + 1] || null
+}
+
+function getWorkspaceFromPath(pathname) {
+  const segment = getWorkspaceSegment(pathname)
+  if (!segment) return 'overview'
+  return WORKSPACE_IDS.has(segment) ? segment : 'overview'
+}
+
 export default function OutboundAutomation() {
   const { token } = useAuth()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [busyKey, setBusyKey] = useState('')
@@ -212,6 +242,7 @@ export default function OutboundAutomation() {
     campaignMemberStatus: 'contacted',
   })
   const [selectedSequenceByLead, setSelectedSequenceByLead] = useState({})
+  const activeWorkspace = getWorkspaceFromPath(location.pathname)
 
   // React Query hooks
   const analyticsQuery = useOutboundAnalytics(token)
@@ -379,6 +410,13 @@ export default function OutboundAutomation() {
       setSelectedObjectAssociations(objectAssociationsQuery.data.associations ?? [])
     }
   }, [objectAssociationsQuery.data])
+
+  useEffect(() => {
+    const segment = getWorkspaceSegment(location.pathname)
+    if (segment && !WORKSPACE_IDS.has(segment)) {
+      navigate('/outbound-automation', { replace: true })
+    }
+  }, [location.pathname, navigate])
 
   // Mutations
   const rescoreLead = useRescoreLead(token)
@@ -593,6 +631,15 @@ export default function OutboundAutomation() {
   }
 
   const selectedLeadIds = Object.keys(selectedLeadMap).filter((id) => selectedLeadMap[id])
+  const showWorkspace = (workspaceId) => activeWorkspace === 'all' || activeWorkspace === workspaceId
+
+  const handleWorkspaceChange = (workspaceId) => {
+    if (workspaceId === 'overview') {
+      navigate('/outbound-automation')
+      return
+    }
+    navigate(`/outbound-automation/${workspaceId}`)
+  }
 
   const handleRunBulkAction = async () => {
     if (!selectedLeadIds.length) {
@@ -1045,6 +1092,31 @@ export default function OutboundAutomation() {
       )}
 
       <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-navy">Workspace View</h3>
+            <p className="text-xs text-brand-gray mt-0.5">Focus on one outbound workflow at a time.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {OUTBOUND_WORKSPACES.map((workspace) => (
+              <button
+                key={workspace.id}
+                onClick={() => handleWorkspaceChange(workspace.id)}
+                className={`text-xs rounded-lg px-3 py-1.5 border transition-colors ${
+                  activeWorkspace === workspace.id
+                    ? 'border-navy bg-navy text-white'
+                    : 'border-gray-200 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {workspace.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {showWorkspace('overview') && (
+      <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-navy">Saved Views</h3>
@@ -1104,7 +1176,9 @@ export default function OutboundAutomation() {
           </button>
         </div>
       </div>
+      )}
 
+      {showWorkspace('overview') && (
       <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -1154,7 +1228,9 @@ export default function OutboundAutomation() {
           </div>
         )}
       </div>
+      )}
 
+      {showWorkspace('overview') && (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-xl shadow-sm p-4">
           <p className="text-xs text-brand-gray">Total Leads</p>
@@ -1173,7 +1249,9 @@ export default function OutboundAutomation() {
           <p className="text-2xl font-bold text-navy">{toInt(analytics?.pendingLinkedInTasks)}</p>
         </div>
       </div>
+      )}
 
+      {showWorkspace('overview') && (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-white rounded-xl shadow-sm p-4">
           <p className="text-xs text-brand-gray">Campaigns</p>
@@ -1184,7 +1262,9 @@ export default function OutboundAutomation() {
           <p className="text-2xl font-bold text-navy">{toInt(campaignStats.active_campaigns)}</p>
         </div>
       </div>
+      )}
 
+      {showWorkspace('overview') && (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-white rounded-xl shadow-sm p-4">
           <p className="text-xs text-brand-gray">Daily Email Sends</p>
@@ -1201,7 +1281,9 @@ export default function OutboundAutomation() {
           <p className="text-xs text-brand-gray">Remaining: {toInt(linkedinLimit?.remaining)}</p>
         </div>
       </div>
+      )}
 
+      {showWorkspace('execution') && (
       <ForecastPanel
         forecastPeriod={forecastPeriod}
         setForecastPeriod={setForecastPeriod}
@@ -1222,7 +1304,9 @@ export default function OutboundAutomation() {
         attributionSequences={attributionSummary?.sequences ?? []}
         attributionPersonas={attributionSummary?.personas ?? []}
       />
+      )}
 
+      {showWorkspace('data') && (
       <MultifamilyExplorer
         multifamilyObjects={multifamilyObjects}
         multifamilyObjectCounts={multifamilySummary?.objectCounts ?? {}}
@@ -1247,7 +1331,9 @@ export default function OutboundAutomation() {
         handleBulkAssociateExplorerEntities={handleBulkAssociateExplorerEntities}
         handleToggleMultifamilyEntitySelection={handleToggleMultifamilyEntitySelection}
       />
+      )}
 
+      {showWorkspace('data') && (
       <DataQualityPanel
         dataQualityIssues={dataQualityIssues}
         dataQualityMergeOperations={dataQualityMergeOperations}
@@ -1265,7 +1351,9 @@ export default function OutboundAutomation() {
         handleDataQualityIssueStatus={handleDataQualityIssueStatus}
         handleMergeDuplicateIssue={handleMergeDuplicateIssue}
       />
+      )}
 
+      {showWorkspace('execution') && (
       <CampaignManager
         campaigns={campaigns}
         campaignForm={campaignForm}
@@ -1276,7 +1364,9 @@ export default function OutboundAutomation() {
         handleCreateCampaign={handleCreateCampaign}
         handleCampaignStatus={handleCampaignStatus}
       />
+      )}
 
+      {showWorkspace('execution') && (
       <SequenceManager
         sequences={sequences}
         sequenceEnrollments={sequenceEnrollments}
@@ -1285,7 +1375,9 @@ export default function OutboundAutomation() {
         busyKey={busyKey}
         handleSequenceStateChange={handleSequenceStateChange}
       />
+      )}
 
+      {showWorkspace('execution') && (
       <WorkflowRuleBuilder
         workflowRules={workflowRules}
         workflowForm={workflowForm}
@@ -1301,7 +1393,9 @@ export default function OutboundAutomation() {
         handleToggleWorkflowRule={handleToggleWorkflowRule}
         handleTestWorkflowRule={handleTestWorkflowRule}
       />
+      )}
 
+      {showWorkspace('leads') && (
       <div className="bg-white rounded-xl shadow-sm p-6">
         <h3 className="text-sm font-semibold text-navy mb-4">Import CSV</h3>
         <form onSubmit={handleImportCsv} className="grid grid-cols-1 md:grid-cols-5 gap-3">
@@ -1348,7 +1442,9 @@ export default function OutboundAutomation() {
           </div>
         )}
       </div>
+      )}
 
+      {showWorkspace('leads') && (
       <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
         <h3 className="text-sm font-semibold text-navy">Leads</h3>
         <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
@@ -1563,7 +1659,9 @@ export default function OutboundAutomation() {
           </>
         )}
       </div>
+      )}
 
+      {showWorkspace('leads') && (
       <DraftInbox
         draftInbox={draftInbox}
         draftInboxCounts={draftInboxSummary ?? {}}
@@ -1574,7 +1672,9 @@ export default function OutboundAutomation() {
         handleSendEmailDraft={handleSendEmailDraft}
         handleCompleteLinkedInTask={handleCompleteLinkedInTask}
       />
+      )}
 
+      {showWorkspace('leads') && (
       <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -1700,8 +1800,10 @@ export default function OutboundAutomation() {
           </div>
         )}
       </div>
+      )}
 
       {/* ── Workspace Config ─────────────────────────────────────────────── */}
+      {showWorkspace('admin') && (
       <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -1821,8 +1923,10 @@ export default function OutboundAutomation() {
           </p>
         )}
       </div>
+      )}
 
       {/* ── SLA Escalation Rules ─────────────────────────────────────────── */}
+      {showWorkspace('admin') && (
       <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -1893,8 +1997,10 @@ export default function OutboundAutomation() {
           </div>
         )}
       </div>
+      )}
 
       {/* ── Notifications ────────────────────────────────────────────────── */}
+      {showWorkspace('admin') && (
       <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -1963,6 +2069,7 @@ export default function OutboundAutomation() {
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }

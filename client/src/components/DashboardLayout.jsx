@@ -19,7 +19,7 @@ const navTabs = [
     id: 'automation',
     label: 'Automation',
     items: [
-      { to: '/outbound-automation', label: 'Outbound' },
+      { to: '/outbound-automation/leads', label: 'Outbound' },
       { to: '/agents', label: 'AI Agents' },
       { to: '/forms', label: 'Web Forms' },
     ],

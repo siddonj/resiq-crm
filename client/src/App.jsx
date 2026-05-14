@@ -51,8 +51,8 @@ function AppRoutes() {
         <Route path="pipeline" element={<Pipeline />} />
         <Route path="forecasting" element={<Forecasting />} />
         <Route path="analytics" element={<Analytics />} />
-        <Route path="workflows" element={<Navigate to="/outbound-automation" replace />} />
-        <Route path="sequences" element={<Navigate to="/outbound-automation" replace />} />
+        <Route path="workflows" element={<Navigate to="/outbound-automation/execution" replace />} />
+        <Route path="sequences" element={<Navigate to="/outbound-automation/execution" replace />} />
         <Route path="settings" element={<Settings />} />
         <Route path="teams" element={<Teams />} />
         <Route path="audit-logs" element={<AuditLogs />} />
@@ -71,7 +71,7 @@ function AppRoutes() {
         <Route path="calendar" element={<Calendar />} />
         <Route path="reddit-leads" element={<RedditLeads />} />
         <Route path="multi-source-leads" element={<MultiSourceLeads />} />
-        <Route path="outbound-automation" element={<OutboundAutomation />} />
+        <Route path="outbound-automation/*" element={<OutboundAutomation />} />
         <Route path="help" element={<Help />} />
       </Route>
     </Routes>
