@@ -1,0 +1,174 @@
+-- Migration 001: Initial schema
+-- Idempotent version of database/schema.sql.
+-- Ensures all base tables/types/extensions exist before subsequent migrations run.
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- ENUM types (CREATE TYPE has no IF NOT EXISTS; use DO blocks for idempotency)
+DO $$ BEGIN
+  CREATE TYPE contact_type AS ENUM ('prospect', 'partner', 'vendor');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE deal_stage AS ENUM ('lead', 'qualified', 'proposal', 'active', 'closed_won', 'closed_lost');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Base tables
+-- service_line is TEXT to support custom values (see migration 016-custom-service-lines.sql)
+
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'manager', 'user', 'viewer')),
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS contacts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  email TEXT,
+  phone TEXT,
+  company TEXT,
+  type contact_type DEFAULT 'prospect',
+  service_line TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS deals (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL,
+  title TEXT NOT NULL,
+  stage deal_stage DEFAULT 'lead',
+  value NUMERIC(12,2),
+  service_line TEXT,
+  close_date DATE,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS activities (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL,
+  deal_id UUID REFERENCES deals(id) ON DELETE SET NULL,
+  type TEXT NOT NULL,
+  description TEXT,
+  occurred_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS reminders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL,
+  deal_id UUID REFERENCES deals(id) ON DELETE SET NULL,
+  message TEXT NOT NULL,
+  remind_at TIMESTAMPTZ NOT NULL,
+  completed BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Email sync table for storing synced emails from Gmail
+CREATE TABLE IF NOT EXISTS emails (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  contact_id UUID REFERENCES contacts(id) ON DELETE SET NULL,
+  sender_email TEXT NOT NULL,
+  recipient_email TEXT NOT NULL,
+  subject TEXT,
+  body TEXT,
+  is_outbound BOOLEAN DEFAULT false,
+  gmail_id TEXT UNIQUE,
+  gmail_thread_id TEXT,
+  received_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_emails_user_id ON emails(user_id);
+CREATE INDEX IF NOT EXISTS idx_emails_contact_id ON emails(contact_id);
+CREATE INDEX IF NOT EXISTS idx_emails_gmail_id ON emails(gmail_id);
+
+-- Contact tagging system
+CREATE TABLE IF NOT EXISTS tags (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  color TEXT DEFAULT '#3B82F6',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(user_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS contact_tags (
+  contact_id UUID NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  tag_id UUID NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (contact_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tags_user_id ON tags(user_id);
+CREATE INDEX IF NOT EXISTS idx_contact_tags_contact_id ON contact_tags(contact_id);
+CREATE INDEX IF NOT EXISTS idx_contact_tags_tag_id ON contact_tags(tag_id);
+
+-- Team management
+CREATE TABLE IF NOT EXISTS teams (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  description TEXT,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(name)
+);
+
+CREATE TABLE IF NOT EXISTS team_members (
+  team_id UUID NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('lead', 'member')),
+  joined_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (team_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_members_team_id ON team_members(team_id);
+CREATE INDEX IF NOT EXISTS idx_team_members_user_id ON team_members(user_id);
+
+-- Audit logs
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  user_email TEXT NOT NULL,
+  action TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id UUID,
+  resource_name TEXT,
+  metadata JSONB DEFAULT '{}',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resource_type ON audit_logs(resource_type);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+
+-- Resource sharing
+CREATE TABLE IF NOT EXISTS shared_resources (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  resource_type TEXT NOT NULL CHECK (resource_type IN ('contact', 'deal')),
+  resource_id UUID NOT NULL,
+  shared_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  shared_with_user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  shared_with_team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
+  permission TEXT NOT NULL DEFAULT 'view' CHECK (permission IN ('view', 'edit')),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT must_have_target CHECK (
+    shared_with_user_id IS NOT NULL OR shared_with_team_id IS NOT NULL
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_shared_resources_resource ON shared_resources(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_shared_resources_with_user ON shared_resources(shared_with_user_id);
+CREATE INDEX IF NOT EXISTS idx_shared_resources_with_team ON shared_resources(shared_with_team_id);
