@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
+import HelpHint from '../components/HelpHint'
 
 const STATUS_TABS = [
   { key: 'all', label: 'All' },
@@ -92,7 +93,13 @@ export default function Projects() {
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Projects</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-gray-900">Projects</h1>
+            <HelpHint
+              topic="project templates status filters create project"
+              detail="How templates, filters, and project setup work"
+            />
+          </div>
           <p className="text-sm text-gray-600">Plan and track work across teams.</p>
         </div>
         <button

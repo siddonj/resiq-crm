@@ -7,6 +7,7 @@ import ShareModal from '../components/ShareModal'
 import ActivityLog from '../components/ActivityLog'
 import EngagementTimeline from '../components/EngagementTimeline'
 import EnrollSequenceModal from '../components/EnrollSequenceModal'
+import HelpHint from '../components/HelpHint'
 
 const CONTACT_TYPES = ['prospect', 'partner', 'vendor']
 const PREDEFINED_SERVICE_LINES = [
@@ -192,7 +193,13 @@ export default function Contacts() {
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="font-syne text-2xl font-bold text-navy">Contacts</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="font-syne text-2xl font-bold text-navy">Contacts</h2>
+          <HelpHint
+            topic="add contact import csv tags share contact"
+            detail="How to add, import, tag, and share contacts"
+          />
+        </div>
         <div className="flex gap-2">
           <button
             onClick={handleExport}

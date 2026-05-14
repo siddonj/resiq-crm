@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 const QUICK_START = [
   {
@@ -28,8 +29,8 @@ const QUICK_START = [
   {
     step: 5,
     icon: '⚡',
-    title: 'Automate with workflows',
-    desc: 'Go to Workflows → "+ New Workflow". Pick a trigger (e.g. deal stage changed) and add actions like send SMS or create a reminder.',
+    title: 'Run outbound automation',
+    desc: 'Go to Outbound → Execution. Build campaigns, sequences, and workflow rules, then use Leads and Data workspaces for operations.',
   },
 ]
 
@@ -68,13 +69,13 @@ const FEATURES = [
     icon: '📬',
     title: 'Sequences',
     desc: 'Drip email campaigns. Enroll contacts and emails send automatically over your chosen schedule.',
-    tip: 'Auto-enroll new leads via a workflow so no new contact goes cold without follow-up.',
+    tip: 'Manage sequences in Outbound → Execution, then enroll contacts from Outbound → Leads.',
   },
   {
     icon: '⚡',
     title: 'Workflows',
     desc: 'Trigger automated actions — send SMS, create reminders, enroll in sequences — when deals or contacts change.',
-    tip: 'Chain actions: when a deal moves to "Proposal Sent", auto-send an SMS and create a 3-day follow-up reminder.',
+    tip: 'Workflow rules now live in Outbound → Execution so campaign and sequence logic stays in one place.',
   },
   {
     icon: '📅',
@@ -183,6 +184,7 @@ const TIPS = [
   { icon: '⏱️', tip: 'Track billable time during discovery calls and generate invoices from those entries directly.' },
   { icon: '🌐', tip: 'Web forms + workflows = hands-free lead intake. New form submissions can trigger sequences automatically.' },
   { icon: '📊', tip: 'Review the Analytics page weekly to spot which pipeline stages are creating the most drop-off.' },
+  { icon: '❓', tip: 'Use the ? help chips in page headers to jump directly into the matching Help FAQ topic.' },
   { icon: '📁', tip: 'Use project templates to spin up new engagements with pre-configured columns, types, and workflows in seconds.' },
   { icon: '🔗', tip: 'Link predecessor tasks with "precedes" relations so the Gantt view shows dependencies visually.' },
   { icon: '👥', tip: 'Check the Team Planner weekly to catch over-allocation before it burns out your team.' },
@@ -233,11 +235,11 @@ const FAQS = [
   {
     category: 'Workflows & Sequences',
     items: [
-      { q: 'How do I create a workflow?', a: 'Go to Workflows → "+ New Workflow". Choose a trigger (e.g. Deal Stage Changed, New Contact Created, Form Submitted), add conditions if needed, then add one or more actions (send SMS, create reminder, send email, enroll in sequence).' },
+      { q: 'How do I create a workflow?', a: 'Go to Outbound → Execution. In the Workflow Rules section, click create rule, choose trigger event and conditions, then configure actions like reminders, suppressions, and sequence enrollment.' },
       { q: 'What triggers are available?', a: 'Triggers include: Contact Created, Deal Created, Deal Stage Changed, Form Submitted, and Reminder Due. Each trigger supports conditions so you can target specific cases (e.g. only when deal stage = "Proposal Sent").' },
       { q: 'What is an email sequence?', a: 'A sequence is a series of timed emails sent to a contact automatically. For example: email on day 1, follow-up on day 3, final check-in on day 7. Contacts move through the steps automatically after enrollment.' },
-      { q: 'How do I enroll a contact in a sequence?', a: 'Go to Sequences, open a sequence, and click "Enroll Contact". You can also auto-enroll contacts via a workflow trigger — e.g. every new lead gets enrolled automatically.' },
-      { q: 'Can I pause or stop a contact mid-sequence?', a: 'Yes. Go to the sequence, find the enrolled contact, and click Pause to hold them at their current step, or Unenroll to stop further emails completely.' },
+      { q: 'How do I enroll a contact in a sequence?', a: 'Go to Outbound → Leads, select one or more leads, choose a sequence in Advanced Bulk Actions, and enroll. You can also enroll from the row-level sequence controls.' },
+      { q: 'Can I pause or stop a contact mid-sequence?', a: 'Yes. Go to Outbound → Execution, open Sequence Manager, and change each enrollment state to paused, resumed, or stopped.' },
     ],
   },
   {
@@ -303,9 +305,19 @@ const TABS = [
 ]
 
 export default function Help() {
-  const [activeTab, setActiveTab] = useState('overview')
+  const [searchParams] = useSearchParams()
+  const initialTab = useMemo(() => {
+    const requestedTab = searchParams.get('tab')
+    if (requestedTab && TABS.some((tab) => tab.id === requestedTab)) {
+      return requestedTab
+    }
+    return searchParams.get('q') ? 'faq' : 'overview'
+  }, [searchParams])
+  const initialSearch = useMemo(() => searchParams.get('q') || '', [searchParams])
+
+  const [activeTab, setActiveTab] = useState(initialTab)
   const [openFaq, setOpenFaq] = useState(null)
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(initialSearch)
   const [contactForm, setContactForm] = useState({ name: '', email: '', message: '' })
   const [submitted, setSubmitted] = useState(false)
 
@@ -329,6 +341,7 @@ export default function Help() {
     <div className="p-8 max-w-5xl">
       <h2 className="font-syne text-2xl font-bold text-navy mb-1">Help & Support</h2>
       <p className="text-sm text-gray-500 mb-6">Guides, tips, and answers to get the most out of ResiQ CRM.</p>
+      <p className="text-xs text-teal mb-6">Tip: click the ? help chips in page headers to open this page with the most relevant FAQ topic pre-filtered.</p>
 
       <div className="flex gap-1 mb-8 border-b border-gray-200">
         {TABS.map(tab => (

@@ -17,6 +17,7 @@ import CampaignManager from '../features/outbound/components/CampaignManager'
 import SequenceManager from '../features/outbound/components/SequenceManager'
 import WorkflowRuleBuilder from '../features/outbound/components/WorkflowRuleBuilder'
 import MultifamilyExplorer from '../features/outbound/components/MultifamilyExplorer'
+import HelpHint from '../components/HelpHint'
 import {
   useOutboundAnalytics,
   useOutboundLeads,
@@ -1034,7 +1035,13 @@ export default function OutboundAutomation() {
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="font-syne text-2xl font-bold text-navy">Outbound Automation</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-syne text-2xl font-bold text-navy">Outbound Automation</h2>
+            <HelpHint
+              topic="outbound automation leads execution data quality admin workspaces"
+              detail="What each outbound workspace is for"
+            />
+          </div>
           <p className="text-xs text-brand-gray mt-0.5">
             Internal workflow for CSV import, lead scoring, drafting, and manual LinkedIn completion.
           </p>
@@ -1094,7 +1101,14 @@ export default function OutboundAutomation() {
       <div className="bg-white rounded-xl shadow-sm p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 className="text-sm font-semibold text-navy">Workspace View</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-navy">Workspace View</h3>
+              <HelpHint
+                topic="outbound workspace overview leads execution data admin"
+                detail="Pick a focused workspace or show all"
+                className="py-0.5"
+              />
+            </div>
             <p className="text-xs text-brand-gray mt-0.5">Focus on one outbound workflow at a time.</p>
           </div>
           <div className="flex flex-wrap gap-2">

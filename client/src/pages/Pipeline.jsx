@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext'
 import ShareModal from '../components/ShareModal'
 import ActivityLog from '../components/ActivityLog'
 import AskAIBtn from '../components/AskAIBtn'
+import HelpHint from '../components/HelpHint'
 
 const STAGES = [
   { key: 'lead', label: 'Lead' },
@@ -193,7 +194,13 @@ export default function Pipeline() {
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="font-syne text-2xl font-bold text-navy">Pipeline</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="font-syne text-2xl font-bold text-navy">Pipeline</h2>
+          <HelpHint
+            topic="create deal stages close date drag drop pipeline"
+            detail="How to create, stage, and move deals"
+          />
+        </div>
         <div className="flex gap-2">
           <button
             onClick={handleExport}

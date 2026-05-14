@@ -4,6 +4,7 @@ import axios from 'axios'
 import GmailConnect from '../components/GmailConnect'
 import { useAuth } from '../context/AuthContext'
 import { ALL_ROLES as ROLES, ROLE_LABELS } from '../constants/roles'
+import HelpHint from '../components/HelpHint'
 
 export default function Settings() {
   const [searchParams] = useSearchParams()
@@ -203,7 +204,13 @@ export default function Settings() {
 
   return (
     <div className="p-8">
-      <h2 className="font-syne text-2xl font-bold text-navy mb-6">Settings</h2>
+      <div className="flex items-center gap-2 mb-6">
+        <h2 className="font-syne text-2xl font-bold text-navy">Settings</h2>
+        <HelpHint
+          topic="settings profile password integrations accounts system"
+          detail="Guide for profile, integrations, and admin settings"
+        />
+      </div>
 
       {success && (
         <div className="mb-6 px-4 py-3 bg-green-50 border border-green-200 text-green-700 rounded-lg text-sm">
