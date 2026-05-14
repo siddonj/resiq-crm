@@ -148,7 +148,7 @@ export default function OutboundAutomation() {
   })
   const [multifamilyEntitySelection, setMultifamilyEntitySelection] = useState({})
   const [selectedObjectAssociations, setSelectedObjectAssociations] = useState([])
-  const [loadingSelectedObjectAssociations, setLoadingSelectedObjectAssociations] = useState(false)
+  const [, setLoadingSelectedObjectAssociations] = useState(false)
   const [multifamilyForm, setMultifamilyForm] = useState({
     objectType: 'portfolio',
     name: '',
@@ -433,6 +433,16 @@ export default function OutboundAutomation() {
   const refreshMultifamilyObjects = () => qc.invalidateQueries({ queryKey: ['outbound', 'multifamilyObjects'] })
   const refreshMultifamilyEntities = () => qc.invalidateQueries({ queryKey: ['outbound', 'multifamilyEntities'] })
   const refreshNotifications = () => qc.invalidateQueries({ queryKey: ['outbound', 'notifications'] })
+
+  const fetchSelectedObjectAssociations = async () => {
+    setLoadingSelectedObjectAssociations(true)
+    try {
+      const result = await objectAssociationsQuery.refetch()
+      setSelectedObjectAssociations(result.data?.associations ?? [])
+    } finally {
+      setLoadingSelectedObjectAssociations(false)
+    }
+  }
 
   const runAction = async (key, fn) => {
     setBusyKey(key)
