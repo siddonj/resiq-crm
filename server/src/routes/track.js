@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const requireAuth = require('../middleware/auth');
 
 // Helper to generate tracking ID
@@ -15,36 +15,38 @@ router.get('/:trackingId.png', async (req, res) => {
   
   try {
     // Get tracking record
-    const result = await pool.query(
-      'SELECT * FROM engagement_tracking WHERE tracking_id = $1',
-      [trackingId]
-    );
+    const tracking = await db
+      .selectFrom('engagement_tracking')
+      .where('tracking_id', '=', trackingId)
+      .selectAll()
+      .executeTakeFirst();
 
-    if (result.rows.length > 0) {
-      const tracking = result.rows[0];
+    if (tracking) {
       const ipAddress = req.ip || req.connection.remoteAddress;
       const userAgent = req.get('user-agent') || '';
 
       // Update engagement record with open data
-      await pool.query(
-        `UPDATE engagement_tracking 
-         SET opened_at = NOW(), ip_address = $1, user_agent = $2 
-         WHERE tracking_id = $3`,
-        [ipAddress, userAgent, trackingId]
-      );
+      await db
+        .updateTable('engagement_tracking')
+        .set({
+          opened_at: new Date(),
+          ip_address: ipAddress,
+          user_agent: userAgent,
+        })
+        .where('tracking_id', '=', trackingId)
+        .execute();
 
       // Log to activities
       const assetLabel = tracking.asset_type.charAt(0).toUpperCase() + tracking.asset_type.slice(1);
-      await pool.query(
-        `INSERT INTO activities (user_id, contact_id, type, description) 
-         VALUES ($1, $2, $3, $4)`,
-        [
-          tracking.user_id,
-          tracking.contact_id,
-          `${tracking.asset_type}_opened`,
-          `${assetLabel} opened (ID: ${tracking.asset_id})`
-        ]
-      );
+      await db
+        .insertInto('activities')
+        .values({
+          user_id: tracking.user_id,
+          contact_id: tracking.contact_id,
+          type: `${tracking.asset_type}_opened`,
+          description: `${assetLabel} opened (ID: ${tracking.asset_id})`,
+        })
+        .execute();
     }
   } catch(e) {
     console.error('Pixel tracking error:', e);
@@ -66,10 +68,15 @@ router.get('/pixel.png', async (req, res) => {
     if (req.query.d) {
       const data = JSON.parse(Buffer.from(req.query.d, 'base64').toString('utf8'));
       if (data.contactId && data.userId) {
-        await pool.query(
-          'INSERT INTO activities (user_id, contact_id, type, description) VALUES ($1, $2, $3, $4)',
-          [data.userId, data.contactId, 'email_opened', data.subject ? `Opened email: ${data.subject}` : 'Opened tracked email']
-        );
+        await db
+          .insertInto('activities')
+          .values({
+            user_id: data.userId,
+            contact_id: data.contactId,
+            type: 'email_opened',
+            description: data.subject ? `Opened email: ${data.subject}` : 'Opened tracked email',
+          })
+          .execute();
       }
     }
   } catch(e) {
@@ -93,10 +100,15 @@ router.get('/link', async (req, res) => {
       if (data.url) targetUrl = data.url;
       
       if (data.contactId && data.userId) {
-        await pool.query(
-          'INSERT INTO activities (user_id, contact_id, type, description) VALUES ($1, $2, $3, $4)',
-          [data.userId, data.contactId, 'link_clicked', data.url ? `Clicked tracked link to ${data.url}` : 'Clicked tracked link']
-        );
+        await db
+          .insertInto('activities')
+          .values({
+            user_id: data.userId,
+            contact_id: data.contactId,
+            type: 'link_clicked',
+            description: data.url ? `Clicked tracked link to ${data.url}` : 'Clicked tracked link',
+          })
+          .execute();
       }
     }
   } catch(e) {
@@ -117,16 +129,21 @@ router.post('/create', requireAuth, async (req, res) => {
 
     const trackingId = generateTrackingId();
     
-    const result = await pool.query(
-      `INSERT INTO engagement_tracking (user_id, contact_id, tracking_id, asset_type, asset_id)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [userId, contactId, trackingId, assetType, assetId]
-    );
+    const tracking = await db
+      .insertInto('engagement_tracking')
+      .values({
+        user_id: userId,
+        contact_id: contactId || null,
+        tracking_id: trackingId,
+        asset_type: assetType,
+        asset_id: assetId,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
 
     res.json({
-      tracking: result.rows[0],
-      pixelUrl: `/api/track/${trackingId}.png`
+      tracking,
+      pixelUrl: `/api/track/${trackingId}.png`,
     });
   } catch (error) {
     console.error('Error creating tracking record:', error);
@@ -139,14 +156,15 @@ router.get('/contact/:contactId', requireAuth, async (req, res) => {
   try {
     const { contactId } = req.params;
     
-    const result = await pool.query(
-      `SELECT * FROM engagement_tracking 
-       WHERE contact_id = $1 AND user_id = $2
-       ORDER BY created_at DESC`,
-      [contactId, req.user.id]
-    );
+    const rows = await db
+      .selectFrom('engagement_tracking')
+      .where('contact_id', '=', contactId)
+      .where('user_id', '=', req.user.id)
+      .selectAll()
+      .orderBy('created_at', 'desc')
+      .execute();
 
-    res.json(result.rows);
+    res.json(rows);
   } catch (error) {
     console.error('Error fetching engagement:', error);
     res.status(500).json({ error: error.message });
@@ -158,22 +176,24 @@ router.get('/asset/:assetType/:assetId', requireAuth, async (req, res) => {
   try {
     const { assetType, assetId } = req.params;
     
-    const result = await pool.query(
-      `SELECT * FROM engagement_tracking 
-       WHERE asset_type = $1 AND asset_id = $2 AND user_id = $3
-       ORDER BY created_at DESC`,
-      [assetType, assetId, req.user.id]
-    );
+    const rows = await db
+      .selectFrom('engagement_tracking')
+      .where('asset_type', '=', assetType)
+      .where('asset_id', '=', assetId)
+      .where('user_id', '=', req.user.id)
+      .selectAll()
+      .orderBy('created_at', 'desc')
+      .execute();
 
-    const opens = result.rows.filter(r => r.opened_at).length;
-    const totalCreated = result.rows.length;
+    const opens = rows.filter(r => r.opened_at).length;
+    const totalCreated = rows.length;
 
     res.json({
       asset: { type: assetType, id: assetId },
       opens,
       totalCreated,
       openRate: totalCreated > 0 ? ((opens / totalCreated) * 100).toFixed(2) + '%' : '0%',
-      engagements: result.rows
+      engagements: rows,
     });
   } catch (error) {
     console.error('Error fetching asset engagement:', error);

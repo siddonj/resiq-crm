@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const pool = require('../models/db');
+const { db, sql, ownershipWhere, pool } = require('../db');
 const auth = require('../middleware/auth');
 const { scoreLead } = require('../services/outboundScoring');
 const { logAction } = require('../services/auditLogger');
@@ -39,12 +39,11 @@ async function logLeadEvent({
   metadata = {},
   runRules = true,
 }) {
-  const insertedEvent = await pool.query(
-    `INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, created_at`,
-    [userId, leadId, eventType, channel, JSON.stringify(metadata)]
-  );
+  const insertedEvent = await sql`
+    INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
+    VALUES (${userId}, ${leadId}, ${eventType}, ${channel}, ${JSON.stringify(metadata)})
+    RETURNING id, created_at
+  `.execute(db);
   const insertedEventId = insertedEvent.rows[0]?.id || null;
   const insertedEventCreatedAt = insertedEvent.rows[0]?.created_at || new Date().toISOString();
 
@@ -89,14 +88,13 @@ async function recordAttributionTouchpoint({
   const attributionStage = outboundUtils.deriveAttributionStage(eventType, metadata);
   if (!attributionStage) return;
 
-  const leadRes = await pool.query(
-    `SELECT source_type, source_reference
-     FROM outbound_leads
-     WHERE id = $1
-       AND user_id = $2
-     LIMIT 1`,
-    [leadId, userId]
-  );
+  const leadRes = await sql`
+    SELECT source_type, source_reference
+    FROM outbound_leads
+    WHERE id = ${leadId}
+      AND user_id = ${userId}
+    LIMIT 1
+  `.execute(db);
   const lead = leadRes.rows[0];
   if (!lead) return;
 
@@ -112,43 +110,27 @@ async function recordAttributionTouchpoint({
     attributedValue = explicitValue > 0 ? outboundUtils.round2(explicitValue) : outboundUtils.round2(await getAverageClosedWonValue(userId));
   }
 
-  await pool.query(
-    `INSERT INTO attribution_touchpoints
+  await sql`
+    INSERT INTO attribution_touchpoints
       (lead_event_id, user_id, lead_id, source_type, source_reference, campaign_id, sequence_id,
        event_type, attribution_stage, channel, touch_weight, attributed_value, metadata, occurred_at)
      VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, $12::jsonb, $13)
-     ON CONFLICT (lead_event_id) DO NOTHING`,
-    [
-      eventId,
-      userId,
-      leadId,
-      lead.source_type || 'other',
-      lead.source_reference || null,
-      campaignId,
-      sequenceId,
-      eventType,
-      attributionStage,
-      channel,
-      attributedValue,
-      JSON.stringify(metadata || {}),
-      occurredAt || new Date().toISOString(),
-    ]
-  );
+      (${eventId}, ${userId}, ${leadId}, ${lead.source_type || 'other'}, ${lead.source_reference || null}, ${campaignId}, ${sequenceId}, ${eventType}, ${attributionStage}, ${channel}, 1, ${attributedValue}, ${JSON.stringify(metadata || {})}::jsonb, ${occurredAt || new Date().toISOString()})
+     ON CONFLICT (lead_event_id) DO NOTHING
+  `.execute(db);
 }
 
 async function computeEngagementSignals(userId, leadId) {
-  const result = await pool.query(
-    `SELECT
-       COUNT(*) FILTER (WHERE event_type IN ('draft_generated', 'draft_approved'))::int AS prep_events,
-       COUNT(*) FILTER (WHERE event_type IN ('draft_sent', 'linkedin_task_completed'))::int AS contact_events,
-       COUNT(*) FILTER (WHERE event_type IN ('lead_replied', 'meeting_booked', 'opportunity_created'))::int AS positive_events,
-       MAX(created_at) AS last_event_at
-     FROM lead_source_events
-     WHERE user_id = $1
-       AND lead_id = $2`,
-    [userId, leadId]
-  );
+  const result = await sql`
+    SELECT
+      COUNT(*) FILTER (WHERE event_type IN ('draft_generated', 'draft_approved'))::int AS prep_events,
+      COUNT(*) FILTER (WHERE event_type IN ('draft_sent', 'linkedin_task_completed'))::int AS contact_events,
+      COUNT(*) FILTER (WHERE event_type IN ('lead_replied', 'meeting_booked', 'opportunity_created'))::int AS positive_events,
+      MAX(created_at) AS last_event_at
+    FROM lead_source_events
+    WHERE user_id = ${userId}
+      AND lead_id = ${leadId}
+  `.execute(db);
 
   const row = result.rows[0] || {};
   const prepEvents = Number(row.prep_events || 0);
@@ -190,23 +172,11 @@ async function computeEngagementSignals(userId, leadId) {
 }
 
 async function recordLeadScoreHistory({ userId, leadId, score, source = 'manual_rescore' }) {
-  await pool.query(
-    `INSERT INTO lead_score_history
+  await sql`
+    INSERT INTO lead_score_history
       (user_id, lead_id, fit_score, intent_score, engagement_score, total_score, status, next_recommended_action, reasons, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)`,
-    [
-      userId,
-      leadId,
-      score.fitScore,
-      score.intentScore,
-      score.engagementScore || 0,
-      score.totalScore,
-      score.status,
-      score.nextRecommendedAction,
-      JSON.stringify(score.reasons || {}),
-      source,
-    ]
-  );
+     VALUES (${userId}, ${leadId}, ${score.fitScore}, ${score.intentScore}, ${score.engagementScore || 0}, ${score.totalScore}, ${score.status}, ${score.nextRecommendedAction}, ${JSON.stringify(score.reasons || {})}::jsonb, ${source})
+  `.execute(db);
 }
 
 async function getDailySendUsage(userId, channel) {
@@ -222,15 +192,14 @@ async function getDailySendUsage(userId, channel) {
     return { channel, used: 0, limit, remaining: limit };
   }
 
-  const result = await pool.query(
-    `SELECT COUNT(*)::int AS used
-     FROM lead_source_events
-     WHERE user_id = $1
-       AND channel = $2
-       AND event_type = ANY($3)
-       AND created_at >= date_trunc('day', NOW())`,
-    [userId, channel, eventTypes]
-  );
+  const result = await sql`
+    SELECT COUNT(*)::int AS used
+    FROM lead_source_events
+    WHERE user_id = ${userId}
+      AND channel = ${channel}
+      AND event_type = ANY(${eventTypes}::text[])
+      AND created_at >= date_trunc('day', NOW())
+  `.execute(db);
 
   const used = Number(result.rows[0]?.used || 0);
   return {
@@ -257,12 +226,11 @@ function requireWithinDailyLimit(usage) {
 
 
 async function syncDataQualityIssuesForUser(userId) {
-  const leadsRes = await pool.query(
-    `SELECT id, name, email, linkedin_url, company, title, source_confidence, created_at, updated_at
-     FROM outbound_leads
-     WHERE user_id = $1`,
-    [userId]
-  );
+  const leadsRes = await sql`
+    SELECT id, name, email, linkedin_url, company, title, source_confidence, created_at, updated_at
+    FROM outbound_leads
+    WHERE user_id = ${userId}
+  `.execute(db);
   const leads = leadsRes.rows;
   const duplicateGroupByLead = outboundUtils.buildDuplicateGroupIndex(leads);
 
@@ -275,16 +243,15 @@ async function syncDataQualityIssuesForUser(userId) {
   await sequenceService.upsertDataQualityIssues(userId, detectedIssues);
 
   const activeIssueKeys = detectedIssues.map((issue) => issue.issueKey);
-  await pool.query(
-    `UPDATE data_quality_issues
-     SET status = 'resolved',
-         resolved_at = NOW(),
-         updated_at = NOW()
-     WHERE user_id = $1
-       AND status = 'open'
-       AND NOT (issue_key = ANY($2::text[]))`,
-    [userId, activeIssueKeys]
-  );
+  await sql`
+    UPDATE data_quality_issues
+    SET status = 'resolved',
+        resolved_at = NOW(),
+        updated_at = NOW()
+    WHERE user_id = ${userId}
+      AND status = 'open'
+      AND NOT (issue_key = ANY(${activeIssueKeys}::text[]))
+  `.execute(db);
 }
 
 
@@ -305,39 +272,36 @@ async function syncDataQualityIssuesForUser(userId) {
 
 async function verifyMultifamilyAssociationTarget(userId, entityType, entityId) {
   if (entityType === 'outbound_lead') {
-    const result = await pool.query(
-      `SELECT id, name, email, company, title
-       FROM outbound_leads
-       WHERE id = $1
-         AND user_id = $2
-       LIMIT 1`,
-      [entityId, userId]
-    );
+    const result = await sql`
+      SELECT id, name, email, company, title
+      FROM outbound_leads
+      WHERE id = ${entityId}
+        AND user_id = ${userId}
+      LIMIT 1
+    `.execute(db);
     return result.rows[0] || null;
   }
 
   if (entityType === 'contact') {
-    const result = await pool.query(
-      `SELECT id, name, email, company, NULL::text AS title
-       FROM contacts
-       WHERE id = $1
-         AND user_id = $2
-       LIMIT 1`,
-      [entityId, userId]
-    );
+    const result = await sql`
+      SELECT id, name, email, company, NULL::text AS title
+      FROM contacts
+      WHERE id = ${entityId}
+        AND user_id = ${userId}
+      LIMIT 1
+    `.execute(db);
     return result.rows[0] || null;
   }
 
   if (entityType === 'deal') {
-    const result = await pool.query(
-      `SELECT d.id, d.title AS name, NULL::text AS email, c.company AS company, d.service_line AS title
-       FROM deals d
-       LEFT JOIN contacts c ON c.id = d.contact_id
-       WHERE d.id = $1
-         AND d.user_id = $2
-       LIMIT 1`,
-      [entityId, userId]
-    );
+    const result = await sql`
+      SELECT d.id, d.title AS name, NULL::text AS email, c.company AS company, d.service_line AS title
+      FROM deals d
+      LEFT JOIN contacts c ON c.id = d.contact_id
+      WHERE d.id = ${entityId}
+        AND d.user_id = ${userId}
+      LIMIT 1
+    `.execute(db);
     return result.rows[0] || null;
   }
 
@@ -346,16 +310,15 @@ async function verifyMultifamilyAssociationTarget(userId, entityType, entityId) 
 
 
 async function getAverageClosedWonValue(userId) {
-  const result = await pool.query(
-    `SELECT
-       COALESCE(AVG(value), 0)::numeric(14,2) AS avg_closed_won_value
-     FROM deals
-     WHERE user_id = $1
-       AND stage = 'closed_won'
-       AND value IS NOT NULL
-       AND value > 0`,
-    [userId]
-  );
+  const result = await sql`
+    SELECT
+      COALESCE(AVG(value), 0)::numeric(14,2) AS avg_closed_won_value
+    FROM deals
+    WHERE user_id = ${userId}
+      AND stage = 'closed_won'
+      AND value IS NOT NULL
+      AND value > 0
+  `.execute(db);
   const value = Number(result.rows[0]?.avg_closed_won_value || 0);
   return value > 0 ? value : 25000;
 }
@@ -365,37 +328,34 @@ async function getAverageClosedWonValue(userId) {
 
 
 async function upsertSequenceEnrollmentForRule({ userId, sequenceId, leadId }) {
-  const sequenceRes = await pool.query(
-    `SELECT id, name
-     FROM sequences
-     WHERE id = $1
-       AND user_id = $2`,
-    [sequenceId, userId]
-  );
+  const sequenceRes = await sql`
+    SELECT id, name
+    FROM sequences
+    WHERE id = ${sequenceId}
+      AND user_id = ${userId}
+  `.execute(db);
   if (!sequenceRes.rows.length) {
     throw new Error('Sequence not found for enroll_sequence action');
   }
 
-  const stepsRes = await pool.query(
-    `SELECT COUNT(*)::int AS total_steps
-     FROM sequence_steps
-     WHERE sequence_id = $1`,
-    [sequenceId]
-  );
+  const stepsRes = await sql`
+    SELECT COUNT(*)::int AS total_steps
+    FROM sequence_steps
+    WHERE sequence_id = ${sequenceId}
+  `.execute(db);
   const totalSteps = Number(stepsRes.rows[0]?.total_steps || 0);
   if (totalSteps === 0) {
     throw new Error('Sequence has no steps for enroll_sequence action');
   }
 
-  const openRes = await pool.query(
-    `SELECT id
-     FROM outbound_sequence_enrollments
-     WHERE user_id = $1
-       AND lead_id = $2
-       AND status IN ('active', 'paused')
-     LIMIT 1`,
-    [userId, leadId]
-  );
+  const openRes = await sql`
+    SELECT id
+    FROM outbound_sequence_enrollments
+    WHERE user_id = ${userId}
+      AND lead_id = ${leadId}
+      AND status IN ('active', 'paused')
+    LIMIT 1
+  `.execute(db);
   if (openRes.rows.length) {
     return {
       skipped: true,
@@ -404,13 +364,12 @@ async function upsertSequenceEnrollmentForRule({ userId, sequenceId, leadId }) {
     };
   }
 
-  const insertedRes = await pool.query(
-    `INSERT INTO outbound_sequence_enrollments
+  const insertedRes = await sql`
+    INSERT INTO outbound_sequence_enrollments
       (user_id, sequence_id, lead_id, status, current_step, next_step_due_at)
-     VALUES ($1, $2, $3, 'active', 1, NOW())
-     RETURNING id`,
-    [userId, sequenceId, leadId]
-  );
+    VALUES (${userId}, ${sequenceId}, ${leadId}, 'active', 1, NOW())
+    RETURNING id
+  `.execute(db);
   const enrollmentId = insertedRes.rows[0].id;
 
   await sequenceService.recordSequenceTransition({
@@ -455,14 +414,13 @@ async function executeWorkflowRuleActions({
           throw new Error('Invalid lead status in update_lead_status action');
         }
         if (!dryRun) {
-          await pool.query(
-            `UPDATE outbound_leads
-             SET status = $1,
-                 updated_at = NOW()
-             WHERE id = $2
-               AND user_id = $3`,
-            [nextStatus, lead.id, userId]
-          );
+          await sql`
+            UPDATE outbound_leads
+            SET status = ${nextStatus},
+                updated_at = NOW()
+            WHERE id = ${lead.id}
+              AND user_id = ${userId}
+          `.execute(db);
         }
         result.nextStatus = nextStatus;
       } else if (action.type === 'set_next_recommended_action') {
@@ -470,14 +428,13 @@ async function executeWorkflowRuleActions({
         const nextAction = String(action.config.value || action.config.nextRecommendedAction || '').trim();
         if (!nextAction) throw new Error('set_next_recommended_action requires a value');
         if (!dryRun) {
-          await pool.query(
-            `UPDATE outbound_leads
-             SET next_recommended_action = $1,
-                 updated_at = NOW()
-             WHERE id = $2
-               AND user_id = $3`,
-            [nextAction, lead.id, userId]
-          );
+          await sql`
+            UPDATE outbound_leads
+            SET next_recommended_action = ${nextAction},
+                updated_at = NOW()
+            WHERE id = ${lead.id}
+              AND user_id = ${userId}
+          `.execute(db);
         }
         result.value = nextAction;
       } else if (action.type === 'create_reminder') {
@@ -485,11 +442,10 @@ async function executeWorkflowRuleActions({
         const dueDays = Math.max(0, Number(action.config.dueDays ?? action.config.due_days ?? 1));
         if (!message) throw new Error('create_reminder requires message');
         if (!dryRun) {
-          await pool.query(
-            `INSERT INTO reminders (user_id, message, remind_at)
-             VALUES ($1, $2, NOW() + ($3 || ' days')::interval)`,
-            [userId, message, String(dueDays)]
-          );
+          await sql`
+            INSERT INTO reminders (user_id, message, remind_at)
+            VALUES (${userId}, ${message}, NOW() + (${String(dueDays)} || ' days')::interval)
+          `.execute(db);
         }
         result.message = message;
         result.dueDays = dueDays;
@@ -497,15 +453,14 @@ async function executeWorkflowRuleActions({
         if (!lead?.id) throw new Error('suppress_lead requires lead context');
         const reason = String(action.config.reason || 'Suppressed by workflow rule').trim();
         if (!dryRun) {
-          await pool.query(
-            `UPDATE outbound_leads
-             SET status = 'suppressed',
-                 suppression_reason = $1,
-                 updated_at = NOW()
-             WHERE id = $2
-               AND user_id = $3`,
-            [reason, lead.id, userId]
-          );
+          await sql`
+            UPDATE outbound_leads
+            SET status = 'suppressed',
+                suppression_reason = ${reason},
+                updated_at = NOW()
+            WHERE id = ${lead.id}
+              AND user_id = ${userId}
+          `.execute(db);
           await sequenceService.autoStopOpenSequenceEnrollments({
             userId,
             leadId: lead.id,
@@ -578,21 +533,11 @@ async function insertWorkflowRuleRun({
   errorMessage = null,
 }) {
   const normalizedStatus = outboundUtils.VALID_RULE_RUN_STATUSES.has(status) ? status : 'failed';
-  await pool.query(
-    `INSERT INTO workflow_rule_runs
+  await sql`
+    INSERT INTO workflow_rule_runs
       (rule_id, user_id, trigger_source, input_context, matched, status, actions_executed, error_message)
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::jsonb, $8)`,
-    [
-      ruleId,
-      userId,
-      triggerSource,
-      JSON.stringify(inputContext || {}),
-      matched,
-      normalizedStatus,
-      JSON.stringify(actionsExecuted || []),
-      errorMessage,
-    ]
-  );
+    VALUES (${ruleId}, ${userId}, ${triggerSource}, ${JSON.stringify(inputContext || {})}::jsonb, ${matched}, ${normalizedStatus}, ${JSON.stringify(actionsExecuted || [])}::jsonb, ${errorMessage})
+  `.execute(db);
 }
 
 async function runWorkflowRulesForEvent({
@@ -608,40 +553,35 @@ async function runWorkflowRulesForEvent({
   const eventName = String(triggerEvent || '').trim();
   if (!eventName) return [];
 
-  const params = [userId];
-  const filters = ['user_id = $1'];
+  const filters = [sql`user_id = ${userId}`];
   if (!includeDisabled) {
-    filters.push('enabled = TRUE');
+    filters.push(sql`enabled = TRUE`);
   }
 
   if (limitToRuleId) {
-    params.push(limitToRuleId);
-    filters.push(`id = $${params.length}`);
+    filters.push(sql`id = ${limitToRuleId}`);
   } else {
-    params.push(eventName);
-    filters.push(`trigger_event = $${params.length}`);
+    filters.push(sql`trigger_event = ${eventName}`);
   }
 
-  const rulesRes = await pool.query(
-    `SELECT *
-     FROM workflow_rules
-     WHERE ${filters.join(' AND ')}
-     ORDER BY priority ASC, created_at ASC`,
-    params
-  );
+  const rulesRes = await sql`
+    SELECT *
+    FROM workflow_rules
+    WHERE ${sql.join(filters, ' AND ')}
+    ORDER BY priority ASC, created_at ASC
+  `.execute(db);
 
   if (!rulesRes.rows.length) return [];
 
   const lead = leadId
     ? (
-        await pool.query(
-          `SELECT *
-           FROM outbound_leads
-           WHERE id = $1
-             AND user_id = $2
-           LIMIT 1`,
-          [leadId, userId]
-        )
+        await sql`
+          SELECT *
+          FROM outbound_leads
+          WHERE id = ${leadId}
+            AND user_id = ${userId}
+          LIMIT 1
+        `.execute(db)
       ).rows[0] || null
     : null;
 
@@ -727,59 +667,54 @@ async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
   const progress = outboundUtils.calculatePeriodProgress(period.periodStart, period.periodEnd);
 
   const [bucketRes, activityRes, revenueRes, avgDealRes, goalRes] = await Promise.all([
-    pool.query(
-      `SELECT
-         COALESCE(SUM(CASE WHEN status = 'opportunity' THEN 1 ELSE 0 END), 0)::int AS closed_count,
-         COALESCE(SUM(CASE WHEN status = 'meeting' THEN 1 ELSE 0 END), 0)::int AS commit_only_count,
-         COALESCE(SUM(CASE WHEN status IN ('contacted', 'replied') THEN 1 ELSE 0 END), 0)::int AS best_case_only_count
-       FROM outbound_leads
-       WHERE user_id = $1`,
-      [userId]
-    ),
-    pool.query(
-      `SELECT
-         COUNT(*) FILTER (WHERE event_type = 'meeting_booked')::int AS meetings_actual,
-         COUNT(*) FILTER (
-           WHERE event_type = 'opportunity_created'
-              OR (event_type = 'campaign_member_status_changed' AND COALESCE(metadata->>'memberStatus', '') = 'opportunity')
-         )::int AS opportunities_actual
-       FROM lead_source_events
-       WHERE user_id = $1
-         AND created_at >= $2::date
-         AND created_at < ($3::date + INTERVAL '1 day')`,
-      [userId, period.periodStart, period.periodEnd]
-    ),
-    pool.query(
-      `SELECT
-         COALESCE(SUM(value), 0)::numeric(14,2) AS revenue_actual,
-         COUNT(*)::int AS deals_won_actual
-       FROM deals
-       WHERE user_id = $1
-         AND stage = 'closed_won'
-         AND COALESCE(close_date::timestamptz, updated_at, created_at) >= $2::date
-         AND COALESCE(close_date::timestamptz, updated_at, created_at) < ($3::date + INTERVAL '1 day')`,
-      [userId, period.periodStart, period.periodEnd]
-    ),
-    pool.query(
-      `SELECT
-         COALESCE(AVG(value), 0)::numeric(14,2) AS avg_closed_won_value
-       FROM deals
-       WHERE user_id = $1
-         AND stage = 'closed_won'
-         AND value IS NOT NULL
-         AND value > 0`,
-      [userId]
-    ),
-    pool.query(
-      `SELECT *
-       FROM sales_goals
-       WHERE user_id = $1
-         AND period_type = $2
-         AND period_start = $3::date
-         AND period_end = $4::date
-       LIMIT 1`,
-      [userId, period.periodType, period.periodStart, period.periodEnd]
-    ),
+    sql`
+      SELECT
+        COALESCE(SUM(CASE WHEN status = 'opportunity' THEN 1 ELSE 0 END), 0)::int AS closed_count,
+        COALESCE(SUM(CASE WHEN status = 'meeting' THEN 1 ELSE 0 END), 0)::int AS commit_only_count,
+        COALESCE(SUM(CASE WHEN status IN ('contacted', 'replied') THEN 1 ELSE 0 END), 0)::int AS best_case_only_count
+      FROM outbound_leads
+      WHERE user_id = ${userId}
+    `.execute(db),
+    sql`
+      SELECT
+        COUNT(*) FILTER (WHERE event_type = 'meeting_booked')::int AS meetings_actual,
+        COUNT(*) FILTER (
+          WHERE event_type = 'opportunity_created'
+             OR (event_type = 'campaign_member_status_changed' AND COALESCE(metadata->>'memberStatus', '') = 'opportunity')
+        )::int AS opportunities_actual
+      FROM lead_source_events
+      WHERE user_id = ${userId}
+        AND created_at >= ${period.periodStart}::date
+        AND created_at < (${period.periodEnd}::date + INTERVAL '1 day')
+    `.execute(db),
+    sql`
+      SELECT
+        COALESCE(SUM(value), 0)::numeric(14,2) AS revenue_actual,
+        COUNT(*)::int AS deals_won_actual
+      FROM deals
+      WHERE user_id = ${userId}
+        AND stage = 'closed_won'
+        AND COALESCE(close_date::timestamptz, updated_at, created_at) >= ${period.periodStart}::date
+        AND COALESCE(close_date::timestamptz, updated_at, created_at) < (${period.periodEnd}::date + INTERVAL '1 day')
+    `.execute(db),
+    sql`
+      SELECT
+        COALESCE(AVG(value), 0)::numeric(14,2) AS avg_closed_won_value
+      FROM deals
+      WHERE user_id = ${userId}
+        AND stage = 'closed_won'
+        AND value IS NOT NULL
+        AND value > 0
+    `.execute(db),
+    sql`
+      SELECT *
+      FROM sales_goals
+      WHERE user_id = ${userId}
+        AND period_type = ${period.periodType}
+        AND period_start = ${period.periodStart}::date
+        AND period_end = ${period.periodEnd}::date
+      LIMIT 1
+    `.execute(db),
   ]);
 
   const bucketRow = bucketRes.rows[0] || {};
@@ -850,37 +785,23 @@ async function buildOutboundForecastSummary(userId, periodType = 'monthly') {
     progress,
   };
 
-  await pool.query(
-    `INSERT INTO pipeline_forecasts
+  await sql`
+    INSERT INTO pipeline_forecasts
       (user_id, period_type, period_start, period_end, snapshot_date,
        commit_count, best_case_count, closed_count,
        commit_value, best_case_value, closed_value, total_forecast_value, metadata)
-     VALUES ($1, $2, $3::date, $4::date, CURRENT_DATE, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
-     ON CONFLICT (user_id, period_type, period_start, period_end, snapshot_date)
-     DO UPDATE SET
-       commit_count = EXCLUDED.commit_count,
-       best_case_count = EXCLUDED.best_case_count,
-       closed_count = EXCLUDED.closed_count,
-       commit_value = EXCLUDED.commit_value,
-       best_case_value = EXCLUDED.best_case_value,
-       closed_value = EXCLUDED.closed_value,
-       total_forecast_value = EXCLUDED.total_forecast_value,
-       metadata = EXCLUDED.metadata`,
-    [
-      userId,
-      period.periodType,
-      period.periodStart,
-      period.periodEnd,
-      commitCount,
-      bestCaseCount,
-      closedCount,
-      commitValue,
-      bestCaseValue,
-      closedValue,
-      totalForecastValue,
-      JSON.stringify(metadata),
-    ]
-  );
+    VALUES (${userId}, ${period.periodType}, ${period.periodStart}::date, ${period.periodEnd}::date, CURRENT_DATE, ${commitCount}, ${bestCaseCount}, ${closedCount}, ${commitValue}, ${bestCaseValue}, ${closedValue}, ${totalForecastValue}, ${JSON.stringify(metadata)}::jsonb)
+    ON CONFLICT (user_id, period_type, period_start, period_end, snapshot_date)
+    DO UPDATE SET
+      commit_count = EXCLUDED.commit_count,
+      best_case_count = EXCLUDED.best_case_count,
+      closed_count = EXCLUDED.closed_count,
+      commit_value = EXCLUDED.commit_value,
+      best_case_value = EXCLUDED.best_case_value,
+      closed_value = EXCLUDED.closed_value,
+      total_forecast_value = EXCLUDED.total_forecast_value,
+      metadata = EXCLUDED.metadata
+  `.execute(db);
 
   return {
     period: {
@@ -933,92 +854,87 @@ async function buildOutboundAttributionSummary(userId, periodType = 'monthly') {
   const normalizedPeriodType = outboundUtils.VALID_FORECAST_PERIOD_TYPES.has(periodType) ? periodType : 'monthly';
   const period = outboundUtils.getCurrentPeriodWindow(normalizedPeriodType);
   const [overviewRes, sourceRes, sequenceRes, personaRowsRes, lineageRes, baselineValue] = await Promise.all([
-    pool.query(
-      `SELECT
-         COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'imported')::int AS imported_leads,
-         COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'contacted')::int AS contacted_leads,
-         COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'replied')::int AS replied_leads,
-         COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'meeting')::int AS meeting_leads,
-         COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'opportunity')::int AS opportunity_leads,
-         COALESCE(SUM(attributed_value) FILTER (WHERE attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
-       FROM attribution_touchpoints
-       WHERE user_id = $1
-         AND occurred_at >= $2::date
-         AND occurred_at < ($3::date + INTERVAL '1 day')`,
-      [userId, period.periodStart, period.periodEnd]
-    ),
-    pool.query(
-      `SELECT
-         COALESCE(NULLIF(t.source_type, ''), 'other') AS source_type,
-         COALESCE(NULLIF(t.source_reference, ''), 'unknown') AS source_reference,
-         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'imported')::int AS imported_leads,
-         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'contacted')::int AS contacted_leads,
-         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'replied')::int AS replied_leads,
-         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'meeting')::int AS meeting_leads,
-         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'opportunity')::int AS opportunity_leads,
-         COALESCE(SUM(t.attributed_value) FILTER (WHERE t.attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
-       FROM attribution_touchpoints t
-       WHERE t.user_id = $1
-         AND t.occurred_at >= $2::date
-         AND t.occurred_at < ($3::date + INTERVAL '1 day')
-       GROUP BY 1, 2
-       ORDER BY attributed_revenue DESC, opportunity_leads DESC, meeting_leads DESC, contacted_leads DESC
-       LIMIT 25`,
-      [userId, period.periodStart, period.periodEnd]
-    ),
-    pool.query(
-      `SELECT
-         t.sequence_id,
-         COALESCE(s.name, 'Unknown sequence') AS sequence_name,
-         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'contacted')::int AS contacted_leads,
-         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'replied')::int AS replied_leads,
-         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'meeting')::int AS meeting_leads,
-         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'opportunity')::int AS opportunity_leads,
-         COALESCE(SUM(t.attributed_value) FILTER (WHERE t.attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
-       FROM attribution_touchpoints t
-       LEFT JOIN sequences s ON s.id = t.sequence_id
-       WHERE t.user_id = $1
-         AND t.sequence_id IS NOT NULL
-         AND t.occurred_at >= $2::date
-         AND t.occurred_at < ($3::date + INTERVAL '1 day')
-       GROUP BY t.sequence_id, s.name
-       ORDER BY attributed_revenue DESC, opportunity_leads DESC, meeting_leads DESC
-       LIMIT 25`,
-      [userId, period.periodStart, period.periodEnd]
-    ),
-    pool.query(
-      `SELECT
-         t.lead_id,
-         t.attribution_stage,
-         t.attributed_value,
-         l.title
-       FROM attribution_touchpoints t
-       LEFT JOIN outbound_leads l ON l.id = t.lead_id
-       WHERE t.user_id = $1
-         AND t.occurred_at >= $2::date
-         AND t.occurred_at < ($3::date + INTERVAL '1 day')`,
-      [userId, period.periodStart, period.periodEnd]
-    ),
-    pool.query(
-      `SELECT
-         COALESCE(NULLIF(t.source_type, ''), 'other') AS source_type,
-         COALESCE(NULLIF(t.source_reference, ''), 'unknown') AS source_reference,
-         COALESCE(t.sequence_id::text, 'unsequenced') AS sequence_key,
-         COALESCE(s.name, 'Unsequenced') AS sequence_name,
-         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'meeting')::int AS meetings,
-         COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'opportunity')::int AS opportunities,
-         COALESCE(SUM(t.attributed_value) FILTER (WHERE t.attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
-       FROM attribution_touchpoints t
-       LEFT JOIN sequences s ON s.id = t.sequence_id
-       WHERE t.user_id = $1
-         AND t.occurred_at >= $2::date
-         AND t.occurred_at < ($3::date + INTERVAL '1 day')
-       GROUP BY 1, 2, 3, 4
-       HAVING COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage IN ('meeting', 'opportunity')) > 0
-       ORDER BY attributed_revenue DESC, opportunities DESC, meetings DESC
-       LIMIT 20`,
-      [userId, period.periodStart, period.periodEnd]
-    ),
+    sql`
+      SELECT
+        COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'imported')::int AS imported_leads,
+        COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'contacted')::int AS contacted_leads,
+        COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'replied')::int AS replied_leads,
+        COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'meeting')::int AS meeting_leads,
+        COUNT(DISTINCT lead_id) FILTER (WHERE attribution_stage = 'opportunity')::int AS opportunity_leads,
+        COALESCE(SUM(attributed_value) FILTER (WHERE attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
+      FROM attribution_touchpoints
+      WHERE user_id = ${userId}
+        AND occurred_at >= ${period.periodStart}::date
+        AND occurred_at < (${period.periodEnd}::date + INTERVAL '1 day')
+    `.execute(db),
+    sql`
+      SELECT
+        COALESCE(NULLIF(t.source_type, ''), 'other') AS source_type,
+        COALESCE(NULLIF(t.source_reference, ''), 'unknown') AS source_reference,
+        COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'imported')::int AS imported_leads,
+        COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'contacted')::int AS contacted_leads,
+        COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'replied')::int AS replied_leads,
+        COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'meeting')::int AS meeting_leads,
+        COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'opportunity')::int AS opportunity_leads,
+        COALESCE(SUM(t.attributed_value) FILTER (WHERE t.attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
+      FROM attribution_touchpoints t
+      WHERE t.user_id = ${userId}
+        AND t.occurred_at >= ${period.periodStart}::date
+        AND t.occurred_at < (${period.periodEnd}::date + INTERVAL '1 day')
+      GROUP BY 1, 2
+      ORDER BY attributed_revenue DESC, opportunity_leads DESC, meeting_leads DESC, contacted_leads DESC
+      LIMIT 25
+    `.execute(db),
+    sql`
+      SELECT
+        t.sequence_id,
+        COALESCE(s.name, 'Unknown sequence') AS sequence_name,
+        COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'contacted')::int AS contacted_leads,
+        COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'replied')::int AS replied_leads,
+        COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'meeting')::int AS meeting_leads,
+        COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'opportunity')::int AS opportunity_leads,
+        COALESCE(SUM(t.attributed_value) FILTER (WHERE t.attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
+      FROM attribution_touchpoints t
+      LEFT JOIN sequences s ON s.id = t.sequence_id
+      WHERE t.user_id = ${userId}
+        AND t.sequence_id IS NOT NULL
+        AND t.occurred_at >= ${period.periodStart}::date
+        AND t.occurred_at < (${period.periodEnd}::date + INTERVAL '1 day')
+      GROUP BY t.sequence_id, s.name
+      ORDER BY attributed_revenue DESC, opportunity_leads DESC, meeting_leads DESC
+      LIMIT 25
+    `.execute(db),
+    sql`
+      SELECT
+        t.lead_id,
+        t.attribution_stage,
+        t.attributed_value,
+        l.title
+      FROM attribution_touchpoints t
+      LEFT JOIN outbound_leads l ON l.id = t.lead_id
+      WHERE t.user_id = ${userId}
+        AND t.occurred_at >= ${period.periodStart}::date
+        AND t.occurred_at < (${period.periodEnd}::date + INTERVAL '1 day')
+    `.execute(db),
+    sql`
+      SELECT
+        COALESCE(NULLIF(t.source_type, ''), 'other') AS source_type,
+        COALESCE(NULLIF(t.source_reference, ''), 'unknown') AS source_reference,
+        COALESCE(t.sequence_id::text, 'unsequenced') AS sequence_key,
+        COALESCE(s.name, 'Unsequenced') AS sequence_name,
+        COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'meeting')::int AS meetings,
+        COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage = 'opportunity')::int AS opportunities,
+        COALESCE(SUM(t.attributed_value) FILTER (WHERE t.attribution_stage = 'opportunity'), 0)::numeric(14,2) AS attributed_revenue
+      FROM attribution_touchpoints t
+      LEFT JOIN sequences s ON s.id = t.sequence_id
+      WHERE t.user_id = ${userId}
+        AND t.occurred_at >= ${period.periodStart}::date
+        AND t.occurred_at < (${period.periodEnd}::date + INTERVAL '1 day')
+      GROUP BY 1, 2, 3, 4
+      HAVING COUNT(DISTINCT t.lead_id) FILTER (WHERE t.attribution_stage IN ('meeting', 'opportunity')) > 0
+      ORDER BY attributed_revenue DESC, opportunities DESC, meetings DESC
+      LIMIT 20
+    `.execute(db),
     getAverageClosedWonValue(userId),
   ]);
 
@@ -1199,12 +1115,11 @@ router.post('/leads/import/csv', upload.single('file'), validateBody(ImportCsvSc
     return res.status(400).json({ error: `CSV exceeds maximum of ${MAX_CSV_ROWS} rows.` });
   }
 
-  const importJob = await pool.query(
-    `INSERT INTO lead_import_jobs (user_id, filename, status)
-     VALUES ($1, $2, 'processing')
-     RETURNING id`,
-    [req.user.id, req.file.originalname || 'upload.csv']
-  );
+  const importJob = await sql`
+    INSERT INTO lead_import_jobs (user_id, filename, status)
+    VALUES (${req.user.id}, ${req.file.originalname || 'upload.csv'}, 'processing')
+    RETURNING id
+  `.execute(db);
 
   const jobId = importJob.rows[0].id;
   const client = await pool.connect();
@@ -1308,18 +1223,17 @@ router.post('/leads/import/csv', upload.single('file'), validateBody(ImportCsvSc
 
     await client.query('COMMIT');
 
-    await pool.query(
-      `UPDATE lead_import_jobs
-       SET status = 'completed',
-           total_rows = $1,
-           imported_rows = $2,
-           duplicate_rows = $3,
-           failed_rows = $4,
-           error_sample = $5,
-           completed_at = NOW()
-       WHERE id = $6`,
-      [rows.length, importedRows, duplicateRows, failedRows, JSON.stringify(errorSample), jobId]
-    );
+    await sql`
+      UPDATE lead_import_jobs
+      SET status = 'completed',
+          total_rows = ${rows.length},
+          imported_rows = ${importedRows},
+          duplicate_rows = ${duplicateRows},
+          failed_rows = ${failedRows},
+          error_sample = ${JSON.stringify(errorSample)}::jsonb,
+          completed_at = NOW()
+      WHERE id = ${jobId}
+    `.execute(db);
 
     logAction(
       req.user.id,
@@ -1348,15 +1262,14 @@ router.post('/leads/import/csv', upload.single('file'), validateBody(ImportCsvSc
     });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
-    await pool.query(
-      `UPDATE lead_import_jobs
-       SET status = 'failed',
-           failed_rows = failed_rows + 1,
-           error_sample = jsonb_build_array(jsonb_build_object('error', $1)),
-           completed_at = NOW()
-       WHERE id = $2`,
-      [err.message, jobId]
-    );
+    await sql`
+      UPDATE lead_import_jobs
+      SET status = 'failed',
+          failed_rows = failed_rows + 1,
+          error_sample = jsonb_build_array(jsonb_build_object('error', ${err.message})),
+          completed_at = NOW()
+      WHERE id = ${jobId}
+    `.execute(db);
     return res.status(500).json({
       error: 'Failed to import CSV',
       message: err.message,
@@ -1371,13 +1284,12 @@ router.post('/leads/import/csv', upload.single('file'), validateBody(ImportCsvSc
  * GET /api/outbound/leads/import/:jobId/status
  */
 router.get('/leads/import/:jobId/status', async (req, res) => {
-  const result = await pool.query(
-    `SELECT id, status, filename, total_rows, imported_rows, duplicate_rows, failed_rows,
-            error_sample, created_at, completed_at
-     FROM lead_import_jobs
-     WHERE id = $1 AND user_id = $2`,
-    [req.params.jobId, req.user.id]
-  );
+  const result = await sql`
+    SELECT id, status, filename, total_rows, imported_rows, duplicate_rows, failed_rows,
+           error_sample, created_at, completed_at
+    FROM lead_import_jobs
+    WHERE id = ${req.params.jobId} AND user_id = ${req.user.id}
+  `.execute(db);
 
   if (result.rows.length === 0) {
     return res.status(404).json({ error: 'Import job not found.' });
@@ -1391,24 +1303,22 @@ router.get('/leads/import/:jobId/status', async (req, res) => {
  */
 router.get('/multifamily/summary', async (req, res) => {
   const [objectsRes, associationsRes] = await Promise.all([
-    pool.query(
-      `SELECT
-         object_type,
-         COUNT(*)::int AS count
-       FROM multifamily_objects
-       WHERE user_id = $1
-       GROUP BY object_type`,
-      [req.user.id]
-    ),
-    pool.query(
-      `SELECT
-         entity_type,
-         COUNT(*)::int AS count
-       FROM multifamily_object_associations
-       WHERE user_id = $1
-       GROUP BY entity_type`,
-      [req.user.id]
-    ),
+    sql`
+      SELECT
+        object_type,
+        COUNT(*)::int AS count
+      FROM multifamily_objects
+      WHERE user_id = ${req.user.id}
+      GROUP BY object_type
+    `.execute(db),
+    sql`
+      SELECT
+        entity_type,
+        COUNT(*)::int AS count
+      FROM multifamily_object_associations
+      WHERE user_id = ${req.user.id}
+      GROUP BY entity_type
+    `.execute(db),
   ]);
 
   const objectCounts = {
@@ -1478,8 +1388,8 @@ router.get('/multifamily/entities', async (req, res) => {
   const limitIdx = params.length;
 
   if (entityType === 'contact') {
-    const result = await pool.query(
-      `SELECT
+    const result = await sql`
+SELECT
          c.id,
          c.name,
          c.email,
@@ -1497,9 +1407,8 @@ router.get('/multifamily/entities', async (req, res) => {
        WHERE c.user_id = $1
        ${searchFilter}
        ORDER BY association_count DESC, c.created_at DESC
-       LIMIT $${limitIdx}`,
-      params
-    );
+       LIMIT $${limitIdx}
+`.execute(db);
 
     return res.json({
       entityType,
@@ -1517,8 +1426,8 @@ router.get('/multifamily/entities', async (req, res) => {
   }
 
   if (entityType === 'deal') {
-    const result = await pool.query(
-      `SELECT
+    const result = await sql`
+SELECT
          d.id,
          d.title,
          d.stage,
@@ -1539,9 +1448,8 @@ router.get('/multifamily/entities', async (req, res) => {
        WHERE d.user_id = $1
        ${searchFilter}
        ORDER BY association_count DESC, d.created_at DESC
-       LIMIT $${limitIdx}`,
-      params
-    );
+       LIMIT $${limitIdx}
+`.execute(db);
 
     return res.json({
       entityType,
@@ -1560,8 +1468,8 @@ router.get('/multifamily/entities', async (req, res) => {
     });
   }
 
-  const result = await pool.query(
-    `WITH company_rollup AS (
+  const result = await sql`
+WITH company_rollup AS (
        SELECT
          LOWER(BTRIM(company)) AS company_key,
          MAX(BTRIM(company)) AS company_name,
@@ -1597,9 +1505,8 @@ router.get('/multifamily/entities', async (req, res) => {
      WHERE 1 = 1
      ${searchFilter}
      ORDER BY association_count DESC, (contact_count + lead_count) DESC, company_name ASC
-     LIMIT $${limitIdx}`,
-    params
-  );
+     LIMIT $${limitIdx}
+`.execute(db);
 
   return res.json({
     entityType,
@@ -1631,8 +1538,8 @@ router.get('/multifamily/objects', async (req, res) => {
     whereClause += ` AND o.object_type = $${params.length}`;
   }
 
-  const result = await pool.query(
-    `SELECT
+  const result = await sql`
+SELECT
        o.*,
        COUNT(a.id)::int AS total_association_count,
        COUNT(a.id) FILTER (WHERE a.entity_type = 'outbound_lead')::int AS outbound_lead_count,
@@ -1645,9 +1552,8 @@ router.get('/multifamily/objects', async (req, res) => {
       AND a.user_id = o.user_id
      WHERE ${whereClause}
      GROUP BY o.id
-     ORDER BY o.object_type, o.updated_at DESC`,
-    params
-  );
+     ORDER BY o.object_type, o.updated_at DESC
+`.execute(db);
 
   return res.json({
     total: result.rows.length,
@@ -1662,14 +1568,13 @@ router.get('/multifamily/objects', async (req, res) => {
 router.post('/multifamily/objects', validateBody(CreateMultifamilyObjectSchema), async (req, res) => {
   const { objectType, name, description, metadata } = req.validatedBody;
 
-  const insertedRes = await pool.query(
-    `INSERT INTO multifamily_objects
+  const insertedRes = await sql`
+INSERT INTO multifamily_objects
       (user_id, object_type, name, description, metadata, updated_at)
      VALUES
-      ($1, $2, $3, $4, $5::jsonb, NOW())
-     RETURNING *`,
-    [req.user.id, objectType, name, description, JSON.stringify(metadata)]
-  );
+      (${req.user.id}, ${objectType}, ${name}, ${description}, ${JSON.stringify(metadata)}::jsonb, NOW())
+     RETURNING *
+`.execute(db);
 
   const inserted = insertedRes.rows[0];
   logAction(req.user.id, req.user.email, 'multifamily_object_created', 'multifamily_object', inserted.id, inserted.name, {
@@ -1693,14 +1598,13 @@ router.post('/multifamily/objects', validateBody(CreateMultifamilyObjectSchema),
  * Body: { name?, description?, metadata? }
  */
 router.patch('/multifamily/objects/:id', async (req, res) => {
-  const existingRes = await pool.query(
-    `SELECT *
+  const existingRes = await sql`
+SELECT *
      FROM multifamily_objects
-     WHERE id = $1
-       AND user_id = $2
-     LIMIT 1`,
-    [req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     LIMIT 1
+`.execute(db);
   if (!existingRes.rows.length) {
     return res.status(404).json({ error: 'Multifamily object not found.' });
   }
@@ -1715,17 +1619,16 @@ router.patch('/multifamily/objects/:id', async (req, res) => {
     return res.status(400).json({ error: 'name cannot be empty.' });
   }
 
-  const updatedRes = await pool.query(
-    `UPDATE multifamily_objects
-     SET name = $1,
-         description = $2,
-         metadata = $3::jsonb,
+  const updatedRes = await sql`
+UPDATE multifamily_objects
+     SET name = ${nextName},
+         description = ${nextDescription},
+         metadata = ${JSON.stringify(nextMetadata)}::jsonb,
          updated_at = NOW()
-     WHERE id = $4
-       AND user_id = $5
-     RETURNING *`,
-    [nextName, nextDescription, JSON.stringify(nextMetadata), req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     RETURNING *
+`.execute(db);
 
   const updated = updatedRes.rows[0];
   logAction(req.user.id, req.user.email, 'multifamily_object_updated', 'multifamily_object', updated.id, updated.name, {
@@ -1748,13 +1651,12 @@ router.patch('/multifamily/objects/:id', async (req, res) => {
  * DELETE /api/outbound/multifamily/objects/:id
  */
 router.delete('/multifamily/objects/:id', async (req, res) => {
-  const deletedRes = await pool.query(
-    `DELETE FROM multifamily_objects
-     WHERE id = $1
-       AND user_id = $2
-     RETURNING id, name, object_type`,
-    [req.params.id, req.user.id]
-  );
+  const deletedRes = await sql`
+DELETE FROM multifamily_objects
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     RETURNING id, name, object_type
+`.execute(db);
   if (!deletedRes.rows.length) {
     return res.status(404).json({ error: 'Multifamily object not found.' });
   }
@@ -1776,14 +1678,13 @@ router.get('/multifamily/objects/:id/associations', async (req, res) => {
     return res.status(400).json({ error: 'Invalid entityType.' });
   }
 
-  const objectRes = await pool.query(
-    `SELECT id
+  const objectRes = await sql`
+SELECT id
      FROM multifamily_objects
-     WHERE id = $1
-       AND user_id = $2
-     LIMIT 1`,
-    [req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     LIMIT 1
+`.execute(db);
   if (!objectRes.rows.length) {
     return res.status(404).json({ error: 'Multifamily object not found.' });
   }
@@ -1795,8 +1696,8 @@ router.get('/multifamily/objects/:id/associations', async (req, res) => {
     filter += ` AND a.entity_type = $${params.length}`;
   }
 
-  const result = await pool.query(
-    `SELECT
+  const result = await sql`
+SELECT
        a.*,
        CASE
          WHEN a.entity_type = 'outbound_lead' THEN l.name
@@ -1831,9 +1732,8 @@ router.get('/multifamily/objects/:id/associations', async (req, res) => {
        ON a.entity_type = 'deal'
       AND d.id = a.entity_id
      WHERE ${filter}
-     ORDER BY a.updated_at DESC`,
-    params
-  );
+     ORDER BY a.updated_at DESC
+`.execute(db);
 
   return res.json({
     total: result.rows.length,
@@ -1846,14 +1746,13 @@ router.get('/multifamily/objects/:id/associations', async (req, res) => {
  * Body: { entityType, entityId?, companyName?, metadata? }
  */
 router.post('/multifamily/objects/:id/associations', async (req, res) => {
-  const objectRes = await pool.query(
-    `SELECT id, object_type, name
+  const objectRes = await sql`
+SELECT id, object_type, name
      FROM multifamily_objects
-     WHERE id = $1
-       AND user_id = $2
-     LIMIT 1`,
-    [req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     LIMIT 1
+`.execute(db);
   if (!objectRes.rows.length) {
     return res.status(404).json({ error: 'Multifamily object not found.' });
   }
@@ -1887,27 +1786,17 @@ router.post('/multifamily/objects/:id/associations', async (req, res) => {
     targetKey = entityId;
   }
 
-  const associationRes = await pool.query(
-    `INSERT INTO multifamily_object_associations
+  const associationRes = await sql`
+INSERT INTO multifamily_object_associations
       (user_id, object_id, object_type, entity_type, entity_id, company_name, target_key, metadata, updated_at)
      VALUES
-      ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, NOW())
+      (${req.user.id}, ${object.id}, ${object.object_type}, ${entityType}, ${entityType === 'company' ? null : entityId}, ${entityType === 'company' ? companyName : null}, ${targetKey}, ${JSON.stringify(metadata)}::jsonb, NOW())
      ON CONFLICT (user_id, object_id, entity_type, target_key)
      DO UPDATE SET
        metadata = EXCLUDED.metadata,
        updated_at = NOW()
-     RETURNING *`,
-    [
-      req.user.id,
-      object.id,
-      object.object_type,
-      entityType,
-      entityType === 'company' ? null : entityId,
-      entityType === 'company' ? companyName : null,
-      targetKey,
-      JSON.stringify(metadata),
-    ]
-  );
+     RETURNING *
+`.execute(db);
 
   const association = associationRes.rows[0];
   logAction(
@@ -1941,14 +1830,13 @@ router.post('/multifamily/objects/:id/associations', async (req, res) => {
  * Body: { entityType, entityIds?, companyNames?, metadata? }
  */
 router.post('/multifamily/objects/:id/associations/bulk', async (req, res) => {
-  const objectRes = await pool.query(
-    `SELECT id, object_type, name
+  const objectRes = await sql`
+SELECT id, object_type, name
      FROM multifamily_objects
-     WHERE id = $1
-       AND user_id = $2
-     LIMIT 1`,
-    [req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     LIMIT 1
+`.execute(db);
   if (!objectRes.rows.length) {
     return res.status(404).json({ error: 'Multifamily object not found.' });
   }
@@ -1977,18 +1865,17 @@ router.post('/multifamily/objects/:id/associations/bulk', async (req, res) => {
     }
 
     for (const name of companyNames) {
-      const associationRes = await pool.query(
-        `INSERT INTO multifamily_object_associations
+      const associationRes = await sql`
+INSERT INTO multifamily_object_associations
           (user_id, object_id, object_type, entity_type, entity_id, company_name, target_key, metadata, updated_at)
          VALUES
-          ($1, $2, $3, 'company', NULL, $4, $5, $6::jsonb, NOW())
+          (${req.user.id}, ${object.id}, ${object.object_type}, 'company', NULL, ${name}, ${name.toLowerCase()}, ${JSON.stringify(metadata)}::jsonb, NOW())
          ON CONFLICT (user_id, object_id, entity_type, target_key)
          DO UPDATE SET
            metadata = EXCLUDED.metadata,
            updated_at = NOW()
-         RETURNING *`,
-        [req.user.id, object.id, object.object_type, name, name.toLowerCase(), JSON.stringify(metadata)]
-      );
+         RETURNING *
+`.execute(db);
 
       associations.push(
         outboundUtils.mapMultifamilyAssociationRow({
@@ -2029,18 +1916,17 @@ router.post('/multifamily/objects/:id/associations/bulk', async (req, res) => {
       continue;
     }
 
-    const associationRes = await pool.query(
-      `INSERT INTO multifamily_object_associations
+    const associationRes = await sql`
+INSERT INTO multifamily_object_associations
         (user_id, object_id, object_type, entity_type, entity_id, company_name, target_key, metadata, updated_at)
        VALUES
-        ($1, $2, $3, $4, $5, NULL, $5, $6::jsonb, NOW())
+        (${req.user.id}, ${object.id}, ${object.object_type}, ${entityType}, $5, NULL, ${entityId}, ${JSON.stringify(metadata)}::jsonb, NOW())
        ON CONFLICT (user_id, object_id, entity_type, target_key)
        DO UPDATE SET
          metadata = EXCLUDED.metadata,
          updated_at = NOW()
-       RETURNING *`,
-      [req.user.id, object.id, object.object_type, entityType, entityId, JSON.stringify(metadata)]
-    );
+       RETURNING *
+`.execute(db);
 
     associations.push(
       outboundUtils.mapMultifamilyAssociationRow({
@@ -2081,14 +1967,13 @@ router.post('/multifamily/objects/:id/associations/bulk', async (req, res) => {
  * DELETE /api/outbound/multifamily/objects/:id/associations/:associationId
  */
 router.delete('/multifamily/objects/:id/associations/:associationId', async (req, res) => {
-  const deletedRes = await pool.query(
-    `DELETE FROM multifamily_object_associations
-     WHERE id = $1
-       AND object_id = $2
-       AND user_id = $3
-     RETURNING id, object_id, entity_type, entity_id, company_name`,
-    [req.params.associationId, req.params.id, req.user.id]
-  );
+  const deletedRes = await sql`
+DELETE FROM multifamily_object_associations
+     WHERE id = ${req.params.associationId}
+       AND object_id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     RETURNING id, object_id, entity_type, entity_id, company_name
+`.execute(db);
   if (!deletedRes.rows.length) {
     return res.status(404).json({ error: 'Multifamily association not found.' });
   }
@@ -2132,8 +2017,68 @@ router.get('/leads', validateQuery(LeadFiltersSchema), async (req, res) => {
     return res.status(400).json({ error: 'objectType and objectId must both be valid when provided.' });
   }
 
-  const params = [req.user.id, Number(minScore)];
-  let sql = `
+  const conditions = [
+    sql`l.user_id = ${req.user.id}`,
+    sql`l.total_score >= ${Number(minScore)}`,
+  ];
+
+  if (status) {
+    conditions.push(sql`l.status = ${status}`);
+  }
+
+  if (search) {
+    const searchPattern = `%${search}%`;
+    conditions.push(sql`(
+      l.name ILIKE ${searchPattern}
+      OR COALESCE(l.company, '') ILIKE ${searchPattern}
+      OR COALESCE(l.title, '') ILIKE ${searchPattern}
+      OR COALESCE(l.email, '') ILIKE ${searchPattern}
+    )`);
+  }
+
+  if (objectTypeFilter && objectIdFilter) {
+    conditions.push(sql`
+      EXISTS (
+        SELECT 1
+        FROM multifamily_object_associations moa
+        WHERE moa.user_id = l.user_id
+          AND moa.entity_type = 'outbound_lead'
+          AND moa.entity_id = l.id
+          AND moa.object_type = ${objectTypeFilter}
+          AND moa.object_id = ${objectIdFilter}
+      )
+    `);
+  }
+
+  for (const objectFilter of specificObjectFilters) {
+    conditions.push(sql`
+      EXISTS (
+        SELECT 1
+        FROM multifamily_object_associations moa
+        WHERE moa.user_id = l.user_id
+          AND moa.entity_type = 'outbound_lead'
+          AND moa.entity_id = l.id
+          AND moa.object_type = ${objectFilter.objectType}
+          AND moa.object_id = ${objectFilter.objectId}
+      )
+    `);
+  }
+
+  let cursorClause = sql``;
+  if (cursor) {
+    try {
+      const parsed = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
+      if (typeof parsed.score === 'number' && parsed.id) {
+        cursorClause = sql`AND (l.total_score < ${parsed.score} OR (l.total_score = ${parsed.score} AND l.id < ${parsed.id}::uuid))`;
+      }
+    } catch {
+      return res.status(400).json({ error: 'Invalid cursor.' });
+    }
+  }
+
+  const safeLimit = Math.min(500, Math.max(1, Number(limit)));
+
+  const query = sql`
     SELECT
       l.*,
       COALESCE(issue_counts.open_issue_count, 0)::int AS open_issue_count,
@@ -2145,90 +2090,16 @@ router.get('/leads', validateQuery(LeadFiltersSchema), async (req, res) => {
         COUNT(*) FILTER (WHERE status = 'open')::int AS open_issue_count,
         COUNT(*) FILTER (WHERE status = 'open' AND is_blocking = TRUE)::int AS open_blocking_issue_count
       FROM data_quality_issues
-      WHERE user_id = $1
+      WHERE user_id = ${req.user.id}
       GROUP BY lead_id
     ) issue_counts ON issue_counts.lead_id = l.id
-    WHERE l.user_id = $1
-      AND l.total_score >= $2
+    WHERE ${sql.join(conditions, ' AND ')}
+    ${cursorClause}
+    ORDER BY l.total_score DESC, l.id DESC
+    LIMIT ${safeLimit + 1}
   `;
 
-  if (status) {
-    params.push(status);
-    sql += ` AND l.status = $${params.length}`;
-  }
-
-  if (search) {
-    params.push(`%${search}%`);
-    const idx = params.length;
-    sql += ` AND (
-      l.name ILIKE $${idx}
-      OR COALESCE(l.company, '') ILIKE $${idx}
-      OR COALESCE(l.title, '') ILIKE $${idx}
-      OR COALESCE(l.email, '') ILIKE $${idx}
-    )`;
-  }
-
-  if (objectTypeFilter && objectIdFilter) {
-    params.push(objectTypeFilter);
-    const objectTypeIdx = params.length;
-    params.push(objectIdFilter);
-    const objectIdIdx = params.length;
-    sql += `
-      AND EXISTS (
-        SELECT 1
-        FROM multifamily_object_associations moa
-        WHERE moa.user_id = l.user_id
-          AND moa.entity_type = 'outbound_lead'
-          AND moa.entity_id = l.id
-          AND moa.object_type = $${objectTypeIdx}
-          AND moa.object_id = $${objectIdIdx}
-      )`;
-  }
-
-  for (const objectFilter of specificObjectFilters) {
-    params.push(objectFilter.objectType);
-    const objectTypeIdx = params.length;
-    params.push(objectFilter.objectId);
-    const objectIdIdx = params.length;
-    sql += `
-      AND EXISTS (
-        SELECT 1
-        FROM multifamily_object_associations moa
-        WHERE moa.user_id = l.user_id
-          AND moa.entity_type = 'outbound_lead'
-          AND moa.entity_id = l.id
-          AND moa.object_type = $${objectTypeIdx}
-          AND moa.object_id = $${objectIdIdx}
-      )`;
-  }
-
-  let cursorScore = null;
-  let cursorId = null;
-  if (cursor) {
-    try {
-      const parsed = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
-      if (typeof parsed.score === 'number' && parsed.id) {
-        cursorScore = parsed.score;
-        cursorId = parsed.id;
-      }
-    } catch {
-      return res.status(400).json({ error: 'Invalid cursor.' });
-    }
-  }
-
-  if (cursorScore !== null && cursorId !== null) {
-    params.push(cursorScore);
-    const scoreIdx = params.length;
-    params.push(cursorId);
-    const idIdx = params.length;
-    sql += ` AND (l.total_score < $${scoreIdx} OR (l.total_score = $${scoreIdx} AND l.id < $${idIdx}::uuid))`;
-  }
-
-  const safeLimit = Math.min(500, Math.max(1, Number(limit)));
-  params.push(safeLimit + 1);
-  sql += ` ORDER BY l.total_score DESC, l.id DESC LIMIT $${params.length}`;
-
-  const result = await pool.query(sql, params);
+  const result = await query.execute(db);
   const rows = result.rows;
   const hasMore = rows.length > safeLimit;
   const leads = hasMore ? rows.slice(0, safeLimit) : rows;
@@ -2252,14 +2123,13 @@ router.get('/saved-views', async (req, res) => {
     return res.status(400).json({ error: 'Invalid saved view scope.' });
   }
 
-  const result = await pool.query(
-    `SELECT *
+  const result = await sql`
+SELECT *
      FROM outbound_saved_views
-     WHERE user_id = $1
-       AND scope = $2
-     ORDER BY is_default DESC, updated_at DESC`,
-    [req.user.id, scope]
-  );
+     WHERE user_id = ${req.user.id}
+       AND scope = ${scope}
+     ORDER BY is_default DESC, updated_at DESC
+`.execute(db);
 
   return res.json({
     total: result.rows.length,
@@ -2338,14 +2208,13 @@ router.post('/saved-views', async (req, res) => {
  * Body: { name?, filters?, displayOptions?, isDefault? }
  */
 router.patch('/saved-views/:id', async (req, res) => {
-  const existingRes = await pool.query(
-    `SELECT *
+  const existingRes = await sql`
+SELECT *
      FROM outbound_saved_views
-     WHERE id = $1
-       AND user_id = $2
-     LIMIT 1`,
-    [req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     LIMIT 1
+`.execute(db);
   if (!existingRes.rows.length) {
     return res.status(404).json({ error: 'Saved view not found.' });
   }
@@ -2417,13 +2286,12 @@ router.patch('/saved-views/:id', async (req, res) => {
  * DELETE /api/outbound/saved-views/:id
  */
 router.delete('/saved-views/:id', async (req, res) => {
-  const deletedRes = await pool.query(
-    `DELETE FROM outbound_saved_views
-     WHERE id = $1
-       AND user_id = $2
-     RETURNING id, name, scope`,
-    [req.params.id, req.user.id]
-  );
+  const deletedRes = await sql`
+DELETE FROM outbound_saved_views
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     RETURNING id, name, scope
+`.execute(db);
 
   if (!deletedRes.rows.length) {
     return res.status(404).json({ error: 'Saved view not found.' });
@@ -2444,13 +2312,12 @@ router.delete('/saved-views/:id', async (req, res) => {
 router.post('/leads/bulk', validateBody(BulkActionSchema), async (req, res) => {
   const { leadIds, actionType, payload } = req.validatedBody;
 
-  const leadsRes = await pool.query(
-    `SELECT id, name, status, suppression_reason
+  const leadsRes = await sql`
+SELECT id, name, status, suppression_reason
      FROM outbound_leads
-     WHERE user_id = $1
-       AND id = ANY($2::uuid[])`,
-    [req.user.id, leadIds]
-  );
+     WHERE user_id = ${req.user.id}
+       AND id = ANY(${leadIds}::uuid[])
+`.execute(db);
   const foundLeadIds = new Set(leadsRes.rows.map((lead) => lead.id));
   const missingLeadIds = leadIds.filter((leadId) => !foundLeadIds.has(leadId));
 
@@ -2472,14 +2339,13 @@ router.post('/leads/bulk', validateBody(BulkActionSchema), async (req, res) => {
 
   for (const lead of leadsRes.rows) {
     if (actionType === 'set_status') {
-      await pool.query(
-        `UPDATE outbound_leads
-         SET status = $1,
+      await sql`
+UPDATE outbound_leads
+         SET status = ${statusTarget},
              updated_at = NOW()
-         WHERE id = $2
-           AND user_id = $3`,
-        [statusTarget, lead.id, req.user.id]
-      );
+         WHERE id = ${lead.id}
+           AND user_id = ${req.user.id}
+`.execute(db);
       await logLeadEvent({
         userId: req.user.id,
         leadId: lead.id,
@@ -2494,15 +2360,14 @@ router.post('/leads/bulk', validateBody(BulkActionSchema), async (req, res) => {
     }
 
     if (actionType === 'suppress') {
-      await pool.query(
-        `UPDATE outbound_leads
+      await sql`
+UPDATE outbound_leads
          SET status = 'suppressed',
-             suppression_reason = $1,
+             suppression_reason = ${suppressionReason},
              updated_at = NOW()
-         WHERE id = $2
-           AND user_id = $3`,
-        [suppressionReason, lead.id, req.user.id]
-      );
+         WHERE id = ${lead.id}
+           AND user_id = ${req.user.id}
+`.execute(db);
       await logLeadEvent({
         userId: req.user.id,
         leadId: lead.id,
@@ -2527,15 +2392,14 @@ router.post('/leads/bulk', validateBody(BulkActionSchema), async (req, res) => {
     }
 
     if (actionType === 'unsuppress') {
-      await pool.query(
-        `UPDATE outbound_leads
+      await sql`
+UPDATE outbound_leads
          SET status = CASE WHEN status = 'suppressed' THEN 'new' ELSE status END,
              suppression_reason = NULL,
              updated_at = NOW()
-         WHERE id = $1
-           AND user_id = $2`,
-        [lead.id, req.user.id]
-      );
+         WHERE id = ${lead.id}
+           AND user_id = ${req.user.id}
+`.execute(db);
       await logLeadEvent({
         userId: req.user.id,
         leadId: lead.id,
@@ -2549,27 +2413,25 @@ router.post('/leads/bulk', validateBody(BulkActionSchema), async (req, res) => {
     }
 
     if (actionType === 'rescore') {
-      const leadFullRes = await pool.query(
-        `SELECT * FROM outbound_leads WHERE id = $1 AND user_id = $2`,
-        [lead.id, req.user.id]
-      );
+      const leadFullRes = await sql`
+SELECT * FROM outbound_leads WHERE id = ${lead.id} AND user_id = ${req.user.id}
+`.execute(db);
       if (!leadFullRes.rows.length) continue;
       const fullLead = leadFullRes.rows[0];
       const engagement = await computeEngagementSignals(req.user.id, fullLead.id);
       const score = scoreLead(fullLead, engagement);
 
-      await pool.query(
-        `UPDATE outbound_leads
-         SET fit_score = $1,
-             intent_score = $2,
-             total_score = $3,
-             status = $4,
-             next_recommended_action = $5,
+      await sql`
+UPDATE outbound_leads
+         SET fit_score = ${score.fitScore},
+             intent_score = ${score.intentScore},
+             total_score = ${score.totalScore},
+             status = ${score.status},
+             next_recommended_action = ${score.nextRecommendedAction},
              updated_at = NOW()
-         WHERE id = $6
-           AND user_id = $7`,
-        [score.fitScore, score.intentScore, score.totalScore, score.status, score.nextRecommendedAction, lead.id, req.user.id]
-      );
+         WHERE id = ${lead.id}
+           AND user_id = ${req.user.id}
+`.execute(db);
       await logLeadEvent({
         userId: req.user.id,
         leadId: lead.id,
@@ -2611,8 +2473,8 @@ router.post('/leads/bulk', validateBody(BulkActionSchema), async (req, res) => {
  */
 router.get('/sla/alerts', async (req, res) => {
   const [overdueLinkedInRes, staleEmailDraftsRes, stalePausedEnrollmentsRes, highScoreUncontactedRes] = await Promise.all([
-    pool.query(
-      `SELECT
+    sql`
+SELECT
          t.id AS alert_id,
          'linkedin_overdue'::text AS alert_type,
          'high'::text AS severity,
@@ -2625,16 +2487,15 @@ router.get('/sla/alerts', async (req, res) => {
          EXTRACT(EPOCH FROM (NOW() - t.due_at))::bigint AS age_seconds
        FROM linkedin_outreach_tasks t
        JOIN outbound_leads l ON l.id = t.lead_id
-       WHERE t.user_id = $1
+       WHERE t.user_id = ${req.user.id}
          AND t.status IN ('pending', 'drafted', 'approved', 'blocked')
          AND t.due_at IS NOT NULL
          AND t.due_at < NOW()
        ORDER BY t.due_at ASC
-       LIMIT 50`,
-      [req.user.id]
-    ),
-    pool.query(
-      `SELECT
+       LIMIT 50
+`.execute(db),
+    sql`
+SELECT
          d.id AS alert_id,
          'email_draft_stale'::text AS alert_type,
          'medium'::text AS severity,
@@ -2647,16 +2508,15 @@ router.get('/sla/alerts', async (req, res) => {
          EXTRACT(EPOCH FROM (NOW() - d.approved_at))::bigint AS age_seconds
        FROM outbound_message_drafts d
        JOIN outbound_leads l ON l.id = d.lead_id
-       WHERE d.user_id = $1
+       WHERE d.user_id = ${req.user.id}
          AND d.channel = 'email'
          AND d.status = 'approved'
          AND d.approved_at < NOW() - INTERVAL '24 hours'
        ORDER BY d.approved_at ASC
-       LIMIT 50`,
-      [req.user.id]
-    ),
-    pool.query(
-      `SELECT
+       LIMIT 50
+`.execute(db),
+    sql`
+SELECT
          e.id AS alert_id,
          'sequence_paused_stale'::text AS alert_type,
          'medium'::text AS severity,
@@ -2669,15 +2529,14 @@ router.get('/sla/alerts', async (req, res) => {
          EXTRACT(EPOCH FROM (NOW() - COALESCE(e.paused_at, e.updated_at)))::bigint AS age_seconds
        FROM outbound_sequence_enrollments e
        JOIN outbound_leads l ON l.id = e.lead_id
-       WHERE e.user_id = $1
+       WHERE e.user_id = ${req.user.id}
          AND e.status = 'paused'
          AND COALESCE(e.paused_at, e.updated_at) < NOW() - INTERVAL '48 hours'
        ORDER BY COALESCE(e.paused_at, e.updated_at) ASC
-       LIMIT 50`,
-      [req.user.id]
-    ),
-    pool.query(
-      `SELECT
+       LIMIT 50
+`.execute(db),
+    sql`
+SELECT
          l.id AS alert_id,
          'high_score_not_contacted'::text AS alert_type,
          'high'::text AS severity,
@@ -2688,14 +2547,13 @@ router.get('/sla/alerts', async (req, res) => {
          l.total_score,
          EXTRACT(EPOCH FROM (NOW() - l.updated_at))::bigint AS age_seconds
        FROM outbound_leads l
-       WHERE l.user_id = $1
+       WHERE l.user_id = ${req.user.id}
          AND l.total_score >= 75
          AND l.status IN ('new', 'qualified', 'queued')
          AND l.updated_at < NOW() - INTERVAL '72 hours'
        ORDER BY l.total_score DESC, l.updated_at ASC
-       LIMIT 50`,
-      [req.user.id]
-    ),
+       LIMIT 50
+`.execute(db),
   ]);
 
   const allAlerts = [
@@ -2774,8 +2632,8 @@ router.get('/data-quality/issues', async (req, res) => {
   params.push(limit);
 
   const [issuesRes, summaryRes] = await Promise.all([
-    pool.query(
-      `SELECT
+    sql`
+SELECT
          i.*,
          l.name AS lead_name,
          l.email AS lead_email,
@@ -2792,11 +2650,10 @@ router.get('/data-quality/issues', async (req, res) => {
            ELSE 3
          END,
          i.updated_at DESC
-       LIMIT $${params.length}`,
-      params
-    ),
-    pool.query(
-      `SELECT
+       LIMIT $${params.length}
+`.execute(db),
+    sql`
+SELECT
          COUNT(*) FILTER (WHERE status = 'open')::int AS open_count,
          COUNT(*) FILTER (WHERE status = 'open' AND is_blocking = TRUE)::int AS open_blocking_count,
          COUNT(*) FILTER (WHERE status = 'resolved')::int AS resolved_count,
@@ -2808,9 +2665,8 @@ router.get('/data-quality/issues', async (req, res) => {
              AND m.created_at >= NOW() - INTERVAL '30 days'
          ) AS merge_count_30d
        FROM data_quality_issues
-       WHERE user_id = $1`,
-      [req.user.id]
-    ),
+       WHERE user_id = ${req.user.id}
+`.execute(db),
   ]);
 
   return res.json({
@@ -2832,19 +2688,18 @@ router.get('/data-quality/issues', async (req, res) => {
  */
 router.get('/data-quality/merge-operations', async (req, res) => {
   const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
-  const result = await pool.query(
-    `SELECT
+  const result = await sql`
+SELECT
        m.*,
        l.name AS primary_lead_name,
        l.email AS primary_lead_email,
        l.company AS primary_lead_company
      FROM data_quality_merge_operations m
      LEFT JOIN outbound_leads l ON l.id = m.primary_lead_id
-     WHERE m.user_id = $1
+     WHERE m.user_id = ${req.user.id}
      ORDER BY m.created_at DESC
-     LIMIT $2`,
-    [req.user.id, limit]
-  );
+     LIMIT ${limit}
+`.execute(db);
 
   return res.json({
     total: result.rows.length,
@@ -2857,14 +2712,13 @@ router.get('/data-quality/merge-operations', async (req, res) => {
  * Body: { primaryLeadId?, duplicateLeadIds?[] }
  */
 router.post('/data-quality/issues/:id/merge', async (req, res) => {
-  const issueRes = await pool.query(
-    `SELECT id, issue_type, status, details, lead_id
+  const issueRes = await sql`
+SELECT id, issue_type, status, details, lead_id
      FROM data_quality_issues
-     WHERE id = $1
-       AND user_id = $2
-     LIMIT 1`,
-    [req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     LIMIT 1
+`.execute(db);
   if (!issueRes.rows.length) {
     return res.status(404).json({ error: 'Data quality issue not found.' });
   }
@@ -3203,16 +3057,15 @@ router.patch('/data-quality/issues/:id/status', async (req, res) => {
     return res.status(400).json({ error: 'Invalid status value.' });
   }
 
-  const updatedRes = await pool.query(
-    `UPDATE data_quality_issues
+  const updatedRes = await sql`
+UPDATE data_quality_issues
      SET status = $1,
-         resolved_at = CASE WHEN $1 IN ('resolved', 'dismissed') THEN NOW() ELSE NULL END,
+         resolved_at = CASE WHEN ${status} IN ('resolved', 'dismissed') THEN NOW() ELSE NULL END,
          updated_at = NOW()
-     WHERE id = $2
-       AND user_id = $3
-     RETURNING *`,
-    [status, req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     RETURNING *
+`.execute(db);
 
   if (!updatedRes.rows.length) {
     return res.status(404).json({ error: 'Data quality issue not found.' });
@@ -3224,14 +3077,13 @@ router.patch('/data-quality/issues/:id/status', async (req, res) => {
 
   const issueRow = updatedRes.rows[0];
   const leadRes = issueRow.lead_id
-    ? await pool.query(
-        `SELECT id AS lead_id, name AS lead_name, email AS lead_email, company AS lead_company, title AS lead_title, status AS lead_status
+    ? await sql`
+SELECT id AS lead_id, name AS lead_name, email AS lead_email, company AS lead_company, title AS lead_title, status AS lead_status
          FROM outbound_leads
-         WHERE id = $1
-           AND user_id = $2
-         LIMIT 1`,
-        [issueRow.lead_id, req.user.id]
-      )
+         WHERE id = ${issueRow.lead_id}
+           AND user_id = ${req.user.id}
+         LIMIT 1
+`.execute(db)
     : { rows: [] };
 
   return res.json(outboundUtils.mapDataQualityIssueRow({ ...issueRow, ...(leadRes.rows[0] || {}) }));
@@ -3327,14 +3179,13 @@ router.get('/workflows/rules', async (req, res) => {
     filters.push('enabled = TRUE');
   }
 
-  const result = await pool.query(
-    `SELECT id, user_id, name, description, enabled, trigger_event, priority, conditions, true_actions, false_actions,
+  const result = await sql`
+SELECT id, user_id, name, description, enabled, trigger_event, priority, conditions, true_actions, false_actions,
             last_tested_at, created_at, updated_at
      FROM workflow_rules
      WHERE ${filters.join(' AND ')}
-     ORDER BY priority ASC, created_at DESC`,
-    params
-  );
+     ORDER BY priority ASC, created_at DESC
+`.execute(db);
 
   return res.json({
     total: result.rows.length,
@@ -3354,23 +3205,12 @@ router.post('/workflows/rules', validateBody(CreateWorkflowRuleSchema), async (r
     return res.status(400).json({ error: 'One or more actions are invalid.' });
   }
 
-  const result = await pool.query(
-    `INSERT INTO workflow_rules
+  const result = await sql`
+INSERT INTO workflow_rules
       (user_id, name, description, enabled, trigger_event, priority, conditions, true_actions, false_actions)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb)
-     RETURNING *`,
-    [
-      req.user.id,
-      name,
-      description,
-      enabled,
-      triggerEvent,
-      priority,
-      JSON.stringify(conditions),
-      JSON.stringify(trueActions),
-      JSON.stringify(falseActions),
-    ]
-  );
+     VALUES (${req.user.id}, ${name}, ${description}, ${enabled}, ${triggerEvent}, ${priority}, ${JSON.stringify(conditions)}::jsonb, ${JSON.stringify(trueActions)}::jsonb, ${JSON.stringify(falseActions)}::jsonb)
+     RETURNING *
+`.execute(db);
 
   const rule = result.rows[0];
   logAction(req.user.id, req.user.email, 'outbound_workflow_rule_created', 'workflow_rule', rule.id, rule.name, {
@@ -3386,13 +3226,12 @@ router.post('/workflows/rules', validateBody(CreateWorkflowRuleSchema), async (r
  * PATCH /api/outbound/workflows/rules/:id
  */
 router.patch('/workflows/rules/:id', async (req, res) => {
-  const existingRes = await pool.query(
-    `SELECT *
+  const existingRes = await sql`
+SELECT *
      FROM workflow_rules
-     WHERE id = $1
-       AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+`.execute(db);
   if (!existingRes.rows.length) {
     return res.status(404).json({ error: 'Workflow rule not found.' });
   }
@@ -3426,33 +3265,21 @@ router.patch('/workflows/rules/:id', async (req, res) => {
     return res.status(400).json({ error: 'One or more actions are invalid.' });
   }
 
-  const updatedRes = await pool.query(
-    `UPDATE workflow_rules
-     SET name = $1,
-         description = $2,
-         enabled = $3,
-         trigger_event = $4,
-         priority = $5,
-         conditions = $6::jsonb,
-         true_actions = $7::jsonb,
-         false_actions = $8::jsonb,
+  const updatedRes = await sql`
+UPDATE workflow_rules
+     SET name = ${name},
+         description = ${description || null},
+         enabled = ${enabled},
+         trigger_event = ${triggerEvent},
+         priority = ${priority},
+         conditions = ${JSON.stringify(conditions)}::jsonb,
+         true_actions = ${JSON.stringify(trueActions)}::jsonb,
+         false_actions = ${JSON.stringify(falseActions)}::jsonb,
          updated_at = NOW()
-     WHERE id = $9
-       AND user_id = $10
-     RETURNING *`,
-    [
-      name,
-      description || null,
-      enabled,
-      triggerEvent,
-      priority,
-      JSON.stringify(conditions),
-      JSON.stringify(trueActions),
-      JSON.stringify(falseActions),
-      req.params.id,
-      req.user.id,
-    ]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     RETURNING *
+`.execute(db);
 
   const updated = updatedRes.rows[0];
   logAction(req.user.id, req.user.email, 'outbound_workflow_rule_updated', 'workflow_rule', updated.id, updated.name, {
@@ -3469,26 +3296,24 @@ router.patch('/workflows/rules/:id', async (req, res) => {
  */
 router.get('/workflows/rules/:id/runs', async (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query.limit || 20)));
-  const existingRes = await pool.query(
-    `SELECT id
+  const existingRes = await sql`
+SELECT id
      FROM workflow_rules
-     WHERE id = $1
-       AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+`.execute(db);
   if (!existingRes.rows.length) {
     return res.status(404).json({ error: 'Workflow rule not found.' });
   }
 
-  const runsRes = await pool.query(
-    `SELECT *
+  const runsRes = await sql`
+SELECT *
      FROM workflow_rule_runs
-     WHERE rule_id = $1
-       AND user_id = $2
+     WHERE rule_id = ${req.params.id}
+       AND user_id = ${req.user.id}
      ORDER BY created_at DESC
-     LIMIT $3`,
-    [req.params.id, req.user.id, limit]
-  );
+     LIMIT ${limit}
+`.execute(db);
 
   return res.json({
     total: runsRes.rows.length,
@@ -3501,13 +3326,12 @@ router.get('/workflows/rules/:id/runs', async (req, res) => {
  * Body: { leadId?, eventData?, triggerEvent?, applyActions?: boolean }
  */
 router.post('/workflows/rules/:id/test', async (req, res) => {
-  const ruleRes = await pool.query(
-    `SELECT *
+  const ruleRes = await sql`
+SELECT *
      FROM workflow_rules
-     WHERE id = $1
-       AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+`.execute(db);
   if (!ruleRes.rows.length) {
     return res.status(404).json({ error: 'Workflow rule not found.' });
   }
@@ -3535,14 +3359,13 @@ router.post('/workflows/rules/:id/test', async (req, res) => {
     includeDisabled: true,
   });
 
-  await pool.query(
-    `UPDATE workflow_rules
+  await sql`
+UPDATE workflow_rules
      SET last_tested_at = NOW(),
          updated_at = NOW()
-     WHERE id = $1
-       AND user_id = $2`,
-    [rule.id, req.user.id]
-  );
+     WHERE id = ${rule.id}
+       AND user_id = ${req.user.id}
+`.execute(db);
 
   const summary = ruleRuns[0] || {
     ruleId: rule.id,
@@ -3672,10 +3495,9 @@ router.patch('/campaigns/:campaignId/members/:memberId/status', async (req, res)
  * POST /api/outbound/leads/:id/score
  */
 router.post('/leads/:id/score', async (req, res) => {
-  const leadRes = await pool.query(
-    `SELECT * FROM outbound_leads WHERE id = $1 AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
+  const leadRes = await sql`
+SELECT * FROM outbound_leads WHERE id = ${req.params.id} AND user_id = ${req.user.id}
+`.execute(db);
 
   if (leadRes.rows.length === 0) {
     return res.status(404).json({ error: 'Lead not found.' });
@@ -3685,25 +3507,17 @@ router.post('/leads/:id/score', async (req, res) => {
   const engagement = await computeEngagementSignals(req.user.id, lead.id);
   const score = scoreLead(lead, engagement);
 
-  const updated = await pool.query(
-    `UPDATE outbound_leads
-     SET fit_score = $1,
-         intent_score = $2,
-         total_score = $3,
-         status = $4,
-         next_recommended_action = $5,
+  const updated = await sql`
+UPDATE outbound_leads
+     SET fit_score = ${score.fitScore},
+         intent_score = ${score.intentScore},
+         total_score = ${score.totalScore},
+         status = ${score.status},
+         next_recommended_action = ${score.nextRecommendedAction},
          updated_at = NOW()
-     WHERE id = $6
-     RETURNING *`,
-    [
-      score.fitScore,
-      score.intentScore,
-      score.totalScore,
-      score.status,
-      score.nextRecommendedAction,
-      req.params.id,
-    ]
-  );
+     WHERE id = ${req.params.id}
+     RETURNING *
+`.execute(db);
 
   await logLeadEvent({
     userId: req.user.id,
@@ -3727,10 +3541,9 @@ router.post('/leads/:id/score', async (req, res) => {
  * Phase 21 Slice 1: explainable scoring + score history timeline
  */
 router.get('/scoring/:leadId/explain', async (req, res) => {
-  const leadRes = await pool.query(
-    `SELECT * FROM outbound_leads WHERE id = $1 AND user_id = $2`,
-    [req.params.leadId, req.user.id]
-  );
+  const leadRes = await sql`
+SELECT * FROM outbound_leads WHERE id = ${req.params.leadId} AND user_id = ${req.user.id}
+`.execute(db);
   if (leadRes.rows.length === 0) {
     return res.status(404).json({ error: 'Lead not found.' });
   }
@@ -3739,14 +3552,13 @@ router.get('/scoring/:leadId/explain', async (req, res) => {
   const engagement = await computeEngagementSignals(req.user.id, lead.id);
   const explanation = scoreLead(lead, engagement);
 
-  const historyRes = await pool.query(
-    `SELECT id, fit_score, intent_score, engagement_score, total_score, status, next_recommended_action, reasons, source, created_at
+  const historyRes = await sql`
+SELECT id, fit_score, intent_score, engagement_score, total_score, status, next_recommended_action, reasons, source, created_at
      FROM lead_score_history
-     WHERE user_id = $1 AND lead_id = $2
+     WHERE user_id = ${req.user.id} AND lead_id = ${lead.id}
      ORDER BY created_at DESC
-     LIMIT 30`,
-    [req.user.id, lead.id]
-  );
+     LIMIT 30
+`.execute(db);
 
   const latestHistory = historyRes.rows[0] || null;
   const previousHistory = historyRes.rows[1] || null;
@@ -3779,10 +3591,9 @@ router.get('/scoring/:leadId/explain', async (req, res) => {
 router.patch('/leads/:id/suppression', validateBody(SuppressionSchema), async (req, res) => {
   const { suppressed, reason } = req.validatedBody;
 
-  const leadRes = await pool.query(
-    `SELECT * FROM outbound_leads WHERE id = $1 AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
+  const leadRes = await sql`
+SELECT * FROM outbound_leads WHERE id = ${req.params.id} AND user_id = ${req.user.id}
+`.execute(db);
 
   if (leadRes.rows.length === 0) {
     return res.status(404).json({ error: 'Lead not found.' });
@@ -3792,19 +3603,18 @@ router.patch('/leads/:id/suppression', validateBody(SuppressionSchema), async (r
     return res.status(400).json({ error: 'Suppression reason is required.' });
   }
 
-  const updatedRes = await pool.query(
-    `UPDATE outbound_leads
+  const updatedRes = await sql`
+UPDATE outbound_leads
      SET status = CASE
           WHEN $1::boolean = TRUE THEN 'suppressed'
           WHEN status = 'suppressed' THEN 'new'
           ELSE status
         END,
-        suppression_reason = CASE WHEN $1::boolean = TRUE THEN $2 ELSE NULL END,
+        suppression_reason = CASE WHEN ${suppressed}::boolean = TRUE THEN ${reason} ELSE NULL END,
         updated_at = NOW()
-     WHERE id = $3 AND user_id = $4
-     RETURNING *`,
-    [suppressed, reason, req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id} AND user_id = ${req.user.id}
+     RETURNING *
+`.execute(db);
 
   const updatedLead = updatedRes.rows[0];
   await logLeadEvent({
@@ -3854,31 +3664,29 @@ router.post('/leads/:id/outcome', async (req, res) => {
     });
   }
 
-  const leadRes = await pool.query(
-    `SELECT id, name
+  const leadRes = await sql`
+SELECT id, name
      FROM outbound_leads
-     WHERE id = $1
-       AND user_id = $2`,
-    [req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+`.execute(db);
   if (!leadRes.rows.length) {
     return res.status(404).json({ error: 'Lead not found.' });
   }
 
-  const updatedRes = await pool.query(
-    `UPDATE outbound_leads
+  const updatedRes = await sql`
+UPDATE outbound_leads
      SET status = $1,
          suppression_reason = CASE
-           WHEN $1 = 'disqualified' THEN COALESCE($2, suppression_reason, 'Hard bounce')
+           WHEN ${config.leadStatus} = 'disqualified' THEN COALESCE(${note}, suppression_reason, 'Hard bounce')
            WHEN status = 'suppressed' THEN NULL
            ELSE suppression_reason
          END,
          updated_at = NOW()
-     WHERE id = $3
-       AND user_id = $4
-     RETURNING *`,
-    [config.leadStatus, note, req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     RETURNING *
+`.execute(db);
   const updatedLead = updatedRes.rows[0];
 
   await logLeadEvent({
@@ -3984,8 +3792,8 @@ router.get('/linkedin/tasks/board', async (req, res) => {
   params.push(limit);
   const limitIdx = params.length;
 
-  const tasksRes = await pool.query(
-    `SELECT
+  const tasksRes = await sql`
+SELECT
        t.*,
        l.name AS lead_name,
        l.email AS lead_email,
@@ -4012,9 +3820,8 @@ router.get('/linkedin/tasks/board', async (req, res) => {
        END,
        t.due_at ASC NULLS LAST,
        t.updated_at DESC
-     LIMIT $${limitIdx}`,
-    params
-  );
+     LIMIT $${limitIdx}
+`.execute(db);
 
   const boardBuckets = outboundUtils.mapTaskBoardBuckets(tasksRes.rows);
   const usage = await getDailySendUsage(req.user.id, 'linkedin');
@@ -4053,8 +3860,8 @@ router.post('/linkedin/tasks/rebalance', async (req, res) => {
   const fallbackCapacity = usage.limit > 0 ? usage.limit : 20;
   const dailyCapacity = Math.max(1, Math.min(500, Number.isFinite(requestedCapacity) && requestedCapacity > 0 ? requestedCapacity : fallbackCapacity));
 
-  const openRes = await pool.query(
-    `SELECT
+  const openRes = await sql`
+SELECT
        t.id,
        t.status,
        t.due_at,
@@ -4062,11 +3869,10 @@ router.post('/linkedin/tasks/rebalance', async (req, res) => {
        l.total_score AS lead_total_score
      FROM linkedin_outreach_tasks t
      LEFT JOIN outbound_leads l ON l.id = t.lead_id
-     WHERE t.user_id = $1
+     WHERE t.user_id = ${req.user.id}
        AND t.status IN ('pending', 'drafted', 'approved', 'blocked')
-     ORDER BY t.created_at ASC`,
-    [req.user.id]
-  );
+     ORDER BY t.created_at ASC
+`.execute(db);
 
   const openTasks = openRes.rows
     .map((row) => ({ ...row, priority_score: outboundUtils.computeLinkedinTaskPriority(row) }))
@@ -4099,14 +3905,13 @@ router.post('/linkedin/tasks/rebalance', async (req, res) => {
     const nextDueAt = new Date(start.getTime() + dayOffset * 24 * 60 * 60 * 1000);
     nextDueAt.setHours(9 + Math.min(8, slot), 0, 0, 0);
 
-    await pool.query(
-      `UPDATE linkedin_outreach_tasks
-       SET due_at = $1,
+    await sql`
+UPDATE linkedin_outreach_tasks
+       SET due_at = ${nextDueAt.toISOString()},
            updated_at = NOW()
-       WHERE id = $2
-         AND user_id = $3`,
-      [nextDueAt.toISOString(), task.id, req.user.id]
-    );
+       WHERE id = ${task.id}
+         AND user_id = ${req.user.id}
+`.execute(db);
     updatedTaskIds.push(task.id);
   }
 
@@ -4175,14 +3980,13 @@ router.post('/drafts/:id/send', async (req, res) => {
  */
 router.post('/linkedin/tasks/:id/complete', async (req, res) => {
   const { notes = null } = req.body;
-  const existingTaskRes = await pool.query(
-    `SELECT t.*, d.status AS draft_status, l.status AS lead_status, l.suppression_reason
+  const existingTaskRes = await sql`
+SELECT t.*, d.status AS draft_status, l.status AS lead_status, l.suppression_reason
      FROM linkedin_outreach_tasks t
      LEFT JOIN outbound_message_drafts d ON d.id = t.draft_id
      LEFT JOIN outbound_leads l ON l.id = t.lead_id
-     WHERE t.id = $1 AND t.user_id = $2`,
-    [req.params.id, req.user.id]
-  );
+     WHERE t.id = ${req.params.id} AND t.user_id = ${req.user.id}
+`.execute(db);
 
   if (existingTaskRes.rows.length === 0) {
     return res.status(404).json({ error: 'LinkedIn task not found.' });
@@ -4213,40 +4017,37 @@ router.post('/linkedin/tasks/:id/complete', async (req, res) => {
     });
   }
 
-  const taskRes = await pool.query(
-    `UPDATE linkedin_outreach_tasks
+  const taskRes = await sql`
+UPDATE linkedin_outreach_tasks
      SET status = 'completed',
          completed_at = NOW(),
-         notes = $1,
+         notes = ${notes},
          updated_at = NOW()
-     WHERE id = $2 AND user_id = $3
-     RETURNING *`,
-    [notes, req.params.id, req.user.id]
-  );
+     WHERE id = ${req.params.id} AND user_id = ${req.user.id}
+     RETURNING *
+`.execute(db);
 
   const task = taskRes.rows[0];
 
   if (task.draft_id) {
-    await pool.query(
-      `UPDATE outbound_message_drafts
+    await sql`
+UPDATE outbound_message_drafts
        SET status = 'sent',
            sent_at = COALESCE(sent_at, NOW()),
            updated_at = NOW()
-       WHERE id = $1
-         AND user_id = $2
-         AND status = 'approved'`,
-      [task.draft_id, req.user.id]
-    );
+       WHERE id = ${task.draft_id}
+         AND user_id = ${req.user.id}
+         AND status = 'approved'
+`.execute(db);
   }
 
-  await pool.query(
-    `UPDATE outbound_leads
+  await sql`
+UPDATE outbound_leads
      SET status = CASE WHEN status IN ('new', 'qualified', 'queued') THEN 'contacted' ELSE status END,
          last_outreach_channel = 'linkedin',
          updated_at = NOW()
-     WHERE id = $1 AND user_id = $2`,
-    [task.lead_id, req.user.id]
-  );
+     WHERE id = ${task.lead_id} AND user_id = ${req.user.id}
+`.execute(db);
 
   await logLeadEvent({
     userId: req.user.id,
@@ -4280,21 +4081,20 @@ router.get('/events/export', async (req, res) => {
   const days = Math.max(1, Math.min(365, Number(req.query.days || 30)));
   const limit = Math.max(1, Math.min(10000, Number(req.query.limit || 1000)));
 
-  const params = [req.user.id, days];
-  const filters = [`e.user_id = $1`, `e.created_at >= NOW() - ($2::text || ' days')::interval`];
+  const filters = [
+    sql`e.user_id = ${req.user.id}`,
+    sql`e.created_at >= NOW() - (${String(days)}::text || ' days')::interval`,
+  ];
 
   if (req.query.channel) {
-    params.push(String(req.query.channel));
-    filters.push(`e.channel = $${params.length}`);
+    filters.push(sql`e.channel = ${String(req.query.channel)}`);
   }
 
   if (req.query.eventType) {
-    params.push(String(req.query.eventType));
-    filters.push(`e.event_type = $${params.length}`);
+    filters.push(sql`e.event_type = ${String(req.query.eventType)}`);
   }
 
-  params.push(limit);
-  const sql = `
+  const query = sql`
     SELECT
       e.id,
       e.created_at,
@@ -4307,12 +4107,12 @@ router.get('/events/export', async (req, res) => {
       l.company AS lead_company
     FROM lead_source_events e
     LEFT JOIN outbound_leads l ON l.id = e.lead_id
-    WHERE ${filters.join(' AND ')}
+    WHERE ${sql.join(filters, ' AND ')}
     ORDER BY e.created_at DESC
-    LIMIT $${params.length}
+    LIMIT ${limit}
   `;
 
-  const result = await pool.query(sql, params);
+  const result = await query.execute(db);
 
   logAction(req.user.id, req.user.email, 'outbound_events_export', 'outbound_event', null, null, {
     format,
@@ -4371,16 +4171,15 @@ router.get('/audit/export', async (req, res) => {
   const days = Math.max(1, Math.min(365, Number(req.query.days || 30)));
   const limit = Math.max(1, Math.min(10000, Number(req.query.limit || 1000)));
 
-  const result = await pool.query(
-    `SELECT id, created_at, action, resource_type, resource_id, resource_name, metadata
+  const result = await sql`
+SELECT id, created_at, action, resource_type, resource_id, resource_name, metadata
      FROM audit_logs
-     WHERE user_id = $1
+     WHERE user_id = ${req.user.id}
        AND action LIKE 'outbound_%'
-       AND created_at >= NOW() - ($2::text || ' days')::interval
+       AND created_at >= NOW() - (${days}::text || ' days')::interval
      ORDER BY created_at DESC
-     LIMIT $3`,
-    [req.user.id, days, limit]
-  );
+     LIMIT ${limit}
+`.execute(db);
 
   logAction(req.user.id, req.user.email, 'outbound_audit_export', 'audit_log', null, null, {
     format,
@@ -4425,10 +4224,10 @@ router.put('/forecast/goals', validateBody(SaveGoalsSchema), async (req, res) =>
   const { periodType, targetMeetings, targetOpportunities, targetRevenue, notes } = req.validatedBody;
   const period = outboundUtils.getCurrentPeriodWindow(periodType);
 
-  const goalRes = await pool.query(
-    `INSERT INTO sales_goals
+  const goalRes = await sql`
+INSERT INTO sales_goals
       (user_id, period_type, period_start, period_end, target_meetings, target_opportunities, target_revenue, notes, updated_at)
-     VALUES ($1, $2, $3::date, $4::date, $5, $6, $7, $8, NOW())
+     VALUES (${req.user.id}, ${period.periodType}, ${period.periodStart}::date, ${period.periodEnd}::date, ${targetMeetings}, ${targetOpportunities}, ${targetRevenue}, ${notes}, NOW())
      ON CONFLICT (user_id, period_type, period_start, period_end)
      DO UPDATE SET
        target_meetings = EXCLUDED.target_meetings,
@@ -4436,18 +4235,8 @@ router.put('/forecast/goals', validateBody(SaveGoalsSchema), async (req, res) =>
        target_revenue = EXCLUDED.target_revenue,
        notes = EXCLUDED.notes,
        updated_at = NOW()
-     RETURNING *`,
-    [
-      req.user.id,
-      period.periodType,
-      period.periodStart,
-      period.periodEnd,
-      targetMeetings,
-      targetOpportunities,
-      targetRevenue,
-      notes,
-    ]
-  );
+     RETURNING *
+`.execute(db);
 
   const goal = goalRes.rows[0];
   logAction(
@@ -4516,8 +4305,8 @@ router.get('/attribution/summary', async (req, res) => {
  */
 router.get('/analytics/summary', async (req, res) => {
   const [leadStats, recentEvents, pendingLinkedInTasks, emailUsage, linkedinUsage, campaignStats] = await Promise.all([
-    pool.query(
-      `SELECT
+    sql`
+SELECT
          COUNT(*) AS total_leads,
          SUM(CASE WHEN status = 'qualified' THEN 1 ELSE 0 END) AS qualified_count,
          SUM(CASE WHEN status = 'contacted' THEN 1 ELSE 0 END) AS contacted_count,
@@ -4526,35 +4315,31 @@ router.get('/analytics/summary', async (req, res) => {
          SUM(CASE WHEN status = 'opportunity' THEN 1 ELSE 0 END) AS opportunity_count,
          AVG(total_score)::numeric(10,2) AS avg_total_score
        FROM outbound_leads
-       WHERE user_id = $1`,
-      [req.user.id]
-    ),
-    pool.query(
-      `SELECT channel, event_type, COUNT(*) AS event_count
+       WHERE user_id = ${req.user.id}
+`.execute(db),
+    sql`
+SELECT channel, event_type, COUNT(*) AS event_count
        FROM lead_source_events
-       WHERE user_id = $1
+       WHERE user_id = ${req.user.id}
          AND created_at >= NOW() - INTERVAL '7 days'
        GROUP BY channel, event_type
-       ORDER BY event_count DESC`,
-      [req.user.id]
-    ),
-    pool.query(
-      `SELECT COUNT(*) AS pending_count
+       ORDER BY event_count DESC
+`.execute(db),
+    sql`
+SELECT COUNT(*) AS pending_count
        FROM linkedin_outreach_tasks
-       WHERE user_id = $1
-         AND status IN ('pending', 'drafted', 'approved')`,
-      [req.user.id]
-    ),
+       WHERE user_id = ${req.user.id}
+         AND status IN ('pending', 'drafted', 'approved')
+`.execute(db),
     getDailySendUsage(req.user.id, 'email'),
     getDailySendUsage(req.user.id, 'linkedin'),
-    pool.query(
-      `SELECT
+    sql`
+SELECT
          COUNT(*)::int AS total_campaigns,
          COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0)::int AS active_campaigns
        FROM outbound_campaigns
-       WHERE user_id = $1`,
-      [req.user.id]
-    ),
+       WHERE user_id = ${req.user.id}
+`.execute(db),
   ]);
 
   return res.json({
@@ -4583,30 +4368,16 @@ const WORKSPACE_CONFIG_DEFAULTS = {
 };
 
 async function getOrCreateWorkspaceConfig(userId) {
-  const existing = await pool.query(
-    'SELECT * FROM outbound_workspace_config WHERE user_id = $1',
-    [userId]
-  );
+  const existing = await sql`SELECT * FROM outbound_workspace_config WHERE user_id = ${userId}`.execute(db);
   if (existing.rows.length > 0) return existing.rows[0];
-  const ins = await pool.query(
-    `INSERT INTO outbound_workspace_config
+  const ins = await sql`
+INSERT INTO outbound_workspace_config
        (user_id, sender_name, email_signature, daily_email_limit, daily_linkedin_limit,
         sla_draft_stale_hours, sla_linkedin_overdue_hours, sla_paused_stale_days,
         sla_high_score_not_contacted_days)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-     RETURNING *`,
-    [
-      userId,
-      WORKSPACE_CONFIG_DEFAULTS.sender_name,
-      WORKSPACE_CONFIG_DEFAULTS.email_signature,
-      WORKSPACE_CONFIG_DEFAULTS.daily_email_limit,
-      WORKSPACE_CONFIG_DEFAULTS.daily_linkedin_limit,
-      WORKSPACE_CONFIG_DEFAULTS.sla_draft_stale_hours,
-      WORKSPACE_CONFIG_DEFAULTS.sla_linkedin_overdue_hours,
-      WORKSPACE_CONFIG_DEFAULTS.sla_paused_stale_days,
-      WORKSPACE_CONFIG_DEFAULTS.sla_high_score_not_contacted_days,
-    ]
-  );
+     VALUES (${userId},${WORKSPACE_CONFIG_DEFAULTS.sender_name},${WORKSPACE_CONFIG_DEFAULTS.email_signature},${WORKSPACE_CONFIG_DEFAULTS.daily_email_limit},${WORKSPACE_CONFIG_DEFAULTS.daily_linkedin_limit},${WORKSPACE_CONFIG_DEFAULTS.sla_draft_stale_hours},${WORKSPACE_CONFIG_DEFAULTS.sla_linkedin_overdue_hours},${WORKSPACE_CONFIG_DEFAULTS.sla_paused_stale_days},${WORKSPACE_CONFIG_DEFAULTS.sla_high_score_not_contacted_days})
+     RETURNING *
+`.execute(db);
   return ins.rows[0];
 }
 
@@ -4656,12 +4427,12 @@ router.put('/workspace/config', validateBody(WorkspaceConfigSchema), async (req,
     return res.status(400).json({ error: 'dailyLinkedinLimit must be between 1 and 100.' });
   }
 
-  const result = await pool.query(
-    `INSERT INTO outbound_workspace_config
+  const result = await sql`
+INSERT INTO outbound_workspace_config
        (user_id, sender_name, email_signature, daily_email_limit, daily_linkedin_limit,
         sla_draft_stale_hours, sla_linkedin_overdue_hours, sla_paused_stale_days,
         sla_high_score_not_contacted_days, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+     VALUES (${req.user.id},${String(senderName ?? '').slice(0, 200)},${String(emailSignature ?? '').slice(0, 2000)},${emailLimitVal},${linkedinLimitVal},${Math.max(1, Math.round(Number(slaDraftStaleHours ?? 24)))},${Math.max(1, Math.round(Number(slaLinkedinOverdueHours ?? 24)))},${Math.max(1, Math.round(Number(slaPausedStaleDays ?? 3)))},${Math.max(1, Math.round(Number(slaHighScoreNotContactedDays ?? 2)))},NOW())
      ON CONFLICT (user_id) DO UPDATE SET
        sender_name = EXCLUDED.sender_name,
        email_signature = EXCLUDED.email_signature,
@@ -4672,19 +4443,8 @@ router.put('/workspace/config', validateBody(WorkspaceConfigSchema), async (req,
        sla_paused_stale_days = EXCLUDED.sla_paused_stale_days,
        sla_high_score_not_contacted_days = EXCLUDED.sla_high_score_not_contacted_days,
        updated_at = NOW()
-     RETURNING *`,
-    [
-      req.user.id,
-      String(senderName ?? '').slice(0, 200),
-      String(emailSignature ?? '').slice(0, 2000),
-      emailLimitVal,
-      linkedinLimitVal,
-      Math.max(1, Math.round(Number(slaDraftStaleHours ?? 24))),
-      Math.max(1, Math.round(Number(slaLinkedinOverdueHours ?? 24))),
-      Math.max(1, Math.round(Number(slaPausedStaleDays ?? 3))),
-      Math.max(1, Math.round(Number(slaHighScoreNotContactedDays ?? 2))),
-    ]
-  );
+     RETURNING *
+`.execute(db);
 
   return res.json(formatWorkspaceConfig(result.rows[0]));
 });
@@ -4707,10 +4467,7 @@ router.post('/bulk/sequence-enroll', async (req, res) => {
     return res.status(400).json({ error: 'sequenceId is required.' });
   }
 
-  const seqCheck = await pool.query(
-    'SELECT id FROM outbound_sequences WHERE id = $1 AND user_id = $2',
-    [sequenceId, req.user.id]
-  );
+  const seqCheck = await sql`SELECT id FROM outbound_sequences WHERE id = ${sequenceId} AND user_id = ${req.user.id}`.execute(db);
   if (seqCheck.rows.length === 0) {
     return res.status(404).json({ error: 'Sequence not found.' });
   }
@@ -4719,10 +4476,7 @@ router.post('/bulk/sequence-enroll', async (req, res) => {
 
   for (const leadId of leadIds) {
     try {
-      const leadRow = await pool.query(
-        'SELECT id, email, linkedin_url FROM outbound_leads WHERE id = $1 AND user_id = $2',
-        [leadId, req.user.id]
-      );
+      const leadRow = await sql`SELECT id, email, linkedin_url FROM outbound_leads WHERE id = ${leadId} AND user_id = ${req.user.id}`.execute(db);
       if (leadRow.rows.length === 0) {
         results.errors.push({ leadId, reason: 'Not found' });
         continue;
@@ -4732,32 +4486,28 @@ router.post('/bulk/sequence-enroll', async (req, res) => {
         results.skipped.push({ leadId, reason: 'Missing contact channel (data quality block)' });
         continue;
       }
-      const openCheck = await pool.query(
-        `SELECT id FROM outbound_sequence_enrollments
-         WHERE lead_id = $1 AND user_id = $2 AND state IN ('active','paused')`,
-        [leadId, req.user.id]
-      );
+      const openCheck = await sql`
+SELECT id FROM outbound_sequence_enrollments
+         WHERE lead_id = ${leadId} AND user_id = ${req.user.id} AND state IN ('active','paused')
+`.execute(db);
       if (openCheck.rows.length > 0) {
         results.skipped.push({ leadId, reason: 'Already enrolled in an active sequence' });
         continue;
       }
-      const enroll = await pool.query(
-        `INSERT INTO outbound_sequence_enrollments
+      const enroll = await sql`
+INSERT INTO outbound_sequence_enrollments
            (user_id, lead_id, sequence_id, state, current_step, enrolled_at)
-         VALUES ($1,$2,$3,'active',1,NOW()) RETURNING id`,
-        [req.user.id, leadId, sequenceId]
-      );
-      await pool.query(
-        `INSERT INTO outbound_sequence_enrollment_transitions
+         VALUES (${req.user.id},${leadId},${sequenceId},'active',1,NOW()) RETURNING id
+`.execute(db);
+      await sql`
+INSERT INTO outbound_sequence_enrollment_transitions
            (enrollment_id, from_state, to_state, reason)
-         VALUES ($1,NULL,'active','Bulk enrolled')`,
-        [enroll.rows[0].id]
-      );
-      await pool.query(
-        `INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
-         VALUES ($1,$2,'sequence_enrolled','system',$3)`,
-        [req.user.id, leadId, JSON.stringify({ sequenceId, enrollmentId: enroll.rows[0].id, bulk: true })]
-      );
+         VALUES (${enroll.rows[0].id},NULL,'active','Bulk enrolled')
+`.execute(db);
+      await sql`
+INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
+         VALUES (${req.user.id},${leadId},'sequence_enrolled','system',${JSON.stringify({ sequenceId, enrollmentId: enroll.rows[0].id, bulk: true })})
+`.execute(db);
       results.enrolled.push(leadId);
     } catch (err) {
       results.errors.push({ leadId, reason: err.message });
@@ -4791,28 +4541,25 @@ router.post('/bulk/sequence-unenroll', async (req, res) => {
 
   for (const leadId of leadIds) {
     try {
-      const enrollment = await pool.query(
-        `SELECT id, state FROM outbound_sequence_enrollments
-         WHERE lead_id = $1 AND user_id = $2 AND state IN ('active','paused')
-         ORDER BY enrolled_at DESC LIMIT 1`,
-        [leadId, req.user.id]
-      );
+      const enrollment = await sql`
+SELECT id, state FROM outbound_sequence_enrollments
+         WHERE lead_id = ${leadId} AND user_id = ${req.user.id} AND state IN ('active','paused')
+         ORDER BY enrolled_at DESC LIMIT 1
+`.execute(db);
       if (enrollment.rows.length === 0) {
         results.skipped.push({ leadId, reason: 'No active enrollment found' });
         continue;
       }
       const fromState = enrollment.rows[0].state;
-      await pool.query(
-        `UPDATE outbound_sequence_enrollments SET state = 'stopped', stopped_at = NOW()
-         WHERE id = $1`,
-        [enrollment.rows[0].id]
-      );
-      await pool.query(
-        `INSERT INTO outbound_sequence_enrollment_transitions
+      await sql`
+UPDATE outbound_sequence_enrollments SET state = 'stopped', stopped_at = NOW()
+         WHERE id = ${enrollment.rows[0].id}
+`.execute(db);
+      await sql`
+INSERT INTO outbound_sequence_enrollment_transitions
            (enrollment_id, from_state, to_state, reason)
-         VALUES ($1,$2,'stopped','Bulk unenroll')`,
-        [enrollment.rows[0].id, fromState]
-      );
+         VALUES (${enrollment.rows[0].id},${fromState},'stopped','Bulk unenroll')
+`.execute(db);
       results.stopped.push(leadId);
     } catch (err) {
       results.errors.push({ leadId, reason: err.message });
@@ -4845,10 +4592,7 @@ router.post('/bulk/multifamily-tag', async (req, res) => {
     return res.status(400).json({ error: 'objectId is required.' });
   }
 
-  const objCheck = await pool.query(
-    'SELECT id FROM multifamily_objects WHERE id = $1 AND user_id = $2',
-    [objectId, req.user.id]
-  );
+  const objCheck = await sql`SELECT id FROM multifamily_objects WHERE id = ${objectId} AND user_id = ${req.user.id}`.execute(db);
   if (objCheck.rows.length === 0) {
     return res.status(404).json({ error: 'Multifamily object not found.' });
   }
@@ -4857,12 +4601,11 @@ router.post('/bulk/multifamily-tag', async (req, res) => {
 
   for (const leadId of leadIds) {
     try {
-      await pool.query(
-        `INSERT INTO multifamily_object_associations (object_id, target_type, target_id, user_id)
-         VALUES ($1,'outbound_lead',$2,$3)
-         ON CONFLICT DO NOTHING`,
-        [objectId, leadId, req.user.id]
-      );
+      await sql`
+INSERT INTO multifamily_object_associations (object_id, target_type, target_id, user_id)
+         VALUES (${objectId},'outbound_lead',${leadId},${req.user.id})
+         ON CONFLICT DO NOTHING
+`.execute(db);
       results.tagged.push(leadId);
     } catch (err) {
       results.errors.push({ leadId, reason: err.message });
@@ -4899,22 +4642,20 @@ router.post('/bulk/campaign-transition', async (req, res) => {
 
   for (const memberId of memberIds) {
     try {
-      const upd = await pool.query(
-        `UPDATE outbound_campaign_members SET status = $1, updated_at = NOW()
-         WHERE id = $2 AND user_id = $3 RETURNING id, lead_id`,
-        [status, memberId, req.user.id]
-      );
+      const upd = await sql`
+UPDATE outbound_campaign_members SET status = ${status}, updated_at = NOW()
+         WHERE id = ${memberId} AND user_id = ${req.user.id} RETURNING id, lead_id
+`.execute(db);
       if (upd.rows.length === 0) {
         results.errors.push({ memberId, reason: 'Not found or unauthorized' });
         continue;
       }
       const leadStatus = outboundUtils.CAMPAIGN_MEMBER_TO_LEAD_STATUS[status];
       if (leadStatus && upd.rows[0].lead_id) {
-        await pool.query(
-          `UPDATE outbound_leads SET status = $1, updated_at = NOW()
-           WHERE id = $2 AND user_id = $3`,
-          [leadStatus, upd.rows[0].lead_id, req.user.id]
-        );
+        await sql`
+UPDATE outbound_leads SET status = ${leadStatus}, updated_at = NOW()
+           WHERE id = ${upd.rows[0].lead_id} AND user_id = ${req.user.id}
+`.execute(db);
       }
       results.updated.push(memberId);
     } catch (err) {
@@ -4948,10 +4689,7 @@ const ESCALATION_TYPE_LABELS = {
 
 async function runEscalationChecks(userId) {
   const cfg = await getOrCreateWorkspaceConfig(userId);
-  const escalations = await pool.query(
-    'SELECT * FROM outbound_sla_escalations WHERE user_id = $1 AND is_enabled = TRUE',
-    [userId]
-  );
+  const escalations = await sql`SELECT * FROM outbound_sla_escalations WHERE user_id = ${userId} AND is_enabled = TRUE`.execute(db);
 
   const triggered = [];
 
@@ -4961,46 +4699,42 @@ async function runEscalationChecks(userId) {
 
     if (type === 'draft_stale') {
       const hours = rule.threshold_override ?? Number(cfg.sla_draft_stale_hours);
-      const res = await pool.query(
-        `SELECT d.id, ol.name
+      const res = await sql`
+SELECT d.id, ol.name
          FROM outbound_message_drafts d
          JOIN outbound_leads ol ON ol.id = d.lead_id
-         WHERE d.user_id = $1 AND d.status = 'approved'
-           AND d.updated_at < NOW() - ($2 || ' hours')::INTERVAL`,
-        [userId, hours]
-      );
+         WHERE d.user_id = ${userId} AND d.status = 'approved'
+           AND d.updated_at < NOW() - (${hours} || ' hours')::INTERVAL
+`.execute(db);
       items = res.rows.map((r) => ({ id: r.id, label: r.name || 'Unknown lead' }));
     } else if (type === 'linkedin_overdue') {
       const hours = rule.threshold_override ?? Number(cfg.sla_linkedin_overdue_hours);
-      const res = await pool.query(
-        `SELECT t.id, ol.name
+      const res = await sql`
+SELECT t.id, ol.name
          FROM linkedin_outreach_tasks t
          JOIN outbound_leads ol ON ol.id = t.lead_id
-         WHERE t.user_id = $1 AND t.status IN ('pending','drafted','approved')
-           AND t.scheduled_for < NOW() - ($2 || ' hours')::INTERVAL`,
-        [userId, hours]
-      );
+         WHERE t.user_id = ${userId} AND t.status IN ('pending','drafted','approved')
+           AND t.scheduled_for < NOW() - (${hours} || ' hours')::INTERVAL
+`.execute(db);
       items = res.rows.map((r) => ({ id: r.id, label: r.name || 'Unknown lead' }));
     } else if (type === 'paused_stale') {
       const days = rule.threshold_override ?? Number(cfg.sla_paused_stale_days);
-      const res = await pool.query(
-        `SELECT e.id, ol.name
+      const res = await sql`
+SELECT e.id, ol.name
          FROM outbound_sequence_enrollments e
          JOIN outbound_leads ol ON ol.id = e.lead_id
-         WHERE e.user_id = $1 AND e.state = 'paused'
-           AND e.updated_at < NOW() - ($2 || ' days')::INTERVAL`,
-        [userId, days]
-      );
+         WHERE e.user_id = ${userId} AND e.state = 'paused'
+           AND e.updated_at < NOW() - (${days} || ' days')::INTERVAL
+`.execute(db);
       items = res.rows.map((r) => ({ id: r.id, label: r.name || 'Unknown lead' }));
     } else if (type === 'high_score_not_contacted') {
       const days = rule.threshold_override ?? Number(cfg.sla_high_score_not_contacted_days);
-      const res = await pool.query(
-        `SELECT id, name FROM outbound_leads
-         WHERE user_id = $1 AND total_score >= 70
+      const res = await sql`
+SELECT id, name FROM outbound_leads
+         WHERE user_id = ${userId} AND total_score >= 70
            AND status IN ('new','qualified')
-           AND created_at < NOW() - ($2 || ' days')::INTERVAL`,
-        [userId, days]
-      );
+           AND created_at < NOW() - (${days} || ' days')::INTERVAL
+`.execute(db);
       items = res.rows.map((r) => ({ id: r.id, label: r.name || 'Unknown lead' }));
     }
 
@@ -5014,23 +4748,18 @@ async function runEscalationChecks(userId) {
       }${items.length > 3 ? ` and ${items.length - 3} more` : ''}.`;
 
       if (rule.action === 'notify') {
-        await pool.query(
-          `INSERT INTO outbound_notifications (user_id, notification_type, title, body)
-           VALUES ($1,$2,$3,$4)`,
-          [userId, type, title, body]
-        );
+        await sql`
+INSERT INTO outbound_notifications (user_id, notification_type, title, body)
+           VALUES (${userId},${type},${title},${body})
+`.execute(db);
       } else {
-        await pool.query(
-          `INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
-           VALUES ($1,NULL,'sla_escalation_triggered','system',$2)`,
-          [userId, JSON.stringify({ escalationType: type, count: items.length })]
-        );
+        await sql`
+INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
+           VALUES (${userId},NULL,'sla_escalation_triggered','system',${JSON.stringify({ escalationType: type, count: items.length })})
+`.execute(db);
       }
 
-      await pool.query(
-        'UPDATE outbound_sla_escalations SET last_run_at = NOW() WHERE id = $1',
-        [rule.id]
-      );
+      await sql`UPDATE outbound_sla_escalations SET last_run_at = NOW() WHERE id = ${rule.id}`.execute(db);
       triggered.push({ type, count: items.length, action: rule.action });
     }
   }
@@ -5055,10 +4784,7 @@ function formatEscalationRule(r) {
  * GET /api/outbound/sla/escalations
  */
 router.get('/sla/escalations', async (req, res) => {
-  const rows = await pool.query(
-    'SELECT * FROM outbound_sla_escalations WHERE user_id = $1 ORDER BY created_at',
-    [req.user.id]
-  );
+  const rows = await sql`SELECT * FROM outbound_sla_escalations WHERE user_id = ${req.user.id} ORDER BY created_at`.execute(db);
   return res.json(rows.rows.map(formatEscalationRule));
 });
 
@@ -5077,22 +4803,16 @@ router.post('/sla/escalations', async (req, res) => {
     return res.status(400).json({ error: 'action must be notify or log_event.' });
   }
 
-  const result = await pool.query(
-    `INSERT INTO outbound_sla_escalations
+  const result = await sql`
+INSERT INTO outbound_sla_escalations
        (user_id, escalation_type, threshold_override, action)
-     VALUES ($1,$2,$3,$4)
+     VALUES (${req.user.id},${escalationType},${thresholdOverride != null ? Number(thresholdOverride) : null},${action})
      ON CONFLICT (user_id, escalation_type) DO UPDATE SET
        threshold_override = EXCLUDED.threshold_override,
        action = EXCLUDED.action,
        is_enabled = TRUE
-     RETURNING *`,
-    [
-      req.user.id,
-      escalationType,
-      thresholdOverride != null ? Number(thresholdOverride) : null,
-      action,
-    ]
-  );
+     RETURNING *
+`.execute(db);
 
   return res.status(201).json(formatEscalationRule(result.rows[0]));
 });
@@ -5123,11 +4843,10 @@ router.patch('/sla/escalations/:id', async (req, res) => {
   }
   if (sets.length === 0) return res.status(400).json({ error: 'No fields to update.' });
 
-  const result = await pool.query(
-    `UPDATE outbound_sla_escalations SET ${sets.join(', ')}
-     WHERE id = $1 AND user_id = $2 RETURNING *`,
-    vals
-  );
+  const result = await sql`
+UPDATE outbound_sla_escalations SET ${sets.join(', ')}
+     WHERE id = $1 AND user_id = $2 RETURNING *
+`.execute(db);
   if (result.rows.length === 0) return res.status(404).json({ error: 'Escalation rule not found.' });
   return res.json(formatEscalationRule(result.rows[0]));
 });
@@ -5149,13 +4868,12 @@ router.post('/sla/escalations/run', async (req, res) => {
 router.get('/notifications', async (req, res) => {
   const unreadOnly = req.query.unreadOnly === 'true';
   const whereExtra = unreadOnly ? 'AND is_read = FALSE' : '';
-  const rows = await pool.query(
-    `SELECT * FROM outbound_notifications
-     WHERE user_id = $1 ${whereExtra}
+  const rows = await sql`
+SELECT * FROM outbound_notifications
+     WHERE user_id = ${req.user.id} ${whereExtra}
      ORDER BY is_read ASC, created_at DESC
-     LIMIT 100`,
-    [req.user.id]
-  );
+     LIMIT 100
+`.execute(db);
   const unreadCount = rows.rows.filter((r) => !r.is_read).length;
   return res.json({
     unreadCount,
@@ -5176,11 +4894,10 @@ router.get('/notifications', async (req, res) => {
  * PATCH /api/outbound/notifications/:id/read
  */
 router.patch('/notifications/:id/read', async (req, res) => {
-  const result = await pool.query(
-    `UPDATE outbound_notifications SET is_read = TRUE
-     WHERE id = $1 AND user_id = $2 RETURNING id`,
-    [req.params.id, req.user.id]
-  );
+  const result = await sql`
+UPDATE outbound_notifications SET is_read = TRUE
+     WHERE id = ${req.params.id} AND user_id = ${req.user.id} RETURNING id
+`.execute(db);
   if (result.rows.length === 0) return res.status(404).json({ error: 'Notification not found.' });
   return res.json({ id: result.rows[0].id, isRead: true });
 });
@@ -5189,11 +4906,10 @@ router.patch('/notifications/:id/read', async (req, res) => {
  * POST /api/outbound/notifications/read-all
  */
 router.post('/notifications/read-all', async (req, res) => {
-  const result = await pool.query(
-    `UPDATE outbound_notifications SET is_read = TRUE
-     WHERE user_id = $1 AND is_read = FALSE RETURNING id`,
-    [req.user.id]
-  );
+  const result = await sql`
+UPDATE outbound_notifications SET is_read = TRUE
+     WHERE user_id = ${req.user.id} AND is_read = FALSE RETURNING id
+`.execute(db);
   return res.json({ markedRead: result.rows.length });
 });
 

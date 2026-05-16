@@ -5,7 +5,7 @@ const GoogleCalendarService = require('../services/googleCalendar');
 const tokenManager = require('../services/oauth');
 const auth = require('../middleware/auth');
 const crypto = require('crypto');
-const pool = require('../models/db');
+const { db, sql, pool } = require('../db');
 const { emailSyncQueue } = require('../workers/emailSyncWorker');
 
 // Store state temporarily to prevent CSRF
@@ -156,15 +156,12 @@ router.post('/gmail/label-preference', auth, async (req, res) => {
   const { labelId } = req.body;
 
   try {
-    const pool = require('../models/db');
-
     // Store label preference in oauth_tokens table (gmailSyncLabelId column)
-    await pool.query(
-      `UPDATE oauth_tokens
-       SET gmailSyncLabelId = $1
-       WHERE user_id = $2 AND provider = 'gmail'`,
-      [labelId || null, req.user.id]
-    );
+    await db.updateTable('oauth_tokens')
+      .set({ gmailSyncLabelId: labelId || null })
+      .where('user_id', '=', req.user.id)
+      .where('provider', '=', 'gmail')
+      .execute();
 
     res.json({ success: true, labelId });
   } catch (err) {
@@ -179,15 +176,13 @@ router.post('/gmail/label-preference', auth, async (req, res) => {
  */
 router.get('/gmail/label-preference', auth, async (req, res) => {
   try {
-    const pool = require('../models/db');
+    const result = await db.selectFrom('oauth_tokens')
+      .select('gmailSyncLabelId')
+      .where('user_id', '=', req.user.id)
+      .where('provider', '=', 'gmail')
+      .executeTakeFirst();
 
-    const result = await pool.query(
-      `SELECT gmailSyncLabelId FROM oauth_tokens
-       WHERE user_id = $1 AND provider = 'gmail'`,
-      [req.user.id]
-    );
-
-    const labelId = result.rows[0]?.gmailSyncLabelId || null;
+    const labelId = result?.gmailSyncLabelId || null;
     res.json({ labelId });
   } catch (err) {
     console.error('Error fetching label preference:', err);
@@ -322,14 +317,27 @@ router.post('/gcal/sync', auth, async (req, res) => {
     let synced = 0;
     for (const item of items) {
       if (!item.start?.dateTime) continue;
-      await pool.query(
-        `INSERT INTO calendar_events (user_id, title, description, start_at, end_at, google_event_id, source)
-         VALUES ($1, $2, $3, $4, $5, $6, 'google')
-         ON CONFLICT (google_event_id) DO UPDATE SET
-           title = $2, description = $3, start_at = $4, end_at = $5`,
-        [req.user.id, item.summary || '(no title)', item.description || null,
-         item.start.dateTime, item.end.dateTime, item.id]
-      ).catch(() => {});
+      await db.insertInto('calendar_events')
+        .values({
+          user_id: req.user.id,
+          title: item.summary || '(no title)',
+          description: item.description || null,
+          start_at: item.start.dateTime,
+          end_at: item.end.dateTime,
+          google_event_id: item.id,
+          source: 'google',
+        })
+        .onConflict(c => c
+          .column('google_event_id')
+          .doUpdateSet({
+            title: item.summary || '(no title)',
+            description: item.description || null,
+            start_at: item.start.dateTime,
+            end_at: item.end.dateTime,
+          })
+        )
+        .execute()
+        .catch(() => {});
       synced++;
     }
     res.json({ synced });

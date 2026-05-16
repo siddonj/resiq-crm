@@ -1,5 +1,5 @@
 const express = require('express');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 
@@ -13,31 +13,24 @@ const VALID_TYPES = ['call', 'meeting', 'email', 'note', 'task'];
  */
 router.get('/', auth, async (req, res) => {
   const { contact_id, deal_id } = req.query;
-  const params = [req.user.id];
-  const conditions = ['a.user_id = $1'];
 
-  if (contact_id) {
-    params.push(contact_id);
-    conditions.push(`a.contact_id = $${params.length}`);
-  }
-  if (deal_id) {
-    params.push(deal_id);
-    conditions.push(`a.deal_id = $${params.length}`);
-  }
+  const conditions = [sql`a.user_id = ${req.user.id}`];
+  if (contact_id) conditions.push(sql`a.contact_id = ${contact_id}`);
+  if (deal_id) conditions.push(sql`a.deal_id = ${deal_id}`);
 
   try {
-    const result = await pool.query(
-      `SELECT a.*,
+    const result = await sql`
+      SELECT a.*,
         c.name AS contact_name,
         d.title AS deal_title
-       FROM activities a
-       LEFT JOIN contacts c ON c.id = a.contact_id
-       LEFT JOIN deals d ON d.id = a.deal_id
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY a.occurred_at DESC
-       LIMIT 200`,
-      params
-    );
+      FROM activities a
+      LEFT JOIN contacts c ON c.id = a.contact_id
+      LEFT JOIN deals d ON d.id = a.deal_id
+      WHERE ${sql.join(conditions, ' AND ')}
+      ORDER BY a.occurred_at DESC
+      LIMIT 200
+    `.execute(db);
+
     res.json(result.rows);
   } catch (err) {
     console.error('Error fetching activities:', err);
@@ -57,13 +50,23 @@ router.post('/', auth, async (req, res) => {
   if (!description?.trim()) return res.status(400).json({ error: 'description is required' });
 
   try {
-    const result = await pool.query(
-      `INSERT INTO activities (user_id, type, description, contact_id, deal_id, occurred_at)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [req.user.id, type, description.trim(), contact_id || null, deal_id || null, occurred_at || new Date()]
+    const activity = await db.insertInto('activities')
+      .values({
+        user_id: req.user.id,
+        type,
+        description: description.trim(),
+        contact_id: contact_id || null,
+        deal_id: deal_id || null,
+        occurred_at: occurred_at || new Date(),
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    logAction(
+      req.user.id, req.user.email, 'create', 'activity',
+      activity.id, `${type}: ${description.substring(0, 50)}`
     );
-    logAction(req.user.id, req.user.email, 'create', 'activity', result.rows[0].id, `${type}: ${description.substring(0, 50)}`);
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(activity);
   } catch (err) {
     console.error('Error creating activity:', err);
     res.status(500).json({ error: 'Server error' });
@@ -75,11 +78,13 @@ router.post('/', auth, async (req, res) => {
  */
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      'DELETE FROM activities WHERE id = $1 AND user_id = $2 RETURNING id',
-      [req.params.id, req.user.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Activity not found' });
+    const result = await db.deleteFrom('activities')
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .returning('id')
+      .executeTakeFirst();
+
+    if (!result) return res.status(404).json({ error: 'Activity not found' });
     res.json({ message: 'Deleted' });
   } catch (err) {
     console.error('Error deleting activity:', err);

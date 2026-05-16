@@ -1,5 +1,5 @@
 const express = require('express');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 
@@ -8,27 +8,34 @@ const router = express.Router();
 // List entries
 router.get('/', auth, async (req, res) => {
   const { deal_id, contact_id, billable } = req.query;
-  const params = [req.user.id];
-  const filters = [];
+  const conditions = [sql`t.user_id = ${req.user.id}`];
 
-  if (deal_id) { params.push(deal_id); filters.push(`t.deal_id = $${params.length}`); }
-  if (contact_id) { params.push(contact_id); filters.push(`t.contact_id = $${params.length}`); }
-  if (billable !== undefined) { params.push(billable === 'true'); filters.push(`t.billable = $${params.length}`); }
+  if (deal_id) {
+    conditions.push(sql`t.deal_id = ${deal_id}`);
+  }
+  if (contact_id) {
+    conditions.push(sql`t.contact_id = ${contact_id}`);
+  }
+  if (billable !== undefined) {
+    conditions.push(sql`t.billable = ${billable === 'true'}`);
+  }
 
-  const filterSQL = filters.length ? 'AND ' + filters.join(' AND ') : '';
+  const filterSQL = sql.join(conditions, ' AND ');
 
   try {
-    const result = await pool.query(`
-      SELECT t.*,
-        d.title AS deal_title,
-        c.name AS contact_name
-      FROM time_entries t
-      LEFT JOIN deals d ON d.id = t.deal_id
-      LEFT JOIN contacts c ON c.id = COALESCE(t.contact_id, d.contact_id)
-      WHERE t.user_id = $1 ${filterSQL}
-      ORDER BY t.date DESC, t.created_at DESC
-    `, params);
-    res.json(result.rows);
+    const result = await db.selectFrom('time_entries as t')
+      .leftJoin('deals as d', 'd.id', 't.deal_id')
+      .leftJoin('contacts as c', sql`c.id = COALESCE(t.contact_id, d.contact_id)`)
+      .select([
+        't.*',
+        'd.title as deal_title',
+        'c.name as contact_name',
+      ])
+      .where(filterSQL)
+      .orderBy('t.date', 'desc')
+      .orderBy('t.created_at', 'desc')
+      .execute();
+    res.json(result);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -38,17 +45,18 @@ router.get('/', auth, async (req, res) => {
 // Deal time report
 router.get('/report/deal/:deal_id', auth, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT
-        SUM(minutes) AS total_minutes,
-        SUM(CASE WHEN billable THEN minutes ELSE 0 END) AS billable_minutes,
-        SUM(CASE WHEN billable THEN minutes * hourly_rate / 60.0 ELSE 0 END) AS billable_amount,
-        COUNT(*) AS entry_count,
-        json_agg(t.* ORDER BY t.date DESC) AS entries
-      FROM time_entries t
-      WHERE t.deal_id = $1 AND t.user_id = $2
-    `, [req.params.deal_id, req.user.id]);
-    res.json(result.rows[0]);
+    const result = await db.selectFrom('time_entries as t')
+      .select([
+        sql`SUM(minutes)`.as('total_minutes'),
+        sql`SUM(CASE WHEN billable THEN minutes ELSE 0 END)`.as('billable_minutes'),
+        sql`SUM(CASE WHEN billable THEN minutes * hourly_rate / 60.0 ELSE 0 END)`.as('billable_amount'),
+        sql`COUNT(*)`.as('entry_count'),
+        sql`json_agg(t.* ORDER BY t.date DESC)`.as('entries'),
+      ])
+      .where('t.deal_id', '=', req.params.deal_id)
+      .where('t.user_id', '=', req.user.id)
+      .executeTakeFirst();
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -57,12 +65,13 @@ router.get('/report/deal/:deal_id', auth, async (req, res) => {
 // Get single entry
 router.get('/:id', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM time_entries WHERE id = $1 AND user_id = $2',
-      [req.params.id, req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    res.json(result.rows[0]);
+    const result = await db.selectFrom('time_entries')
+      .selectAll()
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'Not found' });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -73,13 +82,20 @@ router.post('/', auth, async (req, res) => {
   const { deal_id, contact_id, description, minutes, hourly_rate, billable, date } = req.body;
   if (!minutes || minutes < 0) return res.status(400).json({ error: 'Minutes must be a positive number' });
   try {
-    const result = await pool.query(
-      `INSERT INTO time_entries (user_id, deal_id, contact_id, description, minutes, hourly_rate, billable, date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [req.user.id, deal_id || null, contact_id || null, description || '',
-       minutes, hourly_rate || 0, billable !== false, date || new Date().toISOString().slice(0, 10)]
-    );
-    const entry = result.rows[0];
+    const result = await db.insertInto('time_entries')
+      .values({
+        user_id: req.user.id,
+        deal_id: deal_id || null,
+        contact_id: contact_id || null,
+        description: description || '',
+        minutes,
+        hourly_rate: hourly_rate || 0,
+        billable: billable !== false,
+        date: date || new Date().toISOString().slice(0, 10),
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    const entry = result;
     logAction(req.user.id, req.user.email, 'create', 'time_entry', entry.id, description || `${minutes}m`);
     res.status(201).json(entry);
   } catch (err) {
@@ -93,21 +109,32 @@ router.post('/timer/start', auth, async (req, res) => {
   const { deal_id, contact_id, description, hourly_rate, billable } = req.body;
   try {
     // Stop any running timer first
-    await pool.query(
-      `UPDATE time_entries
-       SET stopped_at = NOW(),
-           minutes = GREATEST(1, EXTRACT(EPOCH FROM (NOW() - started_at)) / 60)::int,
-           updated_at = NOW()
-       WHERE user_id = $1 AND started_at IS NOT NULL AND stopped_at IS NULL`,
-      [req.user.id]
-    );
-    const result = await pool.query(
-      `INSERT INTO time_entries (user_id, deal_id, contact_id, description, minutes, hourly_rate, billable, started_at, date)
-       VALUES ($1, $2, $3, $4, 0, $5, $6, NOW(), CURRENT_DATE) RETURNING *`,
-      [req.user.id, deal_id || null, contact_id || null, description || '',
-       hourly_rate || 0, billable !== false]
-    );
-    res.status(201).json(result.rows[0]);
+    await db.updateTable('time_entries')
+      .set({
+        stopped_at: sql`NOW()`,
+        minutes: sql`GREATEST(1, EXTRACT(EPOCH FROM (NOW() - started_at)) / 60)::int`,
+        updated_at: sql`NOW()`,
+      })
+      .where('user_id', '=', req.user.id)
+      .where('started_at', 'is not', null)
+      .where('stopped_at', 'is', null)
+      .execute();
+
+    const result = await db.insertInto('time_entries')
+      .values({
+        user_id: req.user.id,
+        deal_id: deal_id || null,
+        contact_id: contact_id || null,
+        description: description || '',
+        minutes: 0,
+        hourly_rate: hourly_rate || 0,
+        billable: billable !== false,
+        started_at: sql`NOW()`,
+        date: sql`CURRENT_DATE`,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    res.status(201).json(result);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -117,17 +144,19 @@ router.post('/timer/start', auth, async (req, res) => {
 // Stop timer
 router.patch('/timer/stop', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `UPDATE time_entries
-       SET stopped_at = NOW(),
-           minutes = GREATEST(1, EXTRACT(EPOCH FROM (NOW() - started_at)) / 60)::int,
-           updated_at = NOW()
-       WHERE user_id = $1 AND started_at IS NOT NULL AND stopped_at IS NULL
-       RETURNING *`,
-      [req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'No running timer' });
-    res.json(result.rows[0]);
+    const result = await db.updateTable('time_entries')
+      .set({
+        stopped_at: sql`NOW()`,
+        minutes: sql`GREATEST(1, EXTRACT(EPOCH FROM (NOW() - started_at)) / 60)::int`,
+        updated_at: sql`NOW()`,
+      })
+      .where('user_id', '=', req.user.id)
+      .where('started_at', 'is not', null)
+      .where('stopped_at', 'is', null)
+      .returningAll()
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'No running timer' });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -136,16 +165,20 @@ router.patch('/timer/stop', auth, async (req, res) => {
 // Get active timer
 router.get('/timer/active', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT t.*, d.title AS deal_title, c.name AS contact_name
-       FROM time_entries t
-       LEFT JOIN deals d ON d.id = t.deal_id
-       LEFT JOIN contacts c ON c.id = COALESCE(t.contact_id, d.contact_id)
-       WHERE t.user_id = $1 AND t.started_at IS NOT NULL AND t.stopped_at IS NULL
-       LIMIT 1`,
-      [req.user.id]
-    );
-    res.json(result.rows[0] || null);
+    const result = await db.selectFrom('time_entries as t')
+      .leftJoin('deals as d', 'd.id', 't.deal_id')
+      .leftJoin('contacts as c', sql`c.id = COALESCE(t.contact_id, d.contact_id)`)
+      .select([
+        't.*',
+        'd.title as deal_title',
+        'c.name as contact_name',
+      ])
+      .where('t.user_id', '=', req.user.id)
+      .where('t.started_at', 'is not', null)
+      .where('t.stopped_at', 'is', null)
+      .limit(1)
+      .executeTakeFirst();
+    res.json(result || null);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -155,15 +188,23 @@ router.get('/timer/active', auth, async (req, res) => {
 router.put('/:id', auth, async (req, res) => {
   const { description, minutes, hourly_rate, billable, date, deal_id, contact_id } = req.body;
   try {
-    const result = await pool.query(
-      `UPDATE time_entries
-       SET description=$1, minutes=$2, hourly_rate=$3, billable=$4, date=$5, deal_id=$6, contact_id=$7, updated_at=NOW()
-       WHERE id=$8 AND user_id=$9 RETURNING *`,
-      [description || '', minutes, hourly_rate || 0, billable !== false,
-       date, deal_id || null, contact_id || null, req.params.id, req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    res.json(result.rows[0]);
+    const result = await db.updateTable('time_entries')
+      .set({
+        description: description || '',
+        minutes,
+        hourly_rate: hourly_rate || 0,
+        billable: billable !== false,
+        date,
+        deal_id: deal_id || null,
+        contact_id: contact_id || null,
+        updated_at: sql`NOW()`,
+      })
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .returningAll()
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'Not found' });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -172,12 +213,13 @@ router.put('/:id', auth, async (req, res) => {
 // Delete entry
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      'DELETE FROM time_entries WHERE id=$1 AND user_id=$2 RETURNING description',
-      [req.params.id, req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'time_entry', req.params.id, result.rows[0].description);
+    const result = await db.deleteFrom('time_entries')
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .returning('description')
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'time_entry', req.params.id, result.description);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });

@@ -1,20 +1,20 @@
 const express = require('express');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
 
 const RESOURCE_TABLES = { contact: 'contacts', deal: 'deals' };
-const RESOURCE_NAME_COLS = { contact: 'name', deal: 'title' };
 
 async function verifyOwnership(userId, resourceType, resourceId) {
   const table = RESOURCE_TABLES[resourceType];
   if (!table) return false;
-  const result = await pool.query(
-    `SELECT id FROM ${table} WHERE id = $1 AND user_id = $2`,
-    [resourceId, userId]
-  );
-  return result.rows.length > 0;
+  const result = await db.selectFrom(table)
+    .select('id')
+    .where('id', '=', resourceId)
+    .where('user_id', '=', userId)
+    .executeTakeFirst();
+  return !!result;
 }
 
 /**
@@ -29,18 +29,24 @@ router.get('/:resourceType/:resourceId', auth, async (req, res) => {
   if (!isOwner) return res.status(403).json({ error: 'Not authorized' });
 
   try {
-    const result = await pool.query(
-      `SELECT sr.id, sr.permission, sr.created_at,
-              u.id AS shared_with_user_id, u.name AS shared_with_user_name, u.email AS shared_with_user_email,
-              t.id AS shared_with_team_id, t.name AS shared_with_team_name
-       FROM shared_resources sr
-       LEFT JOIN users u ON u.id = sr.shared_with_user_id
-       LEFT JOIN teams t ON t.id = sr.shared_with_team_id
-       WHERE sr.resource_type = $1 AND sr.resource_id = $2
-       ORDER BY sr.created_at ASC`,
-      [resourceType, resourceId]
-    );
-    res.json(result.rows);
+    const result = await db.selectFrom('shared_resources as sr')
+      .leftJoin('users as u', 'u.id', 'sr.shared_with_user_id')
+      .leftJoin('teams as t', 't.id', 'sr.shared_with_team_id')
+      .select([
+        'sr.id',
+        'sr.permission',
+        'sr.created_at',
+        'u.id as shared_with_user_id',
+        'u.name as shared_with_user_name',
+        'u.email as shared_with_user_email',
+        't.id as shared_with_team_id',
+        't.name as shared_with_team_name',
+      ])
+      .where('sr.resource_type', '=', resourceType)
+      .where('sr.resource_id', '=', resourceId)
+      .orderBy('sr.created_at', 'asc')
+      .execute();
+    res.json(result);
   } catch (err) {
     console.error('Error fetching shares:', err);
     res.status(500).json({ error: 'Server error' });
@@ -66,12 +72,18 @@ router.post('/', auth, async (req, res) => {
   if (shared_with_user_id === req.user.id) return res.status(400).json({ error: 'Cannot share with yourself' });
 
   try {
-    const result = await pool.query(
-      `INSERT INTO shared_resources (resource_type, resource_id, shared_by, shared_with_user_id, shared_with_team_id, permission)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [resource_type, resource_id, req.user.id, shared_with_user_id || null, shared_with_team_id || null, permission]
-    );
-    res.status(201).json(result.rows[0]);
+    const result = await db.insertInto('shared_resources')
+      .values({
+        resource_type,
+        resource_id,
+        shared_by: req.user.id,
+        shared_with_user_id: shared_with_user_id || null,
+        shared_with_team_id: shared_with_team_id || null,
+        permission,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    res.status(201).json(result);
   } catch (err) {
     if (err.code === '23503') return res.status(404).json({ error: 'User or team not found' });
     console.error('Error creating share:', err);
@@ -85,13 +97,18 @@ router.post('/', auth, async (req, res) => {
  */
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const share = await pool.query('SELECT * FROM shared_resources WHERE id = $1', [req.params.id]);
-    if (!share.rows[0]) return res.status(404).json({ error: 'Share not found' });
+    const share = await db.selectFrom('shared_resources')
+      .selectAll()
+      .where('id', '=', req.params.id)
+      .executeTakeFirst();
+    if (!share) return res.status(404).json({ error: 'Share not found' });
 
-    const isOwner = await verifyOwnership(req.user.id, share.rows[0].resource_type, share.rows[0].resource_id);
+    const isOwner = await verifyOwnership(req.user.id, share.resource_type, share.resource_id);
     if (!isOwner) return res.status(403).json({ error: 'Not authorized' });
 
-    await pool.query('DELETE FROM shared_resources WHERE id = $1', [req.params.id]);
+    await db.deleteFrom('shared_resources')
+      .where('id', '=', req.params.id)
+      .execute();
     res.json({ message: 'Share removed' });
   } catch (err) {
     console.error('Error removing share:', err);

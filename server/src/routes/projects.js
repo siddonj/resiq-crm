@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 
@@ -31,7 +31,7 @@ function toKey(name = '') {
 }
 
 async function generateTaskId() {
-  const { rows } = await pool.query('SELECT nextval(\'project_task_seq\') AS seq');
+  const { rows } = await sql`SELECT nextval('project_task_seq') AS seq`.execute(db);
   const seq = rows[0].seq;
   return `PRJ-${String(seq).padStart(4, '0')}`;
 }
@@ -45,24 +45,26 @@ async function wouldCreateCycle(projectId, taskId, newParentId) {
   while (current) {
     if (visited.has(current)) break;
     visited.add(current);
-    const { rows } = await pool.query(
-      'SELECT parent_id FROM project_tasks WHERE id = $1 AND project_id = $2',
-      [current, projectId]
-    );
-    if (!rows[0]) break;
-    if (rows[0].parent_id === taskId) return true;
-    current = rows[0].parent_id;
+    const row = await db.selectFrom('project_tasks')
+      .where('id', '=', current)
+      .where('project_id', '=', projectId)
+      .select('parent_id')
+      .executeTakeFirst();
+    if (!row) break;
+    if (row.parent_id === taskId) return true;
+    current = row.parent_id;
   }
   return false;
 }
 
 async function getProjectTypes(projectId) {
   try {
-    const { rows } = await pool.query(
-      'SELECT * FROM project_task_types WHERE project_id = $1 ORDER BY position ASC, created_at ASC',
-      [projectId]
-    );
-    return rows;
+    return await db.selectFrom('project_task_types')
+      .where('project_id', '=', projectId)
+      .selectAll()
+      .orderBy('position', 'asc')
+      .orderBy('created_at', 'asc')
+      .execute();
   } catch (err) {
     console.error('getProjectTypes error (table may not exist):', err.message);
     return [];
@@ -71,11 +73,11 @@ async function getProjectTypes(projectId) {
 
 async function getProjectWorkflows(projectId) {
   try {
-    const { rows } = await pool.query(
-      'SELECT * FROM project_workflows WHERE project_id = $1 ORDER BY created_at ASC',
-      [projectId]
-    );
-    return rows;
+    return await db.selectFrom('project_workflows')
+      .where('project_id', '=', projectId)
+      .selectAll()
+      .orderBy('created_at', 'asc')
+      .execute();
   } catch (err) {
     console.error('getProjectWorkflows error (table may not exist):', err.message);
     return [];
@@ -84,17 +86,16 @@ async function getProjectWorkflows(projectId) {
 
 async function getProjectTaskRelations(projectId) {
   try {
-    const { rows } = await pool.query(
-      `SELECT ptr.*,
-              ft.name AS from_task_name, ft.task_id AS from_task_task_id,
-              tt.name AS to_task_name, tt.task_id AS to_task_task_id
-       FROM project_task_relations ptr
-       JOIN project_tasks ft ON ft.id = ptr.from_task_id
-       JOIN project_tasks tt ON tt.id = ptr.to_task_id
-       WHERE ptr.project_id = $1
-       ORDER BY ptr.created_at ASC`,
-      [projectId]
-    );
+    const { rows } = await sql`
+      SELECT ptr.*,
+             ft.name AS from_task_name, ft.task_id AS from_task_task_id,
+             tt.name AS to_task_name, tt.task_id AS to_task_task_id
+      FROM project_task_relations ptr
+      JOIN project_tasks ft ON ft.id = ptr.from_task_id
+      JOIN project_tasks tt ON tt.id = ptr.to_task_id
+      WHERE ptr.project_id = ${projectId}
+      ORDER BY ptr.created_at ASC
+    `.execute(db);
     return rows;
   } catch (err) {
     console.error('getProjectTaskRelations error (table may not exist):', err.message);
@@ -104,18 +105,17 @@ async function getProjectTaskRelations(projectId) {
 
 async function getProjectPhases(projectId) {
   try {
-    const { rows: phases } = await pool.query(
-      `SELECT pp.*,
-              COALESCE(pg.approved_at IS NOT NULL, FALSE) AS gate_approved,
-              pg.approver_id AS gate_approver_id,
-              pg.notes AS gate_notes
-       FROM project_phases pp
-       LEFT JOIN project_phase_gates pg ON pg.phase_id = pp.id
-       WHERE pp.project_id = $1
-       ORDER BY pp.position ASC, pp.created_at ASC`,
-      [projectId]
-    );
-    return phases;
+    const { rows } = await sql`
+      SELECT pp.*,
+             COALESCE(pg.approved_at IS NOT NULL, FALSE) AS gate_approved,
+             pg.approver_id AS gate_approver_id,
+             pg.notes AS gate_notes
+      FROM project_phases pp
+      LEFT JOIN project_phase_gates pg ON pg.phase_id = pp.id
+      WHERE pp.project_id = ${projectId}
+      ORDER BY pp.position ASC, pp.created_at ASC
+    `.execute(db);
+    return rows;
   } catch (err) {
     console.error('getProjectPhases error (table may not exist):', err.message);
     return [];
@@ -124,33 +124,30 @@ async function getProjectPhases(projectId) {
 
 async function getProjectMeetings(projectId) {
   try {
-    const { rows: meetings } = await pool.query(
-      `SELECT pm.*, u.name AS created_by_name
-       FROM project_meetings pm
-       LEFT JOIN users u ON u.id = pm.created_by
-       WHERE pm.project_id = $1
-       ORDER BY pm.start_time ASC`,
-      [projectId]
-    );
+    const { rows: meetings } = await sql`
+      SELECT pm.*, u.name AS created_by_name
+      FROM project_meetings pm
+      LEFT JOIN users u ON u.id = pm.created_by
+      WHERE pm.project_id = ${projectId}
+      ORDER BY pm.start_time ASC
+    `.execute(db);
     const meetingIds = meetings.map((m) => m.id);
     let attendees = [];
     let linkedTasks = [];
     if (meetingIds.length > 0) {
-      const { rows: attRows } = await pool.query(
-        `SELECT pma.*, u.name AS user_name, u.email AS user_email
-         FROM project_meeting_attendees pma
-         LEFT JOIN users u ON u.id = pma.user_id
-         WHERE pma.meeting_id = ANY($1)`,
-        [meetingIds]
-      );
+      const { rows: attRows } = await sql`
+        SELECT pma.*, u.name AS user_name, u.email AS user_email
+        FROM project_meeting_attendees pma
+        LEFT JOIN users u ON u.id = pma.user_id
+        WHERE pma.meeting_id = ANY(${meetingIds})
+      `.execute(db);
       attendees = attRows;
-      const { rows: taskRows } = await pool.query(
-        `SELECT pmt.*, pt.name AS task_name, pt.task_id AS task_task_id
-         FROM project_meeting_tasks pmt
-         LEFT JOIN project_tasks pt ON pt.id = pmt.task_id
-         WHERE pmt.meeting_id = ANY($1)`,
-        [meetingIds]
-      );
+      const { rows: taskRows } = await sql`
+        SELECT pmt.*, pt.name AS task_name, pt.task_id AS task_task_id
+        FROM project_meeting_tasks pmt
+        LEFT JOIN project_tasks pt ON pt.id = pmt.task_id
+        WHERE pmt.meeting_id = ANY(${meetingIds})
+      `.execute(db);
       linkedTasks = taskRows;
     }
     return meetings.map((m) => ({
@@ -167,22 +164,21 @@ async function getProjectMeetings(projectId) {
 async function getTasksInTreeOrder(projectId) {
   let rows;
   try {
-    const res = await pool.query(
-      `SELECT t.*,
-              COALESCE(sc.subtask_count, 0) AS subtask_count,
-              ptt.name AS type_name, ptt.color AS type_color, ptt.icon AS type_icon
-       FROM project_tasks t
-       LEFT JOIN project_task_types ptt ON ptt.id = t.type_id
-       LEFT JOIN (
-         SELECT parent_id, COUNT(*) AS subtask_count
-         FROM project_tasks
-         WHERE project_id = $1 AND parent_id IS NOT NULL
-         GROUP BY parent_id
-       ) sc ON sc.parent_id = t.id
-       WHERE t.project_id = $1
-       ORDER BY t.position ASC, t.created_at ASC`,
-      [projectId]
-    );
+    const res = await sql`
+      SELECT t.*,
+             COALESCE(sc.subtask_count, 0) AS subtask_count,
+             ptt.name AS type_name, ptt.color AS type_color, ptt.icon AS type_icon
+      FROM project_tasks t
+      LEFT JOIN project_task_types ptt ON ptt.id = t.type_id
+      LEFT JOIN (
+        SELECT parent_id, COUNT(*) AS subtask_count
+        FROM project_tasks
+        WHERE project_id = ${projectId} AND parent_id IS NOT NULL
+        GROUP BY parent_id
+      ) sc ON sc.parent_id = t.id
+      WHERE t.project_id = ${projectId}
+      ORDER BY t.position ASC, t.created_at ASC
+    `.execute(db);
     rows = res.rows;
   } catch (err) {
     console.error('getTasksInTreeOrder error (table may not exist):', err.message);
@@ -216,33 +212,27 @@ async function getTasksInTreeOrder(projectId) {
 }
 
 async function fetchProjectBundle(projectId) {
-  let projectRes, columnsRes, membersRes;
+  let project, columns, members;
   try {
-    [projectRes, columnsRes, membersRes] = await Promise.all([
-      pool.query('SELECT * FROM projects WHERE id = $1', [projectId]),
-      pool.query(
-        `SELECT * FROM project_columns WHERE project_id = $1 ORDER BY position ASC, created_at ASC`,
-        [projectId]
-      ),
-      pool.query(
-         `SELECT pm.*, u.email, u.name AS user_name,
-                 t.name AS team_name
-          FROM project_members pm
-          LEFT JOIN users u ON u.id = pm.user_id
-          LEFT JOIN teams t ON t.id = pm.team_id
-          WHERE pm.project_id = $1
-          ORDER BY pm.added_at ASC`,
-        [projectId]
-      ),
+    [project, columns, members] = await Promise.all([
+      db.selectFrom('projects').where('id', '=', projectId).selectAll().executeTakeFirst(),
+      db.selectFrom('project_columns').where('project_id', '=', projectId).selectAll().orderBy('position', 'asc').orderBy('created_at', 'asc').execute(),
+      db.selectFrom('project_members as pm')
+        .leftJoin('users as u', 'u.id', 'pm.user_id')
+        .leftJoin('teams as t', 't.id', 'pm.team_id')
+        .where('pm.project_id', '=', projectId)
+        .select(['pm.*', 'u.email', 'u.name as user_name', 't.name as team_name'])
+        .orderBy('pm.added_at', 'asc')
+        .execute(),
     ]);
   } catch (err) {
     console.error('fetchProjectBundle initial query error:', err.message);
-    projectRes = await pool.query('SELECT * FROM projects WHERE id = $1', [projectId]);
-    columnsRes = { rows: [] };
-    membersRes = { rows: [] };
+    project = await db.selectFrom('projects').where('id', '=', projectId).selectAll().executeTakeFirst();
+    columns = [];
+    members = [];
   }
 
-  if (!projectRes.rows[0]) return null;
+  if (!project) return null;
 
   const [treeTasks, types, workflows, relations, phases, meetings] = await Promise.all([
     getTasksInTreeOrder(projectId),
@@ -254,10 +244,10 @@ async function fetchProjectBundle(projectId) {
   ]);
 
   return {
-    project: projectRes.rows[0],
-    columns: columnsRes.rows || [],
+    project,
+    columns: columns || [],
     tasks: treeTasks,
-    members: membersRes.rows || [],
+    members: members || [],
     types,
     workflows,
     relations,
@@ -270,32 +260,33 @@ async function fetchProjectBundle(projectId) {
 async function checkProjectAccess(projectId, userId, requiredRoles = ['owner', 'admin', 'member', 'viewer']) {
   try {
     // Owner always has full access
-    const { rows: proj } = await pool.query(
-      'SELECT owner_id FROM projects WHERE id = $1', [projectId]
-    );
-    if (!proj[0]) return { allowed: false, reason: 'Project not found' };
-    if (proj[0].owner_id === userId) return { allowed: true, role: 'owner' };
+    const proj = await db.selectFrom('projects')
+      .where('id', '=', projectId)
+      .select('owner_id')
+      .executeTakeFirst();
+    if (!proj) return { allowed: false, reason: 'Project not found' };
+    if (proj.owner_id === userId) return { allowed: true, role: 'owner' };
 
     // Check direct member access
-    const { rows: members } = await pool.query(
-      'SELECT role FROM project_members WHERE project_id = $1 AND user_id = $2',
-      [projectId, userId]
-    );
-    if (members[0] && requiredRoles.includes(members[0].role)) {
-      return { allowed: true, role: members[0].role };
+    const member = await db.selectFrom('project_members')
+      .where('project_id', '=', projectId)
+      .where('user_id', '=', userId)
+      .select('role')
+      .executeTakeFirst();
+    if (member && requiredRoles.includes(member.role)) {
+      return { allowed: true, role: member.role };
     }
 
     // Check team-based access
-    const { rows: teamAccess } = await pool.query(
-      `SELECT pm.role
-       FROM project_members pm
-       JOIN team_members tm ON tm.team_id = pm.team_id
-       WHERE pm.project_id = $1 AND tm.user_id = $2
-       LIMIT 1`,
-      [projectId, userId]
-    );
-    if (teamAccess[0] && requiredRoles.includes(teamAccess[0].role)) {
-      return { allowed: true, role: teamAccess[0].role };
+    const teamAccess = await db.selectFrom('project_members as pm')
+      .innerJoin('team_members as tm', 'tm.team_id', 'pm.team_id')
+      .where('pm.project_id', '=', projectId)
+      .where('tm.user_id', '=', userId)
+      .select('pm.role')
+      .limit(1)
+      .executeTakeFirst();
+    if (teamAccess && requiredRoles.includes(teamAccess.role)) {
+      return { allowed: true, role: teamAccess.role };
     }
 
     return { allowed: false, reason: 'Access denied' };
@@ -311,41 +302,39 @@ router.use(auth);
 // GET /api/projects
 router.get('/', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT p.*, COALESCE(pm_count.member_count, 0) AS member_count
-       FROM projects p
-       LEFT JOIN (
-         SELECT project_id, COUNT(*) AS member_count
-         FROM project_members
-         GROUP BY project_id
-       ) pm_count ON pm_count.project_id = p.id
-       WHERE p.status != 'deleted'
-         AND (
-           p.owner_id = $1
-           OR EXISTS (
-             SELECT 1 FROM project_members pm
-             WHERE pm.project_id = p.id AND pm.user_id = $1
-           )
-           OR EXISTS (
-             SELECT 1 FROM project_members pm2
-             JOIN team_members tm ON tm.team_id = pm2.team_id
-             WHERE pm2.project_id = p.id AND tm.user_id = $1
-           )
-         )
-       ORDER BY p.created_at DESC`,
-      [req.user.id]
-    );
+    const { rows } = await sql`
+      SELECT p.*, COALESCE(pm_count.member_count, 0) AS member_count
+      FROM projects p
+      LEFT JOIN (
+        SELECT project_id, COUNT(*) AS member_count
+        FROM project_members
+        GROUP BY project_id
+      ) pm_count ON pm_count.project_id = p.id
+      WHERE p.status != 'deleted'
+        AND (
+          p.owner_id = ${req.user.id}
+          OR EXISTS (
+            SELECT 1 FROM project_members pm
+            WHERE pm.project_id = p.id AND pm.user_id = ${req.user.id}
+          )
+          OR EXISTS (
+            SELECT 1 FROM project_members pm2
+            JOIN team_members tm ON tm.team_id = pm2.team_id
+            WHERE pm2.project_id = p.id AND tm.user_id = ${req.user.id}
+          )
+        )
+      ORDER BY p.created_at DESC
+    `.execute(db);
     res.json(rows);
   } catch (err) {
     console.error('Error listing projects (falling back to basic query):', err.message);
     try {
-      const { rows } = await pool.query(
-        `SELECT p.*, 0 AS member_count
-         FROM projects p
-         WHERE p.status != 'deleted' AND p.owner_id = $1
-         ORDER BY p.created_at DESC`,
-        [req.user.id]
-      );
+      const { rows } = await sql`
+        SELECT p.*, 0 AS member_count
+        FROM projects p
+        WHERE p.status != 'deleted' AND p.owner_id = ${req.user.id}
+        ORDER BY p.created_at DESC
+      `.execute(db);
       res.json(rows);
     } catch (fallbackErr) {
       console.error('Fallback list projects error:', fallbackErr);
@@ -356,128 +345,147 @@ router.get('/', async (req, res) => {
 
 // Helper: clone a project from template
 async function cloneProjectFromTemplate(templateId, user, { name, description, include_tasks }) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  return await db.transaction().execute(async (trx) => {
+    const template = await trx.selectFrom('projects')
+      .where('id', '=', templateId)
+      .selectAll()
+      .executeTakeFirst();
+    if (!template) throw new Error('Template not found');
 
-    const { rows: templateRows } = await client.query('SELECT * FROM projects WHERE id = $1', [templateId]);
-    if (!templateRows[0]) throw new Error('Template not found');
-    const template = templateRows[0];
-
-    const { rows: projRows } = await client.query(
-      `INSERT INTO projects (name, description, team_id, owner_id, template_id)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [name.trim() || `${template.name} (Copy)`, description || template.description, template.team_id, user.id, templateId]
-    );
-    const newProject = projRows[0];
+    const newProject = await trx.insertInto('projects')
+      .values({
+        name: name.trim() || `${template.name} (Copy)`,
+        description: description || template.description,
+        team_id: template.team_id,
+        owner_id: user.id,
+        template_id: templateId,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
 
     // Copy columns
-    const { rows: columns } = await client.query(
-      'SELECT * FROM project_columns WHERE project_id = $1 ORDER BY position ASC',
-      [templateId]
-    );
+    const columns = await trx.selectFrom('project_columns')
+      .where('project_id', '=', templateId)
+      .selectAll()
+      .orderBy('position', 'asc')
+      .execute();
     const colIdMap = new Map();
     for (const col of columns) {
-      const { rows: colRows } = await client.query(
-        `INSERT INTO project_columns (project_id, name, key, type, config, position, is_required)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING *`,
-        [newProject.id, col.name, col.key, col.type, col.config, col.position, col.is_required]
-      );
-      colIdMap.set(col.id, colRows[0].id);
+      const newCol = await trx.insertInto('project_columns')
+        .values({
+          project_id: newProject.id,
+          name: col.name,
+          key: col.key,
+          type: col.type,
+          config: col.config,
+          position: col.position,
+          is_required: col.is_required,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      colIdMap.set(col.id, newCol.id);
     }
 
     // Copy views
-    const { rows: views } = await client.query(
-      'SELECT * FROM project_views WHERE project_id = $1',
-      [templateId]
-    );
+    const views = await trx.selectFrom('project_views')
+      .where('project_id', '=', templateId)
+      .selectAll()
+      .execute();
     for (const view of views) {
-      await client.query(
-        `INSERT INTO project_views (project_id, name, type, config, created_by, is_default)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [newProject.id, view.name, view.type, view.config, user.id, view.is_default]
-      );
+      await trx.insertInto('project_views')
+        .values({
+          project_id: newProject.id,
+          name: view.name,
+          type: view.type,
+          config: view.config,
+          created_by: user.id,
+          is_default: view.is_default,
+        })
+        .execute();
     }
 
     // Copy types
-    const { rows: types } = await client.query(
-      'SELECT * FROM project_task_types WHERE project_id = $1 ORDER BY position ASC',
-      [templateId]
-    );
+    const types = await trx.selectFrom('project_task_types')
+      .where('project_id', '=', templateId)
+      .orderBy('position', 'asc')
+      .selectAll()
+      .execute();
     const typeIdMap = new Map();
     for (const t of types) {
-      const { rows: typeRows } = await client.query(
-        `INSERT INTO project_task_types (project_id, name, color, icon, position)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING *`,
-        [newProject.id, t.name, t.color, t.icon, t.position]
-      );
-      typeIdMap.set(t.id, typeRows[0].id);
+      const newType = await trx.insertInto('project_task_types')
+        .values({
+          project_id: newProject.id,
+          name: t.name,
+          color: t.color,
+          icon: t.icon,
+          position: t.position,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      typeIdMap.set(t.id, newType.id);
     }
 
     // Copy workflows
-    const { rows: workflows } = await client.query(
-      'SELECT * FROM project_workflows WHERE project_id = $1',
-      [templateId]
-    );
+    const workflows = await trx.selectFrom('project_workflows')
+      .where('project_id', '=', templateId)
+      .selectAll()
+      .execute();
     for (const w of workflows) {
-      await client.query(
-        `INSERT INTO project_workflows (project_id, from_status, to_status, role_required, required_fields)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [newProject.id, w.from_status, w.to_status, w.role_required, w.required_fields]
-      );
+      await trx.insertInto('project_workflows')
+        .values({
+          project_id: newProject.id,
+          from_status: w.from_status,
+          to_status: w.to_status,
+          role_required: w.role_required,
+          required_fields: w.required_fields,
+        })
+        .execute();
     }
 
     // Optionally copy tasks as skeletons
     if (include_tasks) {
-      const { rows: templateTasks } = await client.query(
-        'SELECT * FROM project_tasks WHERE project_id = $1 ORDER BY position ASC, created_at ASC',
-        [templateId]
-      );
+      const templateTasks = await trx.selectFrom('project_tasks')
+        .where('project_id', '=', templateId)
+        .selectAll()
+        .orderBy('position', 'asc')
+        .orderBy('created_at', 'asc')
+        .execute();
       const taskIdMap = new Map();
       for (const t of templateTasks) {
         const taskId = await generateTaskId();
-        const { rows: taskRows } = await client.query(
-          `INSERT INTO project_tasks (project_id, task_id, name, description, values, position, parent_id, created_by, type_id, estimated_hours)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-           RETURNING *`,
-          [
-            newProject.id,
-            taskId,
-            t.name,
-            t.description,
-            '{}',
-            t.position,
-            null,
-            user.id,
-            t.type_id ? typeIdMap.get(t.type_id) : null,
-            t.estimated_hours
-          ]
-        );
-        taskIdMap.set(t.id, taskRows[0].id);
+        const newTask = await trx.insertInto('project_tasks')
+          .values({
+            project_id: newProject.id,
+            task_id: taskId,
+            name: t.name,
+            description: t.description,
+            values: '{}',
+            position: t.position,
+            parent_id: null,
+            created_by: user.id,
+            type_id: t.type_id ? typeIdMap.get(t.type_id) : null,
+            estimated_hours: t.estimated_hours,
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+        taskIdMap.set(t.id, newTask.id);
       }
       // Fix parent_id references
       for (const t of templateTasks) {
         if (t.parent_id && taskIdMap.has(t.parent_id)) {
-          await client.query(
-            'UPDATE project_tasks SET parent_id = $1 WHERE id = $2',
-            [taskIdMap.get(t.parent_id), taskIdMap.get(t.id)]
-          );
+          await trx.updateTable('project_tasks')
+            .set({ parent_id: taskIdMap.get(t.parent_id) })
+            .where('id', '=', taskIdMap.get(t.id))
+            .execute();
         }
       }
     }
 
-    await client.query('COMMIT');
+    return newProject;
+  }).then((newProject) => {
     logAction(user.id, user.email, 'clone', 'project', newProject.id, newProject.name);
     return newProject;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 // POST /api/projects
@@ -500,13 +508,16 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO projects (name, description, team_id, owner_id, deal_id)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [name.trim(), description || null, team_id || null, req.user.id, deal_id || null]
-    );
-    const project = rows[0];
+    const project = await db.insertInto('projects')
+      .values({
+        name: name.trim(),
+        description: description || null,
+        team_id: team_id || null,
+        owner_id: req.user.id,
+        deal_id: deal_id || null,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
 
     // Create default columns (ignore if tables don't exist yet)
     try {
@@ -518,19 +529,30 @@ router.post('/', async (req, res) => {
         { name: 'Progress', key: 'progress', type: 'progress', config: { min: 0, max: 100 }, position: 4 },
       ];
       for (const col of defaultColumns) {
-        await pool.query(
-          `INSERT INTO project_columns (project_id, name, key, type, config, position, is_required)
-           VALUES ($1, $2, $3, $4, $5, $6, FALSE)`,
-          [project.id, col.name, col.key, col.type, JSON.stringify(col.config), col.position]
-        );
+        await db.insertInto('project_columns')
+          .values({
+            project_id: project.id,
+            name: col.name,
+            key: col.key,
+            type: col.type,
+            config: JSON.stringify(col.config),
+            position: col.position,
+            is_required: false,
+          })
+          .execute();
       }
 
       // Create default grid view
-      await pool.query(
-        `INSERT INTO project_views (project_id, name, type, config, created_by, is_default)
-         VALUES ($1, $2, $3, $4, $5, TRUE)`,
-        [project.id, 'Default Grid', 'grid', '{}', req.user.id]
-      );
+      await db.insertInto('project_views')
+        .values({
+          project_id: project.id,
+          name: 'Default Grid',
+          type: 'grid',
+          config: '{}',
+          created_by: req.user.id,
+          is_default: true,
+        })
+        .execute();
     } catch (colErr) {
       console.error('Default columns/views creation skipped (tables may not exist):', colErr.message);
     }
@@ -547,13 +569,13 @@ router.post('/', async (req, res) => {
 // GET /api/projects/templates (must be BEFORE /:id)
 router.get('/templates', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT p.*, u.name AS owner_name
-       FROM projects p
-       LEFT JOIN users u ON u.id = p.owner_id
-       WHERE p.is_template = TRUE
-       ORDER BY p.created_at DESC`
-    );
+    const { rows } = await sql`
+      SELECT p.*, u.name AS owner_name
+      FROM projects p
+      LEFT JOIN users u ON u.id = p.owner_id
+      WHERE p.is_template = TRUE
+      ORDER BY p.created_at DESC
+    `.execute(db);
     res.json(rows);
   } catch (err) {
     console.error('Error listing templates:', err);
@@ -577,16 +599,15 @@ router.get('/:id', async (req, res) => {
 router.put('/:id', async (req, res) => {
   const { name, description, status } = req.body || {};
   try {
-    const { rows } = await pool.query(
-      `UPDATE projects
-         SET name = COALESCE($1, name),
-             description = COALESCE($2, description),
-             status = COALESCE($3, status),
-             updated_at = NOW()
-       WHERE id = $4
-       RETURNING *`,
-      [name, description, status, req.params.id]
-    );
+    const { rows } = await sql`
+      UPDATE projects
+      SET name = COALESCE(${name}, name),
+          description = COALESCE(${description}, description),
+          status = COALESCE(${status}, status),
+          updated_at = NOW()
+      WHERE id = ${req.params.id}
+      RETURNING *
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Project not found' });
     logAction(req.user.id, req.user.email, 'update', 'project', rows[0].id, rows[0].name);
     res.json(rows[0]);
@@ -599,10 +620,9 @@ router.put('/:id', async (req, res) => {
 // DELETE /api/projects/:id (soft delete)
 router.delete('/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `UPDATE projects SET status = 'deleted', updated_at = NOW() WHERE id = $1 RETURNING *`,
-      [req.params.id]
-    );
+    const { rows } = await sql`
+      UPDATE projects SET status = 'deleted', updated_at = NOW() WHERE id = ${req.params.id} RETURNING *
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Project not found' });
     logAction(req.user.id, req.user.email, 'delete', 'project', rows[0].id, rows[0].name);
     res.json({ success: true });
@@ -615,10 +635,12 @@ router.delete('/:id', async (req, res) => {
 // Columns
 router.get('/:id/columns', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'SELECT * FROM project_columns WHERE project_id = $1 ORDER BY position ASC, created_at ASC',
-      [req.params.id]
-    );
+    const rows = await db.selectFrom('project_columns')
+      .where('project_id', '=', req.params.id)
+      .selectAll()
+      .orderBy('position', 'asc')
+      .orderBy('created_at', 'asc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing columns:', err);
@@ -633,12 +655,11 @@ router.post('/:id/columns', async (req, res) => {
   const key = req.body.key ? toKey(req.body.key) : toKey(name);
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO project_columns (project_id, name, key, type, config, position, is_required)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 0), COALESCE($7, FALSE))
-       RETURNING *`,
-      [req.params.id, name.trim(), key, type, config || {}, position, !!is_required]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_columns (project_id, name, key, type, config, position, is_required)
+      VALUES (${req.params.id}, ${name.trim()}, ${key}, ${type}, ${config || {}}, COALESCE(${position}, 0), COALESCE(${!!is_required}, FALSE))
+      RETURNING *
+    `.execute(db);
 
     logAction(req.user.id, req.user.email, 'create', 'project_column', rows[0].id, rows[0].name);
 
@@ -655,16 +676,15 @@ router.post('/:id/columns', async (req, res) => {
 router.put('/:id/columns/:colId', async (req, res) => {
   const { name, config, position, is_required } = req.body || {};
   try {
-    const { rows } = await pool.query(
-      `UPDATE project_columns
-         SET name = COALESCE($1, name),
-             config = COALESCE($2, config),
-             position = COALESCE($3, position),
-             is_required = COALESCE($4, is_required)
-       WHERE id = $5 AND project_id = $6
-       RETURNING *`,
-      [name, config, position, is_required, req.params.colId, req.params.id]
-    );
+    const { rows } = await sql`
+      UPDATE project_columns
+      SET name = COALESCE(${name}, name),
+          config = COALESCE(${config}, config),
+          position = COALESCE(${position}, position),
+          is_required = COALESCE(${is_required}, is_required)
+      WHERE id = ${req.params.colId} AND project_id = ${req.params.id}
+      RETURNING *
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Column not found' });
     logAction(req.user.id, req.user.email, 'update', 'project_column', rows[0].id, rows[0].name);
     res.json(rows[0]);
@@ -676,12 +696,13 @@ router.put('/:id/columns/:colId', async (req, res) => {
 
 router.delete('/:id/columns/:colId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_columns WHERE id = $1 AND project_id = $2 RETURNING id',
-      [req.params.colId, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Column not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_column', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_columns')
+      .where('id', '=', req.params.colId)
+      .where('project_id', '=', req.params.id)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Column not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_column', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting column:', err);
@@ -692,10 +713,12 @@ router.delete('/:id/columns/:colId', async (req, res) => {
 // Tasks
 router.get('/:id/tasks', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'SELECT * FROM project_tasks WHERE project_id = $1 ORDER BY position ASC, created_at ASC',
-      [req.params.id]
-    );
+    const rows = await db.selectFrom('project_tasks')
+      .where('project_id', '=', req.params.id)
+      .selectAll()
+      .orderBy('position', 'asc')
+      .orderBy('created_at', 'asc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing tasks:', err);
@@ -710,20 +733,19 @@ router.post('/:id/tasks', async (req, res) => {
   try {
     let taskPosition = position;
     if (taskPosition === undefined || taskPosition === null) {
-      const { rows: posRows } = await pool.query(
-        'SELECT COALESCE(MAX(position), 0) + 1 AS next_pos FROM project_tasks WHERE project_id = $1',
-        [req.params.id]
-      );
-      taskPosition = posRows[0].next_pos;
+      const posRow = await db.selectFrom('project_tasks')
+        .where('project_id', '=', req.params.id)
+        .select(db.fn.coalesce(db.fn.max('position'), db.val(0)).as('max_pos'))
+        .executeTakeFirst();
+      taskPosition = (Number(posRow?.max_pos) || 0) + 1;
     }
 
     const taskId = await generateTaskId();
-    const { rows } = await pool.query(
-      `INSERT INTO project_tasks (project_id, task_id, name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points, phase_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       RETURNING *`,
-      [req.params.id, taskId, name.trim(), description || null, values || {}, taskPosition, parent_id || null, type_id || null, estimated_hours || null, spent_hours || 0, story_points || null, phase_id || null, req.user.id]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_tasks (project_id, task_id, name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points, phase_id, created_by)
+      VALUES (${req.params.id}, ${taskId}, ${name.trim()}, ${description || null}, ${values || {}}, ${taskPosition}, ${parent_id || null}, ${type_id || null}, ${estimated_hours || null}, ${spent_hours || 0}, ${story_points || null}, ${phase_id || null}, ${req.user.id})
+      RETURNING *
+    `.execute(db);
 
     logAction(req.user.id, req.user.email, 'create', 'project_task', rows[0].id, rows[0].name);
 
@@ -741,23 +763,22 @@ router.put('/:id/tasks/:taskId', async (req, res) => {
       const cyclic = await wouldCreateCycle(req.params.id, req.params.taskId, parent_id);
       if (cyclic) return res.status(400).json({ error: 'Cannot set a descendant as parent (cycle detected)' });
     }
-    const { rows } = await pool.query(
-      `UPDATE project_tasks
-         SET name = COALESCE($1, name),
-             description = COALESCE($2, description),
-             values = COALESCE($3, values),
-             position = COALESCE($4, position),
-             parent_id = COALESCE($5, parent_id),
-             type_id = COALESCE($6, type_id),
-             estimated_hours = COALESCE($7, estimated_hours),
-             spent_hours = COALESCE($8, spent_hours),
-             story_points = COALESCE($9, story_points),
-             phase_id = COALESCE($10, phase_id),
-             updated_at = NOW()
-       WHERE id = $11 AND project_id = $12
-       RETURNING *`,
-       [name, description, values, position, parent_id, type_id, estimated_hours, spent_hours, story_points, phase_id, req.params.taskId, req.params.id]
-    );
+    const { rows } = await sql`
+      UPDATE project_tasks
+      SET name = COALESCE(${name}, name),
+          description = COALESCE(${description}, description),
+          values = COALESCE(${values}, values),
+          position = COALESCE(${position}, position),
+          parent_id = COALESCE(${parent_id}, parent_id),
+          type_id = COALESCE(${type_id}, type_id),
+          estimated_hours = COALESCE(${estimated_hours}, estimated_hours),
+          spent_hours = COALESCE(${spent_hours}, spent_hours),
+          story_points = COALESCE(${story_points}, story_points),
+          phase_id = COALESCE(${phase_id}, phase_id),
+          updated_at = NOW()
+      WHERE id = ${req.params.taskId} AND project_id = ${req.params.id}
+      RETURNING *
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Task not found' });
     logAction(req.user.id, req.user.email, 'update', 'project_task', rows[0].id, rows[0].name);
     res.json(rows[0]);
@@ -769,12 +790,13 @@ router.put('/:id/tasks/:taskId', async (req, res) => {
 
 router.delete('/:id/tasks/:taskId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_tasks WHERE id = $1 AND project_id = $2 RETURNING id',
-      [req.params.taskId, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Task not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_task', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_tasks')
+      .where('id', '=', req.params.taskId)
+      .where('project_id', '=', req.params.id)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Task not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_task', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting task:', err);
@@ -786,14 +808,12 @@ router.delete('/:id/tasks/:taskId', async (req, res) => {
 
 router.get('/:id/tasks/:taskId/comments', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-       `SELECT ptc.*, u.email, u.name AS user_name
-        FROM project_task_comments ptc
-        JOIN users u ON u.id = ptc.user_id
-        WHERE ptc.task_id = $1
-        ORDER BY ptc.created_at ASC`,
-      [req.params.taskId]
-    );
+    const rows = await db.selectFrom('project_task_comments as ptc')
+      .innerJoin('users as u', 'u.id', 'ptc.user_id')
+      .where('ptc.task_id', '=', req.params.taskId)
+      .select(['ptc.*', 'u.email', 'u.name as user_name'])
+      .orderBy('ptc.created_at', 'asc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing comments:', err);
@@ -806,22 +826,19 @@ router.post('/:id/tasks/:taskId/comments', async (req, res) => {
   if (!content || !content.trim()) return res.status(400).json({ error: 'Content is required' });
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO project_task_comments (task_id, user_id, content)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [req.params.taskId, req.user.id, content.trim()]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_task_comments (task_id, user_id, content)
+      VALUES (${req.params.taskId}, ${req.user.id}, ${content.trim()})
+      RETURNING *
+    `.execute(db);
     // Re-fetch with user info
-    const [result] = await pool.query(
-       `SELECT ptc.*, u.email, u.name AS user_name
-        FROM project_task_comments ptc
-        JOIN users u ON u.id = ptc.user_id
-        WHERE ptc.id = $1`,
-      [rows[0].id]
-    );
+    const result = await db.selectFrom('project_task_comments as ptc')
+      .innerJoin('users as u', 'u.id', 'ptc.user_id')
+      .where('ptc.id', '=', rows[0].id)
+      .select(['ptc.*', 'u.email', 'u.name as user_name'])
+      .executeTakeFirst();
     logAction(req.user.id, req.user.email, 'create', 'task_comment', rows[0].id, content.slice(0, 80));
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(result);
   } catch (err) {
     console.error('Error adding comment:', err);
     res.status(500).json({ error: 'Server error' });
@@ -830,12 +847,13 @@ router.post('/:id/tasks/:taskId/comments', async (req, res) => {
 
 router.delete('/:id/tasks/:taskId/comments/:commentId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_task_comments WHERE id = $1 AND task_id = $2 RETURNING id',
-      [req.params.commentId, req.params.taskId]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Comment not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'task_comment', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_task_comments')
+      .where('id', '=', req.params.commentId)
+      .where('task_id', '=', req.params.taskId)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Comment not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'task_comment', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting comment:', err);
@@ -847,14 +865,12 @@ router.delete('/:id/tasks/:taskId/comments/:commentId', async (req, res) => {
 
 router.get('/:id/tasks/:taskId/attachments', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT pta.*, u.email
-       FROM project_task_attachments pta
-       JOIN users u ON u.id = pta.uploaded_by
-       WHERE pta.task_id = $1
-       ORDER BY pta.created_at ASC`,
-      [req.params.taskId]
-    );
+    const rows = await db.selectFrom('project_task_attachments as pta')
+      .innerJoin('users as u', 'u.id', 'pta.uploaded_by')
+      .where('pta.task_id', '=', req.params.taskId)
+      .select(['pta.*', 'u.email'])
+      .orderBy('pta.created_at', 'asc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing attachments:', err);
@@ -867,12 +883,11 @@ router.post('/:id/tasks/:taskId/attachments', upload.single('file'), async (req,
 
   try {
     const fileUrl = `/uploads/projects/${req.file.filename}`;
-    const { rows } = await pool.query(
-      `INSERT INTO project_task_attachments (task_id, uploaded_by, file_name, file_url, file_size, mime_type)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [req.params.taskId, req.user.id, req.file.originalname, fileUrl, req.file.size, req.file.mimetype || null]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_task_attachments (task_id, uploaded_by, file_name, file_url, file_size, mime_type)
+      VALUES (${req.params.taskId}, ${req.user.id}, ${req.file.originalname}, ${fileUrl}, ${req.file.size}, ${req.file.mimetype || null})
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'create', 'task_attachment', rows[0].id, rows[0].file_name);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -883,17 +898,18 @@ router.post('/:id/tasks/:taskId/attachments', upload.single('file'), async (req,
 
 router.delete('/:id/tasks/:taskId/attachments/:attId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_task_attachments WHERE id = $1 AND task_id = $2 RETURNING id, file_url',
-      [req.params.attId, req.params.taskId]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Attachment not found' });
+    const row = await db.deleteFrom('project_task_attachments')
+      .where('id', '=', req.params.attId)
+      .where('task_id', '=', req.params.taskId)
+      .returning(['id', 'file_url'])
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Attachment not found' });
 
     // Remove file from disk
-    const filePath = path.join(__dirname, '..', '..', rows[0].file_url);
+    const filePath = path.join(__dirname, '..', '..', row.file_url);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-    logAction(req.user.id, req.user.email, 'delete', 'task_attachment', rows[0].id, rows[0].id);
+    logAction(req.user.id, req.user.email, 'delete', 'task_attachment', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting attachment:', err);
@@ -905,14 +921,12 @@ router.delete('/:id/tasks/:taskId/attachments/:attId', async (req, res) => {
 
 router.get('/:id/tasks/:taskId/assignees', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-       `SELECT pta.*, u.email, u.name AS user_name
-        FROM project_task_assignees pta
-        JOIN users u ON u.id = pta.user_id
-        WHERE pta.task_id = $1
-        ORDER BY pta.created_at ASC`,
-      [req.params.taskId]
-    );
+    const rows = await db.selectFrom('project_task_assignees as pta')
+      .innerJoin('users as u', 'u.id', 'pta.user_id')
+      .where('pta.task_id', '=', req.params.taskId)
+      .select(['pta.*', 'u.email', 'u.name as user_name'])
+      .orderBy('pta.created_at', 'asc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing assignees:', err);
@@ -925,13 +939,12 @@ router.post('/:id/tasks/:taskId/assignees', async (req, res) => {
   if (!user_id) return res.status(400).json({ error: 'user_id is required' });
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO project_task_assignees (task_id, user_id, role)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (task_id, user_id) DO UPDATE SET role = $3
-       RETURNING *`,
-      [req.params.taskId, user_id, role || 'responsible']
-    );
+    const { rows } = await sql`
+      INSERT INTO project_task_assignees (task_id, user_id, role)
+      VALUES (${req.params.taskId}, ${user_id}, ${role || 'responsible'})
+      ON CONFLICT (task_id, user_id) DO UPDATE SET role = ${role || 'responsible'}
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'assign', 'task_assignee', rows[0].id, `user ${user_id}`);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -942,12 +955,13 @@ router.post('/:id/tasks/:taskId/assignees', async (req, res) => {
 
 router.delete('/:id/tasks/:taskId/assignees/:assigneeId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_task_assignees WHERE id = $1 AND task_id = $2 RETURNING id',
-      [req.params.assigneeId, req.params.taskId]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Assignee not found' });
-    logAction(req.user.id, req.user.email, 'remove', 'task_assignee', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_task_assignees')
+      .where('id', '=', req.params.assigneeId)
+      .where('task_id', '=', req.params.taskId)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Assignee not found' });
+    logAction(req.user.id, req.user.email, 'remove', 'task_assignee', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing assignee:', err);
@@ -959,14 +973,12 @@ router.delete('/:id/tasks/:taskId/assignees/:assigneeId', async (req, res) => {
 
 router.get('/:id/tasks/:taskId/dependencies', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT ptd.*, t.name AS depends_on_name, t.task_id AS depends_on_task_id
-       FROM project_task_dependencies ptd
-       JOIN project_tasks t ON t.id = ptd.depends_on_task_id
-       WHERE ptd.task_id = $1
-       ORDER BY ptd.created_at ASC`,
-      [req.params.taskId]
-    );
+    const rows = await db.selectFrom('project_task_dependencies as ptd')
+      .innerJoin('project_tasks as t', 't.id', 'ptd.depends_on_task_id')
+      .where('ptd.task_id', '=', req.params.taskId)
+      .select(['ptd.*', 't.name as depends_on_name', 't.task_id as depends_on_task_id'])
+      .orderBy('ptd.created_at', 'asc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing dependencies:', err);
@@ -979,13 +991,12 @@ router.post('/:id/tasks/:taskId/dependencies', async (req, res) => {
   if (!depends_on_task_id) return res.status(400).json({ error: 'depends_on_task_id is required' });
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO project_task_dependencies (task_id, depends_on_task_id, type)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (task_id, depends_on_task_id) DO UPDATE SET type = $3
-       RETURNING *`,
-      [req.params.taskId, depends_on_task_id, type || 'finish_to_start']
-    );
+    const { rows } = await sql`
+      INSERT INTO project_task_dependencies (task_id, depends_on_task_id, type)
+      VALUES (${req.params.taskId}, ${depends_on_task_id}, ${type || 'finish_to_start'})
+      ON CONFLICT (task_id, depends_on_task_id) DO UPDATE SET type = ${type || 'finish_to_start'}
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'create', 'task_dependency', rows[0].id, `${req.params.taskId}->${depends_on_task_id}`);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -996,12 +1007,13 @@ router.post('/:id/tasks/:taskId/dependencies', async (req, res) => {
 
 router.delete('/:id/tasks/:taskId/dependencies/:depId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_task_dependencies WHERE id = $1 AND task_id = $2 RETURNING id',
-      [req.params.depId, req.params.taskId]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Dependency not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'task_dependency', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_task_dependencies')
+      .where('id', '=', req.params.depId)
+      .where('task_id', '=', req.params.taskId)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Dependency not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'task_dependency', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing dependency:', err);
@@ -1020,11 +1032,10 @@ async function wouldCreatePrecedesCycle(projectId, fromTaskId, toTaskId) {
     if (current === fromTaskId) return true;
     if (visited.has(current)) continue;
     visited.add(current);
-    const { rows } = await pool.query(
-      `SELECT to_task_id FROM project_task_relations
-       WHERE project_id = $1 AND from_task_id = $2 AND relation_type IN ('precedes', 'follows')`,
-      [projectId, current]
-    );
+    const { rows } = await sql`
+      SELECT to_task_id FROM project_task_relations
+      WHERE project_id = ${projectId} AND from_task_id = ${current} AND relation_type IN ('precedes', 'follows')
+    `.execute(db);
     for (const r of rows) queue.push(r.to_task_id);
   }
   return false;
@@ -1032,18 +1043,17 @@ async function wouldCreatePrecedesCycle(projectId, fromTaskId, toTaskId) {
 
 router.get('/:id/tasks/:taskId/relations', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT ptr.*,
-              ft.name AS from_task_name, ft.task_id AS from_task_task_id,
-              tt.name AS to_task_name, tt.task_id AS to_task_task_id
-       FROM project_task_relations ptr
-       JOIN project_tasks ft ON ft.id = ptr.from_task_id
-       JOIN project_tasks tt ON tt.id = ptr.to_task_id
-       WHERE ptr.project_id = $1
-         AND (ptr.from_task_id = $2 OR ptr.to_task_id = $2)
-       ORDER BY ptr.created_at ASC`,
-      [req.params.id, req.params.taskId]
-    );
+    const { rows } = await sql`
+      SELECT ptr.*,
+             ft.name AS from_task_name, ft.task_id AS from_task_task_id,
+             tt.name AS to_task_name, tt.task_id AS to_task_task_id
+      FROM project_task_relations ptr
+      JOIN project_tasks ft ON ft.id = ptr.from_task_id
+      JOIN project_tasks tt ON tt.id = ptr.to_task_id
+      WHERE ptr.project_id = ${req.params.id}
+        AND (ptr.from_task_id = ${req.params.taskId} OR ptr.to_task_id = ${req.params.taskId})
+      ORDER BY ptr.created_at ASC
+    `.execute(db);
     res.json(rows);
   } catch (err) {
     console.error('Error listing relations:', err);
@@ -1075,13 +1085,12 @@ router.post('/:id/tasks/:taskId/relations', async (req, res) => {
       if (cyclic) return res.status(400).json({ error: 'This relation would create a cycle' });
     }
 
-    const { rows } = await pool.query(
-      `INSERT INTO project_task_relations (project_id, from_task_id, to_task_id, relation_type, delay_days)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (from_task_id, to_task_id, relation_type) DO UPDATE SET delay_days = $5
-       RETURNING *`,
-      [projectId, fromTaskId, to_task_id, relation_type, delay_days || 0]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_task_relations (project_id, from_task_id, to_task_id, relation_type, delay_days)
+      VALUES (${projectId}, ${fromTaskId}, ${to_task_id}, ${relation_type}, ${delay_days || 0})
+      ON CONFLICT (from_task_id, to_task_id, relation_type) DO UPDATE SET delay_days = ${delay_days || 0}
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'create', 'task_relation', rows[0].id, `${relation_type} ${fromTaskId}→${to_task_id}`);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -1092,12 +1101,13 @@ router.post('/:id/tasks/:taskId/relations', async (req, res) => {
 
 router.delete('/:id/tasks/:taskId/relations/:relId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_task_relations WHERE id = $1 AND project_id = $2 RETURNING id',
-      [req.params.relId, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Relation not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'task_relation', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_task_relations')
+      .where('id', '=', req.params.relId)
+      .where('project_id', '=', req.params.id)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Relation not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'task_relation', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing relation:', err);
@@ -1109,10 +1119,12 @@ router.delete('/:id/tasks/:taskId/relations/:relId', async (req, res) => {
 
 router.get('/:id/tasks/:taskId/subtasks', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'SELECT * FROM project_tasks WHERE parent_id = $1 ORDER BY position ASC, created_at ASC',
-      [req.params.taskId]
-    );
+    const rows = await db.selectFrom('project_tasks')
+      .where('parent_id', '=', req.params.taskId)
+      .selectAll()
+      .orderBy('position', 'asc')
+      .orderBy('created_at', 'asc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing subtasks:', err);
@@ -1128,12 +1140,12 @@ router.post('/:id/tasks/:taskId/indent', async (req, res) => {
     const taskId = req.params.taskId;
 
     // Get current task
-    const { rows: taskRows } = await pool.query(
-      'SELECT * FROM project_tasks WHERE id = $1 AND project_id = $2',
-      [taskId, projectId]
-    );
-    if (!taskRows[0]) return res.status(404).json({ error: 'Task not found' });
-    const task = taskRows[0];
+    const task = await db.selectFrom('project_tasks')
+      .where('id', '=', taskId)
+      .where('project_id', '=', projectId)
+      .selectAll()
+      .executeTakeFirst();
+    if (!task) return res.status(404).json({ error: 'Task not found' });
 
     if (task.parent_id) return res.status(400).json({ error: 'Task is already a subtask' });
 
@@ -1146,11 +1158,10 @@ router.post('/:id/tasks/:taskId/indent', async (req, res) => {
     const cyclic = await wouldCreateCycle(projectId, taskId, newParentId);
     if (cyclic) return res.status(400).json({ error: 'Cannot indent under a descendant' });
 
-    const { rows } = await pool.query(
-      `UPDATE project_tasks SET parent_id = $1, updated_at = NOW()
-       WHERE id = $2 AND project_id = $3 RETURNING *`,
-      [newParentId, taskId, projectId]
-    );
+    const { rows } = await sql`
+      UPDATE project_tasks SET parent_id = ${newParentId}, updated_at = NOW()
+      WHERE id = ${taskId} AND project_id = ${projectId} RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'indent', 'project_task', rows[0].id, rows[0].name);
     res.json(rows[0]);
   } catch (err) {
@@ -1164,27 +1175,27 @@ router.post('/:id/tasks/:taskId/outdent', async (req, res) => {
     const projectId = req.params.id;
     const taskId = req.params.taskId;
 
-    const { rows: taskRows } = await pool.query(
-      'SELECT * FROM project_tasks WHERE id = $1 AND project_id = $2',
-      [taskId, projectId]
-    );
-    if (!taskRows[0]) return res.status(404).json({ error: 'Task not found' });
-    const task = taskRows[0];
+    const task = await db.selectFrom('project_tasks')
+      .where('id', '=', taskId)
+      .where('project_id', '=', projectId)
+      .selectAll()
+      .executeTakeFirst();
+    if (!task) return res.status(404).json({ error: 'Task not found' });
 
     if (!task.parent_id) return res.status(400).json({ error: 'Task is not a subtask' });
 
     // Get the parent's parent (grandparent) to potentially promote to that level, or null
-    const { rows: parentRows } = await pool.query(
-      'SELECT parent_id FROM project_tasks WHERE id = $1 AND project_id = $2',
-      [task.parent_id, projectId]
-    );
-    const newParentId = parentRows[0]?.parent_id || null;
+    const parentRow = await db.selectFrom('project_tasks')
+      .where('id', '=', task.parent_id)
+      .where('project_id', '=', projectId)
+      .select('parent_id')
+      .executeTakeFirst();
+    const newParentId = parentRow?.parent_id || null;
 
-    const { rows } = await pool.query(
-      `UPDATE project_tasks SET parent_id = $1, updated_at = NOW()
-       WHERE id = $2 AND project_id = $3 RETURNING *`,
-      [newParentId, taskId, projectId]
-    );
+    const { rows } = await sql`
+      UPDATE project_tasks SET parent_id = ${newParentId}, updated_at = NOW()
+      WHERE id = ${taskId} AND project_id = ${projectId} RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'outdent', 'project_task', rows[0].id, rows[0].name);
     res.json(rows[0]);
   } catch (err) {
@@ -1204,10 +1215,11 @@ router.get('/attachments/:filename', (req, res) => {
 
 router.get('/:id/views', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'SELECT * FROM project_views WHERE project_id = $1 ORDER BY created_at ASC',
-      [req.params.id]
-    );
+    const rows = await db.selectFrom('project_views')
+      .where('project_id', '=', req.params.id)
+      .selectAll()
+      .orderBy('created_at', 'asc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing views:', err);
@@ -1221,17 +1233,17 @@ router.post('/:id/views', async (req, res) => {
 
   try {
     if (is_default) {
-      await pool.query(
-        'UPDATE project_views SET is_default = FALSE WHERE project_id = $1 AND type = $2',
-        [req.params.id, type]
-      );
+      await db.updateTable('project_views')
+        .set({ is_default: false })
+        .where('project_id', '=', req.params.id)
+        .where('type', '=', type)
+        .execute();
     }
-    const { rows } = await pool.query(
-      `INSERT INTO project_views (project_id, name, type, config, created_by, is_default)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6, FALSE))
-       RETURNING *`,
-      [req.params.id, name.trim(), type, config || {}, req.user.id, is_default]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_views (project_id, name, type, config, created_by, is_default)
+      VALUES (${req.params.id}, ${name.trim()}, ${type}, ${config || {}}, ${req.user.id}, COALESCE(${is_default}, FALSE))
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'create', 'project_view', rows[0].id, rows[0].name);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -1244,23 +1256,26 @@ router.put('/:id/views/:viewId', async (req, res) => {
   const { name, config, is_default } = req.body || {};
   try {
     if (is_default) {
-      const view = await pool.query('SELECT type FROM project_views WHERE id = $1', [req.params.viewId]);
-      if (view.rows[0]) {
-        await pool.query(
-          'UPDATE project_views SET is_default = FALSE WHERE project_id = $1 AND type = $2',
-          [req.params.id, view.rows[0].type]
-        );
+      const view = await db.selectFrom('project_views')
+        .where('id', '=', req.params.viewId)
+        .select('type')
+        .executeTakeFirst();
+      if (view) {
+        await db.updateTable('project_views')
+          .set({ is_default: false })
+          .where('project_id', '=', req.params.id)
+          .where('type', '=', view.type)
+          .execute();
       }
     }
-    const { rows } = await pool.query(
-      `UPDATE project_views
-         SET name = COALESCE($1, name),
-             config = COALESCE($2, config),
-             is_default = COALESCE($3, is_default)
-       WHERE id = $4 AND project_id = $5
-       RETURNING *`,
-      [name, config, is_default, req.params.viewId, req.params.id]
-    );
+    const { rows } = await sql`
+      UPDATE project_views
+      SET name = COALESCE(${name}, name),
+          config = COALESCE(${config}, config),
+          is_default = COALESCE(${is_default}, is_default)
+      WHERE id = ${req.params.viewId} AND project_id = ${req.params.id}
+      RETURNING *
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'View not found' });
     logAction(req.user.id, req.user.email, 'update', 'project_view', rows[0].id, rows[0].name);
     res.json(rows[0]);
@@ -1272,12 +1287,13 @@ router.put('/:id/views/:viewId', async (req, res) => {
 
 router.delete('/:id/views/:viewId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_views WHERE id = $1 AND project_id = $2 RETURNING id',
-      [req.params.viewId, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'View not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_view', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_views')
+      .where('id', '=', req.params.viewId)
+      .where('project_id', '=', req.params.id)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'View not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_view', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting view:', err);
@@ -1289,16 +1305,13 @@ router.delete('/:id/views/:viewId', async (req, res) => {
 
 router.get('/:id/members', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-       `SELECT pm.*, u.email, u.name AS user_name,
-               t.name AS team_name
-        FROM project_members pm
-        LEFT JOIN users u ON u.id = pm.user_id
-        LEFT JOIN teams t ON t.id = pm.team_id
-        WHERE pm.project_id = $1
-        ORDER BY pm.added_at ASC`,
-      [req.params.id]
-    );
+    const rows = await db.selectFrom('project_members as pm')
+      .leftJoin('users as u', 'u.id', 'pm.user_id')
+      .leftJoin('teams as t', 't.id', 'pm.team_id')
+      .where('pm.project_id', '=', req.params.id)
+      .select(['pm.*', 'u.email', 'u.name as user_name', 't.name as team_name'])
+      .orderBy('pm.added_at', 'asc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing members:', err);
@@ -1315,12 +1328,11 @@ router.post('/:id/members', async (req, res) => {
     const access = await checkProjectAccess(req.params.id, req.user.id, ['owner', 'admin']);
     if (!access.allowed) return res.status(403).json({ error: access.reason });
 
-    const { rows } = await pool.query(
-      `INSERT INTO project_members (project_id, user_id, team_id, role)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *`,
-      [req.params.id, user_id || null, team_id || null, role || 'member']
-    );
+    const { rows } = await sql`
+      INSERT INTO project_members (project_id, user_id, team_id, role)
+      VALUES (${req.params.id}, ${user_id || null}, ${team_id || null}, ${role || 'member'})
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'add', 'project_member', rows[0].id,
       user_id ? `user ${user_id}` : `team ${team_id}`);
     res.status(201).json(rows[0]);
@@ -1338,10 +1350,9 @@ router.put('/:id/members/:memberId', async (req, res) => {
     const access = await checkProjectAccess(req.params.id, req.user.id, ['owner', 'admin']);
     if (!access.allowed) return res.status(403).json({ error: access.reason });
 
-    const { rows } = await pool.query(
-      `UPDATE project_members SET role = $1 WHERE id = $2 AND project_id = $3 RETURNING *`,
-      [role, req.params.memberId, req.params.id]
-    );
+    const { rows } = await sql`
+      UPDATE project_members SET role = ${role} WHERE id = ${req.params.memberId} AND project_id = ${req.params.id} RETURNING *
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Member not found' });
     logAction(req.user.id, req.user.email, 'update', 'project_member', rows[0].id, `role -> ${role}`);
     res.json(rows[0]);
@@ -1356,12 +1367,13 @@ router.delete('/:id/members/:memberId', async (req, res) => {
     const access = await checkProjectAccess(req.params.id, req.user.id, ['owner', 'admin']);
     if (!access.allowed) return res.status(403).json({ error: access.reason });
 
-    const { rows } = await pool.query(
-      'DELETE FROM project_members WHERE id = $1 AND project_id = $2 RETURNING id',
-      [req.params.memberId, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Member not found' });
-    logAction(req.user.id, req.user.email, 'remove', 'project_member', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_members')
+      .where('id', '=', req.params.memberId)
+      .where('project_id', '=', req.params.id)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Member not found' });
+    logAction(req.user.id, req.user.email, 'remove', 'project_member', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing member:', err);
@@ -1385,12 +1397,11 @@ router.post('/:id/types', async (req, res) => {
   const { name, color, icon, position } = req.body || {};
   if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO project_task_types (project_id, name, color, icon, position)
-       VALUES ($1, $2, $3, $4, COALESCE($5, 0))
-       RETURNING *`,
-      [req.params.id, name.trim(), color || '#3B82F6', icon || 'task', position]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_task_types (project_id, name, color, icon, position)
+      VALUES (${req.params.id}, ${name.trim()}, ${color || '#3B82F6'}, ${icon || 'task'}, COALESCE(${position}, 0))
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'create', 'project_task_type', rows[0].id, rows[0].name);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -1403,16 +1414,15 @@ router.post('/:id/types', async (req, res) => {
 router.put('/:id/types/:typeId', async (req, res) => {
   const { name, color, icon, position } = req.body || {};
   try {
-    const { rows } = await pool.query(
-      `UPDATE project_task_types
-         SET name = COALESCE($1, name),
-             color = COALESCE($2, color),
-             icon = COALESCE($3, icon),
-             position = COALESCE($4, position)
-       WHERE id = $5 AND project_id = $6
-       RETURNING *`,
-      [name, color, icon, position, req.params.typeId, req.params.id]
-    );
+    const { rows } = await sql`
+      UPDATE project_task_types
+      SET name = COALESCE(${name}, name),
+          color = COALESCE(${color}, color),
+          icon = COALESCE(${icon}, icon),
+          position = COALESCE(${position}, position)
+      WHERE id = ${req.params.typeId} AND project_id = ${req.params.id}
+      RETURNING *
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Type not found' });
     logAction(req.user.id, req.user.email, 'update', 'project_task_type', rows[0].id, rows[0].name);
     res.json(rows[0]);
@@ -1424,12 +1434,13 @@ router.put('/:id/types/:typeId', async (req, res) => {
 
 router.delete('/:id/types/:typeId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_task_types WHERE id = $1 AND project_id = $2 RETURNING id',
-      [req.params.typeId, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Type not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_task_type', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_task_types')
+      .where('id', '=', req.params.typeId)
+      .where('project_id', '=', req.params.id)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Type not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_task_type', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting type:', err);
@@ -1453,12 +1464,11 @@ router.post('/:id/workflows', async (req, res) => {
   const { from_status, to_status, role_required, required_fields } = req.body || {};
   if (!from_status || !to_status) return res.status(400).json({ error: 'from_status and to_status are required' });
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO project_workflows (project_id, from_status, to_status, role_required, required_fields)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [req.params.id, from_status, to_status, role_required || null, required_fields || null]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_workflows (project_id, from_status, to_status, role_required, required_fields)
+      VALUES (${req.params.id}, ${from_status}, ${to_status}, ${role_required || null}, ${required_fields || null})
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'create', 'project_workflow', rows[0].id, `${from_status} → ${to_status}`);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -1470,12 +1480,13 @@ router.post('/:id/workflows', async (req, res) => {
 
 router.delete('/:id/workflows/:workflowId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_workflows WHERE id = $1 AND project_id = $2 RETURNING id',
-      [req.params.workflowId, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Workflow not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_workflow', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_workflows')
+      .where('id', '=', req.params.workflowId)
+      .where('project_id', '=', req.params.id)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Workflow not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_workflow', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting workflow:', err);
@@ -1492,10 +1503,9 @@ router.post('/:id/tasks/bulk-delete', async (req, res) => {
   }
 
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_tasks WHERE id = ANY($1::uuid[]) AND project_id = $2 RETURNING id',
-      [task_ids, req.params.id]
-    );
+    const { rows } = await sql`
+      DELETE FROM project_tasks WHERE id = ANY(${task_ids}::uuid[]) AND project_id = ${req.params.id} RETURNING id
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'bulk_delete', 'project_task', null, `${rows.length} tasks`);
     res.json({ deleted: rows.length, ids: rows.map((r) => r.id) });
   } catch (err) {
@@ -1512,36 +1522,32 @@ router.post('/:id/tasks/bulk-update', async (req, res) => {
 
   try {
     const setClauses = [];
-    const params = [task_ids, req.params.id];
-    let idx = 3;
+    const params = [];
+    let idx = 0;
 
     if (values && typeof values === 'object') {
-      setClauses.push(`values = values || $${idx++}::jsonb`);
-      params.push(JSON.stringify(values));
+      setClauses.push(sql`values = values || ${JSON.stringify(values)}::jsonb`);
     }
     if (name !== undefined) {
-      setClauses.push(`name = COALESCE($${idx++}, name)`);
-      params.push(name);
+      setClauses.push(sql`name = COALESCE(${name}, name)`);
     }
     if (description !== undefined) {
-      setClauses.push(`description = COALESCE($${idx++}, description)`);
-      params.push(description);
+      setClauses.push(sql`description = COALESCE(${description}, description)`);
     }
     if (position !== undefined) {
-      setClauses.push(`position = COALESCE($${idx++}, position)`);
-      params.push(position);
+      setClauses.push(sql`position = COALESCE(${position}, position)`);
     }
 
     if (setClauses.length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    const { rows } = await pool.query(
-      `UPDATE project_tasks SET ${setClauses.join(', ')}, updated_at = NOW()
-       WHERE id = ANY($1::uuid[]) AND project_id = $2
-       RETURNING *`,
-      params
-    );
+    const { rows } = await sql`
+      UPDATE project_tasks
+      SET ${sql.join(setClauses, sql`, `)}, updated_at = NOW()
+      WHERE id = ANY(${task_ids}::uuid[]) AND project_id = ${req.params.id}
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'bulk_update', 'project_task', null, `${rows.length} tasks`);
     res.json({ updated: rows.length, tasks: rows });
   } catch (err) {
@@ -1554,14 +1560,13 @@ router.post('/:id/tasks/bulk-update', async (req, res) => {
 
 router.get('/:id/tasks/:taskId/time-entries', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT pte.*, u.name AS user_name, u.email
-       FROM project_time_entries pte
-       JOIN users u ON u.id = pte.user_id
-       WHERE pte.task_id = $1
-       ORDER BY pte.logged_at DESC, pte.created_at DESC`,
-      [req.params.taskId]
-    );
+    const rows = await db.selectFrom('project_time_entries as pte')
+      .innerJoin('users as u', 'u.id', 'pte.user_id')
+      .where('pte.task_id', '=', req.params.taskId)
+      .select(['pte.*', 'u.name as user_name', 'u.email'])
+      .orderBy('pte.logged_at', 'desc')
+      .orderBy('pte.created_at', 'desc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing time entries:', err);
@@ -1576,12 +1581,11 @@ router.post('/:id/tasks/:taskId/time-entries', async (req, res) => {
   }
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO project_time_entries (task_id, user_id, hours, description, billable, hourly_rate, logged_at)
-       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, CURRENT_DATE))
-       RETURNING *`,
-      [req.params.taskId, req.user.id, Number(hours), description || null, billable !== false, hourly_rate || 0, logged_at || null]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_time_entries (task_id, user_id, hours, description, billable, hourly_rate, logged_at)
+      VALUES (${req.params.taskId}, ${req.user.id}, ${Number(hours)}, ${description || null}, ${billable !== false}, ${hourly_rate || 0}, COALESCE(${logged_at || null}, CURRENT_DATE))
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'create', 'time_entry', rows[0].id, `${hours}h`);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -1592,12 +1596,13 @@ router.post('/:id/tasks/:taskId/time-entries', async (req, res) => {
 
 router.delete('/:id/tasks/:taskId/time-entries/:entryId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_time_entries WHERE id = $1 AND task_id = $2 RETURNING id',
-      [req.params.entryId, req.params.taskId]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Time entry not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'time_entry', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_time_entries')
+      .where('id', '=', req.params.entryId)
+      .where('task_id', '=', req.params.taskId)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Time entry not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'time_entry', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting time entry:', err);
@@ -1620,10 +1625,9 @@ router.post('/:id/clone', async (req, res) => {
 // POST /api/projects/:id/save-as-template
 router.post('/:id/save-as-template', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `UPDATE projects SET is_template = TRUE, updated_at = NOW() WHERE id = $1 RETURNING *`,
-      [req.params.id]
-    );
+    const { rows } = await sql`
+      UPDATE projects SET is_template = TRUE, updated_at = NOW() WHERE id = ${req.params.id} RETURNING *
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Project not found' });
     logAction(req.user.id, req.user.email, 'save_as_template', 'project', rows[0].id, rows[0].name);
     res.json(rows[0]);
@@ -1638,10 +1642,11 @@ router.post('/:id/save-as-template', async (req, res) => {
 // GET /api/projects/:id/sprints
 router.get('/:id/sprints', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'SELECT * FROM sprints WHERE project_id = $1 ORDER BY created_at DESC',
-      [req.params.id]
-    );
+    const rows = await db.selectFrom('sprints')
+      .where('project_id', '=', req.params.id)
+      .selectAll()
+      .orderBy('created_at', 'desc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing sprints:', err);
@@ -1654,12 +1659,11 @@ router.post('/:id/sprints', async (req, res) => {
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO sprints (project_id, name, goal, start_date, end_date)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [req.params.id, name.trim(), goal || null, start_date || null, end_date || null]
-    );
+    const { rows } = await sql`
+      INSERT INTO sprints (project_id, name, goal, start_date, end_date)
+      VALUES (${req.params.id}, ${name.trim()}, ${goal || null}, ${start_date || null}, ${end_date || null})
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'create', 'sprint', rows[0].id, rows[0].name);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -1671,18 +1675,17 @@ router.post('/:id/sprints', async (req, res) => {
 router.put('/:id/sprints/:sprintId', async (req, res) => {
   const { name, goal, start_date, end_date, status } = req.body || {};
   try {
-    const { rows } = await pool.query(
-      `UPDATE sprints
-         SET name = COALESCE($1, name),
-             goal = COALESCE($2, goal),
-             start_date = COALESCE($3, start_date),
-             end_date = COALESCE($4, end_date),
-             status = COALESCE($5, status),
-             updated_at = NOW()
-       WHERE id = $6 AND project_id = $7
-       RETURNING *`,
-      [name, goal, start_date, end_date, status, req.params.sprintId, req.params.id]
-    );
+    const { rows } = await sql`
+      UPDATE sprints
+      SET name = COALESCE(${name}, name),
+          goal = COALESCE(${goal}, goal),
+          start_date = COALESCE(${start_date}, start_date),
+          end_date = COALESCE(${end_date}, end_date),
+          status = COALESCE(${status}, status),
+          updated_at = NOW()
+      WHERE id = ${req.params.sprintId} AND project_id = ${req.params.id}
+      RETURNING *
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Sprint not found' });
     logAction(req.user.id, req.user.email, 'update', 'sprint', rows[0].id, rows[0].name);
     res.json(rows[0]);
@@ -1694,12 +1697,13 @@ router.put('/:id/sprints/:sprintId', async (req, res) => {
 
 router.delete('/:id/sprints/:sprintId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM sprints WHERE id = $1 AND project_id = $2 RETURNING id',
-      [req.params.sprintId, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Sprint not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'sprint', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('sprints')
+      .where('id', '=', req.params.sprintId)
+      .where('project_id', '=', req.params.id)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Sprint not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'sprint', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting sprint:', err);
@@ -1710,14 +1714,13 @@ router.delete('/:id/sprints/:sprintId', async (req, res) => {
 // Sprint task management
 router.get('/:id/sprints/:sprintId/tasks', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT st.*, t.name AS task_name, t.task_id, t.values, t.status
-       FROM sprint_tasks st
-       JOIN project_tasks t ON t.id = st.task_id
-       WHERE st.sprint_id = $1
-       ORDER BY st.position ASC, st.created_at ASC`,
-      [req.params.sprintId]
-    );
+    const { rows } = await sql`
+      SELECT st.*, t.name AS task_name, t.task_id, t.values, t.status
+      FROM sprint_tasks st
+      JOIN project_tasks t ON t.id = st.task_id
+      WHERE st.sprint_id = ${req.params.sprintId}
+      ORDER BY st.position ASC, st.created_at ASC
+    `.execute(db);
     res.json(rows);
   } catch (err) {
     console.error('Error listing sprint tasks:', err);
@@ -1730,13 +1733,12 @@ router.post('/:id/sprints/:sprintId/tasks', async (req, res) => {
   if (!task_id) return res.status(400).json({ error: 'task_id is required' });
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO sprint_tasks (sprint_id, task_id, story_points, position)
-       VALUES ($1, $2, $3, COALESCE($4, 0))
-       ON CONFLICT (sprint_id, task_id) DO UPDATE SET story_points = $3, position = COALESCE($4, sprint_tasks.position)
-       RETURNING *`,
-      [req.params.sprintId, task_id, story_points, position]
-    );
+    const { rows } = await sql`
+      INSERT INTO sprint_tasks (sprint_id, task_id, story_points, position)
+      VALUES (${req.params.sprintId}, ${task_id}, ${story_points}, COALESCE(${position}, 0))
+      ON CONFLICT (sprint_id, task_id) DO UPDATE SET story_points = ${story_points}, position = COALESCE(${position}, sprint_tasks.position)
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'add', 'sprint_task', rows[0].id, `task ${task_id} -> sprint ${req.params.sprintId}`);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -1747,12 +1749,13 @@ router.post('/:id/sprints/:sprintId/tasks', async (req, res) => {
 
 router.delete('/:id/sprints/:sprintId/tasks/:taskId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM sprint_tasks WHERE sprint_id = $1 AND task_id = $2 RETURNING id',
-      [req.params.sprintId, req.params.taskId]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Task not found in sprint' });
-    logAction(req.user.id, req.user.email, 'remove', 'sprint_task', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('sprint_tasks')
+      .where('sprint_id', '=', req.params.sprintId)
+      .where('task_id', '=', req.params.taskId)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Task not found in sprint' });
+    logAction(req.user.id, req.user.email, 'remove', 'sprint_task', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing sprint task:', err);
@@ -1763,18 +1766,17 @@ router.delete('/:id/sprints/:sprintId/tasks/:taskId', async (req, res) => {
 // Backlog: tasks not in any sprint for this project
 router.get('/:id/backlog', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT t.*
-       FROM project_tasks t
-       WHERE t.project_id = $1
-         AND NOT EXISTS (
-           SELECT 1 FROM sprint_tasks st
-           JOIN sprints s ON s.id = st.sprint_id
-           WHERE st.task_id = t.id AND s.project_id = $1
-         )
-       ORDER BY t.position ASC, t.created_at ASC`,
-      [req.params.id]
-    );
+    const { rows } = await sql`
+      SELECT t.*
+      FROM project_tasks t
+      WHERE t.project_id = ${req.params.id}
+        AND NOT EXISTS (
+          SELECT 1 FROM sprint_tasks st
+          JOIN sprints s ON s.id = st.sprint_id
+          WHERE st.task_id = t.id AND s.project_id = ${req.params.id}
+        )
+      ORDER BY t.position ASC, t.created_at ASC
+    `.execute(db);
     res.json(rows);
   } catch (err) {
     console.error('Error loading backlog:', err);
@@ -1785,18 +1787,18 @@ router.get('/:id/backlog', async (req, res) => {
 // Burndown data for a sprint
 router.get('/:id/sprints/:sprintId/burndown', async (req, res) => {
   try {
-    const { rows: sprintRows } = await pool.query(
-      'SELECT * FROM sprints WHERE id = $1 AND project_id = $2',
-      [req.params.sprintId, req.params.id]
-    );
-    if (!sprintRows[0]) return res.status(404).json({ error: 'Sprint not found' });
-    const sprint = sprintRows[0];
+    const sprint = await db.selectFrom('sprints')
+      .where('id', '=', req.params.sprintId)
+      .where('project_id', '=', req.params.id)
+      .selectAll()
+      .executeTakeFirst();
+    if (!sprint) return res.status(404).json({ error: 'Sprint not found' });
 
-    const { rows: totalRows } = await pool.query(
-      'SELECT COALESCE(SUM(story_points), 0) AS total FROM sprint_tasks WHERE sprint_id = $1',
-      [req.params.sprintId]
-    );
-    const totalPoints = Number(totalRows[0].total) || 0;
+    const totalRow = await db.selectFrom('sprint_tasks')
+      .where('sprint_id', '=', req.params.sprintId)
+      .select(db.fn.sum('story_points').as('total'))
+      .executeTakeFirst();
+    const totalPoints = Number(totalRow?.total) || 0;
 
     // Simple linear ideal burndown
     const start = sprint.start_date ? new Date(sprint.start_date) : new Date(sprint.created_at);
@@ -1809,19 +1811,17 @@ router.get('/:id/sprints/:sprintId/burndown', async (req, res) => {
     }
 
     // Actual: count done tasks per day (simplified — assumes status column exists in values)
-    // For now, return placeholder actual data
     const actual = [];
     for (let i = 0; i <= days; i++) {
       const d = new Date(start.getTime() + i * 86400000);
-      const { rows: doneRows } = await pool.query(
-        `SELECT COALESCE(SUM(st.story_points), 0) AS done
-         FROM sprint_tasks st
-         JOIN project_tasks t ON t.id = st.task_id
-         WHERE st.sprint_id = $1
-           AND t.values->>'status' = 'Done'
-           AND t.updated_at::date <= $2`,
-        [req.params.sprintId, d.toISOString().slice(0, 10)]
-      );
+      const { rows: doneRows } = await sql`
+        SELECT COALESCE(SUM(st.story_points), 0) AS done
+        FROM sprint_tasks st
+        JOIN project_tasks t ON t.id = st.task_id
+        WHERE st.sprint_id = ${req.params.sprintId}
+          AND t.values->>'status' = 'Done'
+          AND t.updated_at::date <= ${d.toISOString().slice(0, 10)}
+      `.execute(db);
       const done = Number(doneRows[0].done) || 0;
       actual.push({ day: i, date: d.toISOString().slice(0, 10), remaining: totalPoints - done });
     }
@@ -1836,17 +1836,16 @@ router.get('/:id/sprints/:sprintId/burndown', async (req, res) => {
 // Velocity: avg story points per completed sprint
 router.get('/:id/velocity', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT s.id, s.name, s.end_date,
-              COALESCE(SUM(st.story_points), 0) AS total_points
-       FROM sprints s
-       LEFT JOIN sprint_tasks st ON st.sprint_id = s.id
-       WHERE s.project_id = $1 AND s.status = 'closed'
-       GROUP BY s.id, s.name, s.end_date
-       ORDER BY s.end_date DESC
-       LIMIT 10`,
-      [req.params.id]
-    );
+    const { rows } = await sql`
+      SELECT s.id, s.name, s.end_date,
+             COALESCE(SUM(st.story_points), 0) AS total_points
+      FROM sprints s
+      LEFT JOIN sprint_tasks st ON st.sprint_id = s.id
+      WHERE s.project_id = ${req.params.id} AND s.status = 'closed'
+      GROUP BY s.id, s.name, s.end_date
+      ORDER BY s.end_date DESC
+      LIMIT 10
+    `.execute(db);
     const velocities = rows.map((r) => ({ ...r, total_points: Number(r.total_points) }));
     const avg = velocities.length ? Math.round(velocities.reduce((sum, v) => sum + v.total_points, 0) / velocities.length) : 0;
     res.json({ sprints: velocities, average: avg });
@@ -1860,14 +1859,12 @@ router.get('/:id/velocity', async (req, res) => {
 
 router.get('/:id/tasks/:taskId/schedule', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT tad.*, u.email, u.name AS user_name
-       FROM task_assignee_dates tad
-       JOIN users u ON u.id = tad.user_id
-       WHERE tad.task_id = $1
-       ORDER BY tad.start_date ASC`,
-      [req.params.taskId]
-    );
+    const rows = await db.selectFrom('task_assignee_dates as tad')
+      .innerJoin('users as u', 'u.id', 'tad.user_id')
+      .where('tad.task_id', '=', req.params.taskId)
+      .select(['tad.*', 'u.email', 'u.name as user_name'])
+      .orderBy('tad.start_date', 'asc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing schedule:', err);
@@ -1882,17 +1879,16 @@ router.post('/:id/tasks/:taskId/schedule', async (req, res) => {
   }
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO task_assignee_dates (task_id, user_id, start_date, end_date, allocation_percent)
-       VALUES ($1, $2, $3, $4, COALESCE($5, 100))
-       ON CONFLICT (task_id, user_id) DO UPDATE SET
-         start_date = EXCLUDED.start_date,
-         end_date = EXCLUDED.end_date,
-         allocation_percent = EXCLUDED.allocation_percent,
-         updated_at = NOW()
-       RETURNING *`,
-      [req.params.taskId, user_id, start_date, end_date, allocation_percent]
-    );
+    const { rows } = await sql`
+      INSERT INTO task_assignee_dates (task_id, user_id, start_date, end_date, allocation_percent)
+      VALUES (${req.params.taskId}, ${user_id}, ${start_date}, ${end_date}, COALESCE(${allocation_percent}, 100))
+      ON CONFLICT (task_id, user_id) DO UPDATE SET
+        start_date = EXCLUDED.start_date,
+        end_date = EXCLUDED.end_date,
+        allocation_percent = EXCLUDED.allocation_percent,
+        updated_at = NOW()
+      RETURNING *
+    `.execute(db);
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error saving schedule:', err);
@@ -1902,11 +1898,12 @@ router.post('/:id/tasks/:taskId/schedule', async (req, res) => {
 
 router.delete('/:id/tasks/:taskId/schedule/:scheduleId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM task_assignee_dates WHERE id = $1 AND task_id = $2 RETURNING id',
-      [req.params.scheduleId, req.params.taskId]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Schedule not found' });
+    const row = await db.deleteFrom('task_assignee_dates')
+      .where('id', '=', req.params.scheduleId)
+      .where('task_id', '=', req.params.taskId)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Schedule not found' });
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting schedule:', err);
@@ -1919,37 +1916,64 @@ router.delete('/:id/tasks/:taskId/schedule/:scheduleId', async (req, res) => {
 router.get('/:id/workload', async (req, res) => {
   try {
     const { from, to } = req.query;
-    const dateFilter = from && to ? `AND tad.start_date <= $3 AND tad.end_date >= $2` : '';
-    const params = [req.params.id];
-    if (from && to) { params.push(from, to); }
 
     // Get all project members + their scheduled tasks
-    const { rows: assignments } = await pool.query(
-      `SELECT tad.*, t.name AS task_name, t.task_id,
-              u.email, u.name AS user_name
-       FROM task_assignee_dates tad
-       JOIN project_tasks t ON t.id = tad.task_id
-       JOIN users u ON u.id = tad.user_id
-       WHERE t.project_id = $1 ${dateFilter}
-       ORDER BY tad.start_date ASC`,
-      params
-    );
+    const { rows: assignments } = await (async () => {
+      if (from && to) {
+        return await sql`
+          SELECT tad.*, t.name AS task_name, t.task_id,
+                 u.email, u.name AS user_name
+          FROM task_assignee_dates tad
+          JOIN project_tasks t ON t.id = tad.task_id
+          JOIN users u ON u.id = tad.user_id
+          WHERE t.project_id = ${req.params.id}
+            AND tad.start_date <= ${to} AND tad.end_date >= ${from}
+          ORDER BY tad.start_date ASC
+        `.execute(db);
+      }
+      return await sql`
+        SELECT tad.*, t.name AS task_name, t.task_id,
+               u.email, u.name AS user_name
+        FROM task_assignee_dates tad
+        JOIN project_tasks t ON t.id = tad.task_id
+        JOIN users u ON u.id = tad.user_id
+        WHERE t.project_id = ${req.params.id}
+        ORDER BY tad.start_date ASC
+      `.execute(db);
+    })();
 
     // Aggregate workload per user per day
-    const { rows: daily } = await pool.query(
-      `SELECT
-         tad.user_id,
-         u.name AS user_name,
-         tad.start_date + generate_series(0, tad.end_date - tad.start_date) AS work_date,
-         SUM(tad.allocation_percent) AS total_allocation
-       FROM task_assignee_dates tad
-       JOIN project_tasks t ON t.id = tad.task_id
-       JOIN users u ON u.id = tad.user_id
-       WHERE t.project_id = $1 ${dateFilter}
-       GROUP BY tad.user_id, u.name, tad.start_date + generate_series(0, tad.end_date - tad.start_date)
-       ORDER BY work_date ASC`,
-      params
-    );
+    const { rows: daily } = await (async () => {
+      if (from && to) {
+        return await sql`
+          SELECT
+            tad.user_id,
+            u.name AS user_name,
+            tad.start_date + generate_series(0, tad.end_date - tad.start_date) AS work_date,
+            SUM(tad.allocation_percent) AS total_allocation
+          FROM task_assignee_dates tad
+          JOIN project_tasks t ON t.id = tad.task_id
+          JOIN users u ON u.id = tad.user_id
+          WHERE t.project_id = ${req.params.id}
+            AND tad.start_date <= ${to} AND tad.end_date >= ${from}
+          GROUP BY tad.user_id, u.name, tad.start_date + generate_series(0, tad.end_date - tad.start_date)
+          ORDER BY work_date ASC
+        `.execute(db);
+      }
+      return await sql`
+        SELECT
+          tad.user_id,
+          u.name AS user_name,
+          tad.start_date + generate_series(0, tad.end_date - tad.start_date) AS work_date,
+          SUM(tad.allocation_percent) AS total_allocation
+        FROM task_assignee_dates tad
+        JOIN project_tasks t ON t.id = tad.task_id
+        JOIN users u ON u.id = tad.user_id
+        WHERE t.project_id = ${req.params.id}
+        GROUP BY tad.user_id, u.name, tad.start_date + generate_series(0, tad.end_date - tad.start_date)
+        ORDER BY work_date ASC
+      `.execute(db);
+    })();
 
     res.json({ assignments, daily });
   } catch (err) {
@@ -1962,13 +1986,11 @@ router.get('/:id/workload', async (req, res) => {
 
 router.get('/:id/baselines', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT id, name, created_by, created_at
-       FROM project_baselines
-       WHERE project_id = $1
-       ORDER BY created_at DESC`,
-      [req.params.id]
-    );
+    const rows = await db.selectFrom('project_baselines')
+      .where('project_id', '=', req.params.id)
+      .select(['id', 'name', 'created_by', 'created_at'])
+      .orderBy('created_at', 'desc')
+      .execute();
     res.json(rows);
   } catch (err) {
     console.error('Error listing baselines:', err);
@@ -1983,18 +2005,16 @@ router.post('/:id/baselines', async (req, res) => {
   }
 
   try {
-    const { rows } = await pool.query(
-      `SELECT capture_project_baseline($1) AS snapshot`,
-      [req.params.id]
-    );
-    const snapshot = rows[0].snapshot;
+    const { rows: captureRows } = await sql`
+      SELECT capture_project_baseline(${req.params.id}) AS snapshot
+    `.execute(db);
+    const snapshot = captureRows[0].snapshot;
 
-    const { rows: baselineRows } = await pool.query(
-      `INSERT INTO project_baselines (project_id, name, snapshot, created_by)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, name, created_at`,
-      [req.params.id, name.trim(), snapshot, req.user.id]
-    );
+    const { rows: baselineRows } = await sql`
+      INSERT INTO project_baselines (project_id, name, snapshot, created_by)
+      VALUES (${req.params.id}, ${name.trim()}, ${snapshot}, ${req.user.id})
+      RETURNING id, name, created_at
+    `.execute(db);
 
     logAction(req.user.id, req.user.email, 'create', 'project_baseline', baselineRows[0].id, baselineRows[0].name);
     res.status(201).json(baselineRows[0]);
@@ -2006,10 +2026,9 @@ router.post('/:id/baselines', async (req, res) => {
 
 router.get('/:id/baselines/:baselineId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT * FROM project_baselines WHERE id = $1 AND project_id = $2`,
-      [req.params.baselineId, req.params.id]
-    );
+    const { rows } = await sql`
+      SELECT * FROM project_baselines WHERE id = ${req.params.baselineId} AND project_id = ${req.params.id}
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Baseline not found' });
     res.json(rows[0]);
   } catch (err) {
@@ -2020,12 +2039,13 @@ router.get('/:id/baselines/:baselineId', async (req, res) => {
 
 router.delete('/:id/baselines/:baselineId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `DELETE FROM project_baselines WHERE id = $1 AND project_id = $2 RETURNING id`,
-      [req.params.baselineId, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Baseline not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_baseline', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_baselines')
+      .where('id', '=', req.params.baselineId)
+      .where('project_id', '=', req.params.id)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Baseline not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_baseline', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting baseline:', err);
@@ -2037,18 +2057,16 @@ router.delete('/:id/baselines/:baselineId', async (req, res) => {
 router.get('/:id/baselines/:baselineId/compare', async (req, res) => {
   try {
     // Load baseline
-    const { rows: baselineRows } = await pool.query(
-      `SELECT snapshot FROM project_baselines WHERE id = $1 AND project_id = $2`,
-      [req.params.baselineId, req.params.id]
-    );
+    const { rows: baselineRows } = await sql`
+      SELECT snapshot FROM project_baselines WHERE id = ${req.params.baselineId} AND project_id = ${req.params.id}
+    `.execute(db);
     if (!baselineRows[0]) return res.status(404).json({ error: 'Baseline not found' });
     const baseline = baselineRows[0].snapshot;
 
     // Load current state
-    const { rows: currentRows } = await pool.query(
-      `SELECT capture_project_baseline($1) AS snapshot`,
-      [req.params.id]
-    );
+    const { rows: currentRows } = await sql`
+      SELECT capture_project_baseline(${req.params.id}) AS snapshot
+    `.execute(db);
     const current = currentRows[0].snapshot;
 
     // Diff tasks
@@ -2122,12 +2140,11 @@ router.post('/:id/phases', async (req, res) => {
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO project_phases (project_id, name, position, deliverables)
-       VALUES ($1, $2, COALESCE($3, 0), COALESCE($4, '[]'::jsonb))
-       RETURNING *`,
-      [req.params.id, name.trim(), position, JSON.stringify(deliverables || [])]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_phases (project_id, name, position, deliverables)
+      VALUES (${req.params.id}, ${name.trim()}, COALESCE(${position}, 0), COALESCE(${JSON.stringify(deliverables || [])}::jsonb, '[]'::jsonb))
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'create', 'project_phase', rows[0].id, rows[0].name);
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -2139,19 +2156,18 @@ router.post('/:id/phases', async (req, res) => {
 router.put('/:id/phases/:phaseId', async (req, res) => {
   const { name, position, status, deliverables, started_at, completed_at } = req.body || {};
   try {
-    const { rows } = await pool.query(
-      `UPDATE project_phases
-         SET name = COALESCE($1, name),
-             position = COALESCE($2, position),
-             status = COALESCE($3, status),
-             deliverables = COALESCE($4, deliverables),
-             started_at = COALESCE($5, started_at),
-             completed_at = COALESCE($6, completed_at),
-             updated_at = NOW()
-       WHERE id = $7 AND project_id = $8
-       RETURNING *`,
-      [name, position, status, deliverables ? JSON.stringify(deliverables) : null, started_at, completed_at, req.params.phaseId, req.params.id]
-    );
+    const { rows } = await sql`
+      UPDATE project_phases
+      SET name = COALESCE(${name}, name),
+          position = COALESCE(${position}, position),
+          status = COALESCE(${status}, status),
+          deliverables = COALESCE(${deliverables ? JSON.stringify(deliverables) : null}::jsonb, deliverables),
+          started_at = COALESCE(${started_at}, started_at),
+          completed_at = COALESCE(${completed_at}, completed_at),
+          updated_at = NOW()
+      WHERE id = ${req.params.phaseId} AND project_id = ${req.params.id}
+      RETURNING *
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Phase not found' });
     logAction(req.user.id, req.user.email, 'update', 'project_phase', rows[0].id, rows[0].name);
     res.json(rows[0]);
@@ -2163,12 +2179,13 @@ router.put('/:id/phases/:phaseId', async (req, res) => {
 
 router.delete('/:id/phases/:phaseId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_phases WHERE id = $1 AND project_id = $2 RETURNING id',
-      [req.params.phaseId, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Phase not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_phase', rows[0].id, rows[0].id);
+    const row = await db.deleteFrom('project_phases')
+      .where('id', '=', req.params.phaseId)
+      .where('project_id', '=', req.params.id)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Phase not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_phase', row.id, row.id);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting phase:', err);
@@ -2182,27 +2199,25 @@ router.post('/:id/phases/:phaseId/gate', async (req, res) => {
   const { notes } = req.body || {};
   try {
     // Check if already approved
-    const { rows: existing } = await pool.query(
-      'SELECT id FROM project_phase_gates WHERE phase_id = $1',
-      [req.params.phaseId]
-    );
+    const existing = await db.selectFrom('project_phase_gates')
+      .where('phase_id', '=', req.params.phaseId)
+      .select('id')
+      .executeTakeFirst();
     let result;
-    if (existing[0]) {
-      const { rows } = await pool.query(
-        `UPDATE project_phase_gates
-           SET approver_id = $1, approved_at = NOW(), notes = COALESCE($2, notes)
-         WHERE phase_id = $3
-         RETURNING *`,
-        [req.user.id, notes, req.params.phaseId]
-      );
+    if (existing) {
+      const { rows } = await sql`
+        UPDATE project_phase_gates
+        SET approver_id = ${req.user.id}, approved_at = NOW(), notes = COALESCE(${notes}, notes)
+        WHERE phase_id = ${req.params.phaseId}
+        RETURNING *
+      `.execute(db);
       result = rows[0];
     } else {
-      const { rows } = await pool.query(
-        `INSERT INTO project_phase_gates (phase_id, approver_id, approved_at, notes)
-         VALUES ($1, $2, NOW(), $3)
-         RETURNING *`,
-        [req.params.phaseId, req.user.id, notes]
-      );
+      const { rows } = await sql`
+        INSERT INTO project_phase_gates (phase_id, approver_id, approved_at, notes)
+        VALUES (${req.params.phaseId}, ${req.user.id}, NOW(), ${notes})
+        RETURNING *
+      `.execute(db);
       result = rows[0];
     }
     logAction(req.user.id, req.user.email, 'approve', 'phase_gate', result.id, `phase ${req.params.phaseId}`);
@@ -2215,12 +2230,12 @@ router.post('/:id/phases/:phaseId/gate', async (req, res) => {
 
 router.delete('/:id/phases/:phaseId/gate', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_phase_gates WHERE phase_id = $1 RETURNING id',
-      [req.params.phaseId]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Gate not found' });
-    logAction(req.user.id, req.user.email, 'revoke', 'phase_gate', rows[0].id, `phase ${req.params.phaseId}`);
+    const row = await db.deleteFrom('project_phase_gates')
+      .where('phase_id', '=', req.params.phaseId)
+      .returning('id')
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Gate not found' });
+    logAction(req.user.id, req.user.email, 'revoke', 'phase_gate', row.id, `phase ${req.params.phaseId}`);
     res.json({ success: true });
   } catch (err) {
     console.error('Error revoking gate:', err);
@@ -2246,28 +2261,25 @@ router.post('/:id/meetings', async (req, res) => {
   if (!start_time) return res.status(400).json({ error: 'Start time is required' });
 
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO project_meetings (project_id, title, start_time, end_time, location, agenda, minutes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING *`,
-      [req.params.id, title.trim(), start_time, end_time || null, location || null, agenda || null, minutes || null, req.user.id]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_meetings (project_id, title, start_time, end_time, location, agenda, minutes, created_by)
+      VALUES (${req.params.id}, ${title.trim()}, ${start_time}, ${end_time || null}, ${location || null}, ${agenda || null}, ${minutes || null}, ${req.user.id})
+      RETURNING *
+    `.execute(db);
     const meeting = rows[0];
 
     if (Array.isArray(attendee_ids) && attendee_ids.length > 0) {
-      const values = attendee_ids.map((uid, i) => `($1, $${i + 2})`).join(', ');
-      await pool.query(
-        `INSERT INTO project_meeting_attendees (meeting_id, user_id) VALUES ${values} ON CONFLICT DO NOTHING`,
-        [meeting.id, ...attendee_ids]
-      );
+      const values = attendee_ids.map((uid, i) => sql`(${meeting.id}, ${uid})`);
+      await sql`
+        INSERT INTO project_meeting_attendees (meeting_id, user_id) VALUES ${sql.join(values, sql`, `)} ON CONFLICT DO NOTHING
+      `.execute(db);
     }
 
     if (Array.isArray(task_ids) && task_ids.length > 0) {
-      const values = task_ids.map((tid, i) => `($1, $${i + 2})`).join(', ');
-      await pool.query(
-        `INSERT INTO project_meeting_tasks (meeting_id, task_id) VALUES ${values} ON CONFLICT DO NOTHING`,
-        [meeting.id, ...task_ids]
-      );
+      const values = task_ids.map((tid, i) => sql`(${meeting.id}, ${tid})`);
+      await sql`
+        INSERT INTO project_meeting_tasks (meeting_id, task_id) VALUES ${sql.join(values, sql`, `)} ON CONFLICT DO NOTHING
+      `.execute(db);
     }
 
     logAction(req.user.id, req.user.email, 'create', 'project_meeting', meeting.id, meeting.title);
@@ -2281,18 +2293,17 @@ router.post('/:id/meetings', async (req, res) => {
 router.put('/:id/meetings/:meetingId', async (req, res) => {
   const { title, start_time, end_time, location, agenda, minutes } = req.body || {};
   try {
-    const { rows } = await pool.query(
-      `UPDATE project_meetings
-         SET title = COALESCE($1, title),
-             start_time = COALESCE($2, start_time),
-             end_time = COALESCE($3, end_time),
-             location = COALESCE($4, location),
-             agenda = COALESCE($5, agenda),
-             minutes = COALESCE($6, minutes)
-       WHERE id = $7 AND project_id = $8
-       RETURNING *`,
-      [title, start_time, end_time, location, agenda, minutes, req.params.meetingId, req.params.id]
-    );
+    const { rows } = await sql`
+      UPDATE project_meetings
+      SET title = COALESCE(${title}, title),
+          start_time = COALESCE(${start_time}, start_time),
+          end_time = COALESCE(${end_time}, end_time),
+          location = COALESCE(${location}, location),
+          agenda = COALESCE(${agenda}, agenda),
+          minutes = COALESCE(${minutes}, minutes)
+      WHERE id = ${req.params.meetingId} AND project_id = ${req.params.id}
+      RETURNING *
+    `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Meeting not found' });
     logAction(req.user.id, req.user.email, 'update', 'project_meeting', rows[0].id, rows[0].title);
     res.json(rows[0]);
@@ -2304,12 +2315,13 @@ router.put('/:id/meetings/:meetingId', async (req, res) => {
 
 router.delete('/:id/meetings/:meetingId', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      'DELETE FROM project_meetings WHERE id = $1 AND project_id = $2 RETURNING id, title',
-      [req.params.meetingId, req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Meeting not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_meeting', rows[0].id, rows[0].title);
+    const row = await db.deleteFrom('project_meetings')
+      .where('id', '=', req.params.meetingId)
+      .where('project_id', '=', req.params.id)
+      .returning(['id', 'title'])
+      .executeTakeFirst();
+    if (!row) return res.status(404).json({ error: 'Meeting not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'project_meeting', row.id, row.title);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting meeting:', err);
@@ -2322,13 +2334,12 @@ router.post('/:id/meetings/:meetingId/attendees', async (req, res) => {
   const { user_id, status } = req.body || {};
   if (!user_id) return res.status(400).json({ error: 'user_id is required' });
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO project_meeting_attendees (meeting_id, user_id, status)
-       VALUES ($1, $2, COALESCE($3, 'pending'))
-       ON CONFLICT (meeting_id, user_id) DO UPDATE SET status = COALESCE($3, project_meeting_attendees.status)
-       RETURNING *`,
-      [req.params.meetingId, user_id, status]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_meeting_attendees (meeting_id, user_id, status)
+      VALUES (${req.params.meetingId}, ${user_id}, COALESCE(${status}, 'pending'))
+      ON CONFLICT (meeting_id, user_id) DO UPDATE SET status = COALESCE(${status}, project_meeting_attendees.status)
+      RETURNING *
+    `.execute(db);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error adding attendee:', err);
@@ -2338,10 +2349,10 @@ router.post('/:id/meetings/:meetingId/attendees', async (req, res) => {
 
 router.delete('/:id/meetings/:meetingId/attendees/:userId', async (req, res) => {
   try {
-    await pool.query(
-      'DELETE FROM project_meeting_attendees WHERE meeting_id = $1 AND user_id = $2',
-      [req.params.meetingId, req.params.userId]
-    );
+    await db.deleteFrom('project_meeting_attendees')
+      .where('meeting_id', '=', req.params.meetingId)
+      .where('user_id', '=', req.params.userId)
+      .execute();
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing attendee:', err);
@@ -2354,11 +2365,10 @@ router.post('/:id/meetings/:meetingId/tasks', async (req, res) => {
   const { task_id } = req.body || {};
   if (!task_id) return res.status(400).json({ error: 'task_id is required' });
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO project_meeting_tasks (meeting_id, task_id) VALUES ($1, $2)
-       ON CONFLICT DO NOTHING RETURNING *`,
-      [req.params.meetingId, task_id]
-    );
+    const { rows } = await sql`
+      INSERT INTO project_meeting_tasks (meeting_id, task_id) VALUES (${req.params.meetingId}, ${task_id})
+      ON CONFLICT DO NOTHING RETURNING *
+    `.execute(db);
     res.json(rows[0] || { meeting_id: req.params.meetingId, task_id });
   } catch (err) {
     console.error('Error linking task to meeting:', err);
@@ -2368,10 +2378,10 @@ router.post('/:id/meetings/:meetingId/tasks', async (req, res) => {
 
 router.delete('/:id/meetings/:meetingId/tasks/:taskId', async (req, res) => {
   try {
-    await pool.query(
-      'DELETE FROM project_meeting_tasks WHERE meeting_id = $1 AND task_id = $2',
-      [req.params.meetingId, req.params.taskId]
-    );
+    await db.deleteFrom('project_meeting_tasks')
+      .where('meeting_id', '=', req.params.meetingId)
+      .where('task_id', '=', req.params.taskId)
+      .execute();
     res.json({ success: true });
   } catch (err) {
     console.error('Error unlinking task from meeting:', err);

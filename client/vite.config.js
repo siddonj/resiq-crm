@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -10,8 +11,14 @@ export default defineConfig({
       '/api': 'http://localhost:5000',
       '/ws': {
         target: 'http://localhost:5000',
-        ws: true
-      }
-    }
-  }
+        ws: true,
+      },
+    },
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.js',
+    css: false,
+  },
 })

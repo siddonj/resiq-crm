@@ -3,7 +3,7 @@ const multer = require('multer');
 const mammoth = require('mammoth');
 const { randomUUID } = require('crypto');
 const OpenAI = require('openai');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 const trackingService = require('../services/trackingService');
@@ -141,33 +141,30 @@ Rules:
 // List proposals
 router.get('/', auth, async (req, res) => {
   const { status, deal_id } = req.query;
-  const params = [req.user.id];
-  const filters = [];
+  const conditions = [sql`p.user_id = ${req.user.id}`];
 
   if (status) {
-    params.push(status);
-    filters.push(`p.status = $${params.length}`);
+    conditions.push(sql`p.status = ${status}`);
   }
   if (deal_id) {
-    params.push(deal_id);
-    filters.push(`p.deal_id = $${params.length}`);
+    conditions.push(sql`p.deal_id = ${deal_id}`);
   }
 
-  const filterSQL = filters.length ? 'AND ' + filters.join(' AND ') : '';
+  const filterSQL = sql.join(conditions, ' AND ');
 
   try {
-    const result = await pool.query(`
-      SELECT p.*,
-        d.title AS deal_title,
-        c.name AS contact_name
-      FROM proposals p
-      LEFT JOIN deals d ON d.id = p.deal_id
-      LEFT JOIN contacts c ON c.id = d.contact_id
-      WHERE p.user_id = $1
-      ${filterSQL}
-      ORDER BY p.created_at DESC
-    `, params);
-    res.json(result.rows);
+    const result = await db.selectFrom('proposals as p')
+      .leftJoin('deals as d', 'd.id', 'p.deal_id')
+      .leftJoin('contacts as c', 'c.id', 'd.contact_id')
+      .select([
+        'p.*',
+        'd.title as deal_title',
+        'c.name as contact_name',
+      ])
+      .where(filterSQL)
+      .orderBy('p.created_at', 'desc')
+      .execute();
+    res.json(result);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -177,11 +174,12 @@ router.get('/', auth, async (req, res) => {
 // List templates — must come before /:id
 router.get('/templates', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM proposal_templates WHERE user_id = $1 ORDER BY created_at DESC',
-      [req.user.id]
-    );
-    res.json(result.rows);
+    const result = await db.selectFrom('proposal_templates')
+      .selectAll()
+      .where('user_id', '=', req.user.id)
+      .orderBy('created_at', 'desc')
+      .execute();
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -192,11 +190,15 @@ router.post('/templates', auth, async (req, res) => {
   const { name, sections } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
   try {
-    const result = await pool.query(
-      'INSERT INTO proposal_templates (user_id, name, sections) VALUES ($1, $2, $3) RETURNING *',
-      [req.user.id, name, JSON.stringify(sections || [])]
-    );
-    res.status(201).json(result.rows[0]);
+    const result = await db.insertInto('proposal_templates')
+      .values({
+        user_id: req.user.id,
+        name,
+        sections: JSON.stringify(sections || []),
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    res.status(201).json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -205,10 +207,10 @@ router.post('/templates', auth, async (req, res) => {
 // Delete template
 router.delete('/templates/:id', auth, async (req, res) => {
   try {
-    await pool.query(
-      'DELETE FROM proposal_templates WHERE id = $1 AND user_id = $2',
-      [req.params.id, req.user.id]
-    );
+    await db.deleteFrom('proposal_templates')
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .execute();
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -218,15 +220,19 @@ router.delete('/templates/:id', auth, async (req, res) => {
 // Get single proposal
 router.get('/:id', auth, async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT p.*, d.title AS deal_title, c.name AS contact_name
-      FROM proposals p
-      LEFT JOIN deals d ON d.id = p.deal_id
-      LEFT JOIN contacts c ON c.id = d.contact_id
-      WHERE p.id = $1 AND p.user_id = $2
-    `, [req.params.id, req.user.id]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    res.json(result.rows[0]);
+    const result = await db.selectFrom('proposals as p')
+      .leftJoin('deals as d', 'd.id', 'p.deal_id')
+      .leftJoin('contacts as c', 'c.id', 'd.contact_id')
+      .select([
+        'p.*',
+        'd.title as deal_title',
+        'c.name as contact_name',
+      ])
+      .where('p.id', '=', req.params.id)
+      .where('p.user_id', '=', req.user.id)
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'Not found' });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -237,19 +243,24 @@ router.get('/:id', auth, async (req, res) => {
 router.get('/:id/render', auth, async (req, res) => {
   const { tracked } = req.query;
   try {
-    const result = await pool.query(`
-      SELECT p.*, d.title AS deal_title, c.id AS contact_id, c.name AS contact_name
-      FROM proposals p
-      LEFT JOIN deals d ON d.id = p.deal_id
-      LEFT JOIN contacts c ON c.id = d.contact_id
-      WHERE p.id = $1 AND p.user_id = $2
-    `, [req.params.id, req.user.id]);
-    
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    
-    let proposal = result.rows[0];
+    const result = await db.selectFrom('proposals as p')
+      .leftJoin('deals as d', 'd.id', 'p.deal_id')
+      .leftJoin('contacts as c', 'c.id', 'd.contact_id')
+      .select([
+        'p.*',
+        'd.title as deal_title',
+        'c.id as contact_id',
+        'c.name as contact_name',
+      ])
+      .where('p.id', '=', req.params.id)
+      .where('p.user_id', '=', req.user.id)
+      .executeTakeFirst();
+
+    if (!result) return res.status(404).json({ error: 'Not found' });
+
+    let proposal = result;
     let html = proposal.html_content || '<p>No content</p>';
-    
+
     // Inject tracking pixel if requested and contact exists
     if (tracked === 'true' && proposal.contact_id) {
       html = await trackingService.injectAssetPixel(
@@ -260,10 +271,10 @@ router.get('/:id/render', auth, async (req, res) => {
         req.params.id
       );
     }
-    
+
     res.json({
       ...proposal,
-      html_content: html
+      html_content: html,
     });
   } catch (err) {
     console.error(err);
@@ -276,12 +287,17 @@ router.post('/', auth, async (req, res) => {
   const { title, deal_id, sections, line_items } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
   try {
-    const result = await pool.query(
-      `INSERT INTO proposals (user_id, deal_id, title, sections, line_items)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.user.id, deal_id || null, title, JSON.stringify(sections || []), JSON.stringify(line_items || [])]
-    );
-    const proposal = result.rows[0];
+    const result = await db.insertInto('proposals')
+      .values({
+        user_id: req.user.id,
+        deal_id: deal_id || null,
+        title,
+        sections: JSON.stringify(sections || []),
+        line_items: JSON.stringify(line_items || []),
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    const proposal = result;
     logAction(req.user.id, req.user.email, 'create', 'proposal', proposal.id, proposal.title);
     res.status(201).json(proposal);
   } catch (err) {
@@ -294,15 +310,24 @@ router.post('/', auth, async (req, res) => {
 router.put('/:id', auth, async (req, res) => {
   const { title, deal_id, sections, line_items } = req.body;
   try {
-    const result = await pool.query(
-      `UPDATE proposals SET title=$1, deal_id=$2, sections=$3, line_items=$4, updated_at=NOW()
-       WHERE id=$5 AND user_id=$6 AND status='draft' RETURNING *`,
-      [title, deal_id || null, JSON.stringify(sections || []), JSON.stringify(line_items || []), req.params.id, req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found or not editable' });
-    logAction(req.user.id, req.user.email, 'update', 'proposal', req.params.id, result.rows[0].title);
-    res.json(result.rows[0]);
+    const result = await db.updateTable('proposals')
+      .set({
+        title,
+        deal_id: deal_id || null,
+        sections: JSON.stringify(sections || []),
+        line_items: JSON.stringify(line_items || []),
+        updated_at: sql`NOW()`,
+      })
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .where('status', '=', 'draft')
+      .returningAll()
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'Not found or not editable' });
+    logAction(req.user.id, req.user.email, 'update', 'proposal', req.params.id, result.title);
+    res.json(result);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -313,18 +338,26 @@ router.patch('/:id/status', auth, async (req, res) => {
   const validStatuses = ['draft', 'sent', 'viewed', 'signed', 'declined'];
   if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
 
-  const timestampField = { sent: ', sent_at = NOW()', viewed: ', viewed_at = NOW()', signed: ', signed_at = NOW()' }[status] || '';
-
   try {
-    const result = await pool.query(
-      `UPDATE proposals SET status=$1${timestampField}, updated_at=NOW()
-       WHERE id=$2 AND user_id=$3 RETURNING *`,
-      [status, req.params.id, req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'status_change', 'proposal', req.params.id, result.rows[0].title, { status });
-    res.json(result.rows[0]);
+    const setValues = {
+      status,
+      updated_at: sql`NOW()`,
+    };
+    if (status === 'sent') setValues.sent_at = sql`NOW()`;
+    if (status === 'viewed') setValues.viewed_at = sql`NOW()`;
+    if (status === 'signed') setValues.signed_at = sql`NOW()`;
+
+    const result = await db.updateTable('proposals')
+      .set(setValues)
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .returningAll()
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'status_change', 'proposal', req.params.id, result.title, { status });
+    res.json(result);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -334,15 +367,22 @@ router.post('/:id/sign', auth, async (req, res) => {
   const { name } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Signature name is required' });
   try {
-    const result = await pool.query(
-      `UPDATE proposals
-       SET status='signed', signature_name=$1, signature_at=NOW(), signed_at=NOW(), updated_at=NOW()
-       WHERE id=$2 AND user_id=$3 AND status IN ('sent', 'viewed') RETURNING *`,
-      [name, req.params.id, req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found or cannot sign in current status' });
-    logAction(req.user.id, req.user.email, 'sign', 'proposal', req.params.id, result.rows[0].title, { signature_name: name });
-    res.json(result.rows[0]);
+    const result = await db.updateTable('proposals')
+      .set({
+        status: 'signed',
+        signature_name: name,
+        signature_at: sql`NOW()`,
+        signed_at: sql`NOW()`,
+        updated_at: sql`NOW()`,
+      })
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .where('status', 'in', ['sent', 'viewed'])
+      .returningAll()
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'Not found or cannot sign in current status' });
+    logAction(req.user.id, req.user.email, 'sign', 'proposal', req.params.id, result.title, { signature_name: name });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -351,12 +391,13 @@ router.post('/:id/sign', auth, async (req, res) => {
 // Delete proposal
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      'DELETE FROM proposals WHERE id=$1 AND user_id=$2 RETURNING title',
-      [req.params.id, req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'proposal', req.params.id, result.rows[0].title);
+    const result = await db.deleteFrom('proposals')
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .returning('title')
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'Not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'proposal', req.params.id, result.title);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });

@@ -1,5 +1,5 @@
 const express = require('express');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const { logAction } = require('../services/auditLogger');
 
 const router = express.Router();
@@ -15,29 +15,45 @@ router.post('/:formId', async (req, res) => {
 
   try {
     // 1. Verify the form exists and get the target user_id owner
-    const formResult = await pool.query('SELECT * FROM forms WHERE id = $1', [formId]);
-    if (formResult.rows.length === 0) {
+    const form = await db
+      .selectFrom('forms')
+      .where('id', '=', formId)
+      .selectAll()
+      .executeTakeFirst();
+
+    if (!form) {
       return res.status(404).json({ error: 'Form not found' });
     }
-    
-    const form = formResult.rows[0];
+
     const userId = form.user_id;
 
     // 2. Create the Contact
-    const contactResult = await pool.query(
-      `INSERT INTO contacts (user_id, name, email, phone, company, type, notes, custom_fields)
-       VALUES ($1, $2, $3, $4, $5, 'prospect', $6, $7) RETURNING *`,
-      [userId, name, email || null, phone || null, company || null, `Captured via Web Form: ${form.title}\n\n${notes || ''}`, JSON.stringify(customFields)]
-    );
-    const newContact = contactResult.rows[0];
+    const newContact = await db.insertInto('contacts')
+      .values({
+        user_id: userId,
+        name,
+        email: email || null,
+        phone: phone || null,
+        company: company || null,
+        type: 'prospect',
+        notes: `Captured via Web Form: ${form.title}\n\n${notes || ''}`,
+        custom_fields: JSON.stringify(customFields),
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
 
     // 3. Create the Deal (Lead pipeline stage)
-    const dealResult = await pool.query(
-      `INSERT INTO deals (user_id, contact_id, title, stage, notes, custom_fields)
-       VALUES ($1, $2, $3, 'lead', $4, $5) RETURNING *`,
-      [userId, newContact.id, `Inbound Lead: ${company || name}`, 'Auto-generated from Web-to-Lead Form', JSON.stringify(customFields)]
-    );
-    const newDeal = dealResult.rows[0];
+    const newDeal = await db.insertInto('deals')
+      .values({
+        user_id: userId,
+        contact_id: newContact.id,
+        title: `Inbound Lead: ${company || name}`,
+        stage: 'lead',
+        notes: 'Auto-generated from Web-to-Lead Form',
+        custom_fields: JSON.stringify(customFields),
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
 
     // Trigger AI Auto-Enrichment (Phase 17)
     const { enrichmentQueue } = require('../workers/enrichmentWorker');

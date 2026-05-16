@@ -1,5 +1,5 @@
 const express = require('express');
-const pool = require('../models/db');
+const { db, sql, ownershipWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 const { sendTicketAssignedNotification, sendTicketReplyNotification } = require('../services/clientNotifications');
@@ -10,50 +10,44 @@ const router = express.Router();
 router.get('/', auth, async (req, res) => {
   try {
     const { status, priority, assigned_to, contact_id, sort } = req.query;
-    const params = [req.user.id];
-    const filters = ['t.user_id = $1'];
+    const conditions = [sql`t.user_id = ${req.user.id}`];
 
     if (status) {
-      params.push(status);
-      filters.push(`t.status = $${params.length}`);
+      conditions.push(sql`t.status = ${status}`);
     }
     if (priority) {
-      params.push(priority);
-      filters.push(`t.priority = $${params.length}`);
+      conditions.push(sql`t.priority = ${priority}`);
     }
     if (assigned_to) {
-      params.push(assigned_to);
-      filters.push(`t.assigned_to = $${params.length}`);
+      conditions.push(sql`t.assigned_to = ${assigned_to}`);
     }
     if (contact_id) {
-      params.push(contact_id);
-      filters.push(`t.contact_id = $${params.length}`);
+      conditions.push(sql`t.contact_id = ${contact_id}`);
     }
 
-    const filterSQL = filters.join(' AND ');
+    const whereClause = sql.join(conditions, ' AND ');
     const orderSQL = sort === 'priority' 
-      ? "ORDER BY CASE WHEN t.priority = 'urgent' THEN 1 WHEN t.priority = 'high' THEN 2 WHEN t.priority = 'medium' THEN 3 ELSE 4 END, t.created_at DESC"
-      : 'ORDER BY t.created_at DESC';
+      ? sql`ORDER BY CASE WHEN t.priority = 'urgent' THEN 1 WHEN t.priority = 'high' THEN 2 WHEN t.priority = 'medium' THEN 3 ELSE 4 END, t.created_at DESC`
+      : sql`ORDER BY t.created_at DESC`;
 
-    const result = await pool.query(
-      `SELECT 
+    const { rows } = await sql`
+      SELECT 
         t.*,
         u_assigned.name AS assigned_to_name,
         c.name AS contact_name,
         cl.name AS client_name,
         COUNT(tr.id) FILTER (WHERE tr.id IS NOT NULL) as reply_count
-       FROM tickets t
-       LEFT JOIN users u_assigned ON u_assigned.id = t.assigned_to
-       LEFT JOIN contacts c ON c.id = t.contact_id
-       LEFT JOIN clients cl ON cl.id = t.client_id
-       LEFT JOIN ticket_replies tr ON tr.ticket_id = t.id
-       WHERE ${filterSQL}
-       GROUP BY t.id, u_assigned.id, u_assigned.name, c.id, c.name, cl.id, cl.name
-       ${orderSQL}`,
-      params
-    );
+      FROM tickets t
+      LEFT JOIN users u_assigned ON u_assigned.id = t.assigned_to
+      LEFT JOIN contacts c ON c.id = t.contact_id
+      LEFT JOIN clients cl ON cl.id = t.client_id
+      LEFT JOIN ticket_replies tr ON tr.ticket_id = t.id
+      WHERE ${whereClause}
+      GROUP BY t.id, u_assigned.id, u_assigned.name, c.id, c.name, cl.id, cl.name
+      ${orderSQL}
+    `.execute(db);
 
-    res.json(result.rows);
+    res.json(rows);
   } catch (error) {
     console.error('Error fetching tickets:', error);
     res.status(500).json({ error: error.message });
@@ -65,56 +59,53 @@ router.get('/:ticketId', auth, async (req, res) => {
   try {
     const { ticketId } = req.params;
 
-    const ticketResult = await pool.query(
-      `SELECT 
+    const { rows: ticketRows } = await sql`
+      SELECT 
         t.*,
         u_assigned.name AS assigned_to_name,
         c.name AS contact_name,
         cl.name AS client_name
-       FROM tickets t
-       LEFT JOIN users u_assigned ON u_assigned.id = t.assigned_to
-       LEFT JOIN contacts c ON c.id = t.contact_id
-       LEFT JOIN clients cl ON cl.id = t.client_id
-       WHERE t.id = $1 AND t.user_id = $2`,
-      [ticketId, req.user.id]
-    );
+      FROM tickets t
+      LEFT JOIN users u_assigned ON u_assigned.id = t.assigned_to
+      LEFT JOIN contacts c ON c.id = t.contact_id
+      LEFT JOIN clients cl ON cl.id = t.client_id
+      WHERE t.id = ${ticketId} AND t.user_id = ${req.user.id}
+    `.execute(db);
 
-    if (ticketResult.rows.length === 0) {
+    if (ticketRows.length === 0) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    const ticket = ticketResult.rows[0];
+    const ticket = ticketRows[0];
 
     // Get replies
-    const repliesResult = await pool.query(
-      `SELECT 
+    const { rows: replies } = await sql`
+      SELECT 
         tr.*,
         u.name AS user_name,
         cl.name AS client_name
-       FROM ticket_replies tr
-       LEFT JOIN users u ON u.id = tr.user_id
-       LEFT JOIN clients cl ON cl.id = tr.client_id
-       WHERE tr.ticket_id = $1
-       ORDER BY tr.created_at ASC`,
-      [ticketId]
-    );
+      FROM ticket_replies tr
+      LEFT JOIN users u ON u.id = tr.user_id
+      LEFT JOIN clients cl ON cl.id = tr.client_id
+      WHERE tr.ticket_id = ${ticketId}
+      ORDER BY tr.created_at ASC
+    `.execute(db);
 
     // Get activity
-    const activityResult = await pool.query(
-      `SELECT 
+    const { rows: activity } = await sql`
+      SELECT 
         ta.*,
         u.name AS user_name
-       FROM ticket_activities ta
-       LEFT JOIN users u ON u.id = ta.user_id
-       WHERE ta.ticket_id = $1
-       ORDER BY ta.created_at DESC`,
-      [ticketId]
-    );
+      FROM ticket_activities ta
+      LEFT JOIN users u ON u.id = ta.user_id
+      WHERE ta.ticket_id = ${ticketId}
+      ORDER BY ta.created_at DESC
+    `.execute(db);
 
     res.json({
       ticket,
-      replies: repliesResult.rows,
-      activity: activityResult.rows,
+      replies,
+      activity,
     });
   } catch (error) {
     console.error('Error fetching ticket:', error);
@@ -133,21 +124,27 @@ router.post('/', auth, async (req, res) => {
 
     const ticketPriority = priority || 'medium';
     
-    const result = await pool.query(
-      `INSERT INTO tickets (user_id, client_id, contact_id, subject, description, priority)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [req.user.id, client_id || null, contact_id || null, subject, description || null, ticketPriority]
-    );
-
-    const ticket = result.rows[0];
+    const ticket = await db.insertInto('tickets')
+      .values({
+        user_id: req.user.id,
+        client_id: client_id || null,
+        contact_id: contact_id || null,
+        subject,
+        description: description || null,
+        priority: ticketPriority,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
 
     // Log creation activity
-    await pool.query(
-      `INSERT INTO ticket_activities (ticket_id, user_id, action, details)
-       VALUES ($1, $2, $3, $4)`,
-      [ticket.id, req.user.id, 'created', JSON.stringify({ subject })]
-    );
+    await db.insertInto('ticket_activities')
+      .values({
+        ticket_id: ticket.id,
+        user_id: req.user.id,
+        action: 'created',
+        details: JSON.stringify({ subject }),
+      })
+      .execute();
 
     logAction(req.user.id, req.user.email, 'create', 'ticket', ticket.id, subject);
 
@@ -171,95 +168,81 @@ router.patch('/:ticketId', auth, async (req, res) => {
     const { status, priority, assigned_to } = req.body;
 
     // Get current ticket to check if assignment is changing
-    const currentTicket = await pool.query(
-      'SELECT * FROM tickets WHERE id = $1 AND user_id = $2',
-      [ticketId, req.user.id]
-    );
+    const currentTicket = await db.selectFrom('tickets')
+      .selectAll()
+      .where('id', '=', ticketId)
+      .where('user_id', '=', req.user.id)
+      .executeTakeFirst();
 
-    if (currentTicket.rows.length === 0) {
+    if (!currentTicket) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    const oldAssignedTo = currentTicket.rows[0].assigned_to;
+    const oldAssignedTo = currentTicket.assigned_to;
 
-    // Build update query
-    const updateFields = [];
-    const params = [ticketId, req.user.id];
+    // Build update
+    const updateValues = {};
+    if (status) updateValues.status = status;
+    if (priority) updateValues.priority = priority;
+    if (assigned_to !== undefined) updateValues.assigned_to = assigned_to || null;
 
-    if (status) {
-      params.push(status);
-      updateFields.push(`status = $${params.length}`);
-    }
-    if (priority) {
-      params.push(priority);
-      updateFields.push(`priority = $${params.length}`);
-    }
-    if (assigned_to !== undefined) {
-      params.push(assigned_to || null);
-      updateFields.push(`assigned_to = $${params.length}`);
-    }
-
-    if (updateFields.length === 0) {
+    if (Object.keys(updateValues).length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    params.push(new Date());
-    updateFields.push(`updated_at = $${params.length}`);
+    updateValues.updated_at = new Date();
 
     if (status === 'resolved' || status === 'closed') {
-      params.push(new Date());
-      updateFields.push(`resolved_at = $${params.length}`);
+      updateValues.resolved_at = new Date();
     }
 
-    const result = await pool.query(
-      `UPDATE tickets 
-       SET ${updateFields.join(', ')}
-       WHERE id = $1 AND user_id = $2
-       RETURNING *`,
-      params
-    );
+    const ticket = await db.updateTable('tickets')
+      .set(updateValues)
+      .where('id', '=', ticketId)
+      .where('user_id', '=', req.user.id)
+      .returningAll()
+      .executeTakeFirst();
 
-    if (result.rows.length === 0) {
+    if (!ticket) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    const ticket = result.rows[0];
-
     // Log activity
     const action = status ? `status_changed_to_${status}` : `updated`;
-    await pool.query(
-      `INSERT INTO ticket_activities (ticket_id, user_id, action, details)
-       VALUES ($1, $2, $3, $4)`,
-      [ticketId, req.user.id, action, JSON.stringify({ status, priority, assigned_to })]
-    );
+    await db.insertInto('ticket_activities')
+      .values({
+        ticket_id: ticketId,
+        user_id: req.user.id,
+        action,
+        details: JSON.stringify({ status, priority, assigned_to }),
+      })
+      .execute();
 
     // Send assignment notification if assigned_to changed
     if (assigned_to && assigned_to !== oldAssignedTo) {
-      const assignedUserResult = await pool.query(
-        'SELECT email, name FROM users WHERE id = $1',
-        [assigned_to]
-      );
+      const assignedUser = await db.selectFrom('users')
+        .select(['email', 'name'])
+        .where('id', '=', assigned_to)
+        .executeTakeFirst();
       
-      if (assignedUserResult.rows[0]) {
-        const assignedUser = assignedUserResult.rows[0];
-        
+      if (assignedUser) {
         // Get client info
         let clientName = 'Unknown Client';
         if (ticket.client_id) {
-          const clientResult = await pool.query(
-            'SELECT name FROM clients WHERE id = $1',
-            [ticket.client_id]
-          );
-          if (clientResult.rows[0]) {
-            clientName = clientResult.rows[0].name;
+          const client = await db.selectFrom('clients')
+            .select('name')
+            .where('id', '=', ticket.client_id)
+            .executeTakeFirst();
+          if (client) {
+            clientName = client.name;
           }
         } else if (ticket.contact_id) {
-          const contactResult = await pool.query(
-            'SELECT name FROM contacts WHERE id = $1',
-            [ticket.contact_id]
-          );
-          if (contactResult.rows[0]) {
-            clientName = contactResult.rows[0].name;
+          const contact = await db.selectFrom('contacts')
+            .select('name')
+            .where('id', '=', ticket.contact_id)
+            .executeTakeFirst();
+          if (contact) {
+            clientName = contact.name;
           }
         }
 
@@ -300,44 +283,230 @@ router.post('/:ticketId/replies', auth, async (req, res) => {
     }
 
     // Verify ticket exists and user owns it
-    const ticketCheck = await pool.query(
-      'SELECT id FROM tickets WHERE id = $1 AND user_id = $2',
-      [ticketId, req.user.id]
-    );
+    const ticketCheck = await db.selectFrom('tickets')
+      .select('id')
+      .where('id', '=', ticketId)
+      .where('user_id', '=', req.user.id)
+      .executeTakeFirst();
 
-    if (ticketCheck.rows.length === 0) {
+    if (!ticketCheck) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    const result = await pool.query(
-      `INSERT INTO ticket_replies (ticket_id, user_id, message)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [ticketId, req.user.id, message]
-    );
+    const reply = await db.insertInto('ticket_replies')
+      .values({
+        ticket_id: ticketId,
+        user_id: req.user.id,
+        message,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
 
     // Update ticket updated_at
-    await pool.query(
-      'UPDATE tickets SET updated_at = NOW() WHERE id = $1',
-      [ticketId]
-    );
+    await db.updateTable('tickets')
+      .set({ updated_at: sql`NOW()` })
+      .where('id', '=', ticketId)
+      .execute();
 
     // Log activity
-    await pool.query(
-      `INSERT INTO ticket_activities (ticket_id, user_id, action, details)
-       VALUES ($1, $2, $3, $4)`,
-      [ticketId, req.user.id, 'replied', JSON.stringify({ message: message.substring(0, 100) })]
-    );
+    await db.insertInto('ticket_activities')
+      .values({
+        ticket_id: ticketId,
+        user_id: req.user.id,
+        action: 'replied',
+        details: JSON.stringify({ message: message.substring(0, 100) }),
+      })
+      .execute();
 
     // Broadcast reply to all users viewing this ticket via WebSocket
     const ticketWS = req.app.locals.ticketWS;
     if (ticketWS) {
-      ticketWS.broadcastReplyAdded(ticketId, result.rows[0]);
+      ticketWS.broadcastReplyAdded(ticketId, reply);
     }
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(reply);
   } catch (error) {
     console.error('Error adding reply:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// AI auto-draft suggested reply for a ticket
+router.post('/:ticketId/ai-suggest', auth, async (req, res) => {
+  try {
+    const { ticketId } = req.params;
+
+    // Fetch ticket with related contact info
+    const ticket = await db.selectFrom('tickets')
+      .selectAll()
+      .where('id', '=', ticketId)
+      .where('user_id', '=', req.user.id)
+      .executeTakeFirst();
+
+    if (!ticket) {
+      return res.status(404).json({ error: 'Ticket not found' });
+    }
+
+    const contextPieces = [];
+
+    // 1. Ticket subject + description
+    contextPieces.push(`TICKET SUBJECT: ${ticket.subject}`);
+    if (ticket.description) {
+      contextPieces.push(`TICKET DESCRIPTION: ${ticket.description}`);
+    }
+
+    // 2. Contact info and notes (if contact_id exists)
+    if (ticket.contact_id) {
+      const contact = await db.selectFrom('contacts')
+        .select(['name', 'email', 'phone', 'company', 'notes'])
+        .where('id', '=', ticket.contact_id)
+        .executeTakeFirst();
+
+      if (contact) {
+        contextPieces.push(`CONTACT: ${contact.name}${contact.company ? ` (${contact.company})` : ''}${contact.email ? ` - ${contact.email}` : ''}`);
+        if (contact.notes) {
+          contextPieces.push(`CONTACT NOTES: ${contact.notes}`);
+        }
+
+        // 3. Recent activities for this contact
+        const activities = await db.selectFrom('activities')
+          .select(['type', 'description', 'occurred_at'])
+          .where('contact_id', '=', ticket.contact_id)
+          .orderBy('occurred_at', 'desc')
+          .limit(10)
+          .execute();
+
+        if (activities.length > 0) {
+          contextPieces.push('RECENT ACTIVITIES:');
+          for (const act of activities) {
+            contextPieces.push(`- [${act.occurred_at ? new Date(act.occurred_at).toLocaleDateString() : '?'}] ${act.type}${act.description ? `: ${act.description}` : ''}`);
+          }
+        }
+
+        // 4. Deals related to this contact
+        const deals = await db.selectFrom('deals')
+          .select(['id', 'title', 'stage', 'value', 'notes'])
+          .where('contact_id', '=', ticket.contact_id)
+          .orderBy('created_at', 'desc')
+          .limit(5)
+          .execute();
+
+        if (deals.length > 0) {
+          contextPieces.push('RELATED DEALS:');
+          for (const deal of deals) {
+            contextPieces.push(`- ${deal.title} (${deal.stage})${deal.value ? ` - $${deal.value}` : ''}${deal.notes ? ` — Notes: ${deal.notes}` : ''}`);
+          }
+
+          // 5. Proposals through deals
+          const dealIds = deals.map(d => d.id);
+          const proposals = await db.selectFrom('proposals')
+            .select(['title', 'status', 'created_at'])
+            .where('deal_id', 'in', dealIds)
+            .orderBy('created_at', 'desc')
+            .limit(5)
+            .execute();
+
+          if (proposals.length > 0) {
+            contextPieces.push('RELATED PROPOSALS:');
+            for (const prop of proposals) {
+              contextPieces.push(`- ${prop.title} (${prop.status}) — ${prop.created_at ? new Date(prop.created_at).toLocaleDateString() : '?'}`);
+            }
+          }
+
+          // 6. Invoices through deals
+          const invoices = await db.selectFrom('invoices')
+            .select(['title', 'status', 'invoice_number', 'created_at'])
+            .where('deal_id', 'in', dealIds)
+            .orderBy('created_at', 'desc')
+            .limit(5)
+            .execute();
+
+          if (invoices.length > 0) {
+            contextPieces.push('RELATED INVOICES:');
+            for (const inv of invoices) {
+              contextPieces.push(`- ${inv.title} (#${inv.invoice_number}, ${inv.status}) — ${inv.created_at ? new Date(inv.created_at).toLocaleDateString() : '?'}`);
+            }
+          }
+        }
+      }
+
+      // 7. Previous ticket replies for this contact (other closed tickets)
+      const prevTickets = await db.selectFrom('tickets')
+        .select(['id', 'subject', 'status'])
+        .where('contact_id', '=', ticket.contact_id)
+        .where('id', '!=', ticketId)
+        .where('user_id', '=', req.user.id)
+        .orderBy('created_at', 'desc')
+        .limit(5)
+        .execute();
+
+      if (prevTickets.length > 0) {
+        contextPieces.push('PREVIOUS TICKETS:');
+        for (const pt of prevTickets) {
+          contextPieces.push(`- ${pt.subject} (${pt.status})`);
+        }
+      }
+    }
+
+    // 8. Current ticket replies (existing conversation)
+    const existingReplies = await db.selectFrom('ticket_replies')
+      .select(['message', 'created_at'])
+      .where('ticket_id', '=', ticketId)
+      .orderBy('created_at', 'asc')
+      .limit(20)
+      .execute();
+
+    if (existingReplies.length > 0) {
+      contextPieces.push('EXISTING CONVERSATION:');
+      for (const reply of existingReplies) {
+        const date = reply.created_at ? new Date(reply.created_at).toLocaleDateString() : '?';
+        contextPieces.push(`[${date}] ${reply.message.substring(0, 500)}`);
+      }
+    }
+
+    // Build the prompt
+    const prompt = `You are a helpful CRM assistant for a property management company called ResiQ. 
+An agent is about to reply to a support ticket. Based on the context below, draft a suggested reply.
+
+Guidelines:
+- Be professional, friendly, and helpful
+- Reference relevant past interactions if they add value
+- If the context indicates next steps (e.g., a proposal was sent, an invoice is due), mention them
+- Keep the reply concise but thorough (2-4 paragraphs)
+- Do NOT fabricate information — if context is lacking, give a generic helpful response
+- Do NOT include placeholders like [Client Name] — use actual names from context
+- The reply should be ready to send with minimal editing
+
+CONTEXT:
+${contextPieces.join('\n')}
+
+DRAFT REPLY:`;
+
+    // Call OpenAI
+    const OpenAI = require('openai');
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are a helpful CRM assistant for a property management company. Generate professional, context-aware draft replies for support tickets.' },
+        { role: 'user', content: prompt },
+      ],
+      max_tokens: 1000,
+      temperature: 0.7,
+    });
+
+    const draft = completion.choices[0]?.message?.content?.trim() || '';
+
+    if (!draft) {
+      return res.status(500).json({ error: 'AI failed to generate a draft' });
+    }
+
+    res.json({ draft, model: 'gpt-4o-mini' });
+  } catch (error) {
+    console.error('Error generating AI draft:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -347,21 +516,22 @@ router.delete('/:ticketId', auth, async (req, res) => {
   try {
     const { ticketId } = req.params;
 
-    const ticketCheck = await pool.query(
-      'SELECT subject FROM tickets WHERE id = $1 AND user_id = $2',
-      [ticketId, req.user.id]
-    );
+    const ticketCheck = await db.selectFrom('tickets')
+      .select('subject')
+      .where('id', '=', ticketId)
+      .where('user_id', '=', req.user.id)
+      .executeTakeFirst();
 
-    if (ticketCheck.rows.length === 0) {
+    if (!ticketCheck) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    const { subject } = ticketCheck.rows[0];
+    const { subject } = ticketCheck;
 
-    await pool.query(
-      'DELETE FROM tickets WHERE id = $1 AND user_id = $2',
-      [ticketId, req.user.id]
-    );
+    await db.deleteFrom('tickets')
+      .where('id', '=', ticketId)
+      .where('user_id', '=', req.user.id)
+      .execute();
 
     logAction(req.user.id, req.user.email, 'delete', 'ticket', ticketId, subject);
 

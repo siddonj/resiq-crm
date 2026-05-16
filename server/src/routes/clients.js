@@ -1,6 +1,6 @@
 const express = require('express');
+const { db, sql, ownershipWhere } = require('../db');
 const auth = require('../middleware/auth');
-const pool = require('../models/db');
 const Client = require('../models/client');
 const { sendProposalSentEmail, sendInvoiceSentEmail } = require('../services/clientNotifications');
 const SMS = require('../models/SMS');
@@ -36,8 +36,11 @@ router.post('/', auth, async (req, res) => {
     // If dealId provided, grant access
     if (dealId) {
       try {
-        const deal = await pool.query('SELECT id FROM deals WHERE id = $1', [dealId]);
-        if (deal.rows[0]) {
+        const deal = await db.selectFrom('deals')
+          .select('id')
+          .where('id', '=', dealId)
+          .executeTakeFirst();
+        if (deal) {
           // We'll grant access after client is created, for now just note it
         }
       } catch (err) {
@@ -62,13 +65,12 @@ router.post('/', auth, async (req, res) => {
 router.get('/', auth, async (req, res) => {
   // TODO: Check user role (admin or manager)
   try {
-    const result = await pool.query(
-      `SELECT id, name, email, slug, is_active, first_login_at, last_login_at, created_at
-       FROM clients
-       ORDER BY created_at DESC`
-    );
+    const rows = await db.selectFrom('clients')
+      .select(['id', 'name', 'email', 'slug', 'is_active', 'first_login_at', 'last_login_at', 'created_at'])
+      .orderBy('created_at', 'desc')
+      .execute();
 
-    res.json(result.rows);
+    res.json(rows);
   } catch (err) {
     console.error('Error fetching clients:', err);
     res.status(500).json({ error: 'Server error' });
@@ -89,33 +91,30 @@ router.get('/:clientId', auth, async (req, res) => {
     }
 
     // Get client's accessible deals
-    const dealsResult = await pool.query(
-      `SELECT d.id, d.title, d.stage, d.value, d.created_at
-       FROM deals d
-       INNER JOIN client_deal_access cda ON d.id = cda.deal_id
-       WHERE cda.client_id = $1
-       ORDER BY d.created_at DESC`,
-      [clientId]
-    );
+    const dealsResult = await db.selectFrom('deals')
+      .innerJoin('client_deal_access', 'client_deal_access.deal_id', 'deals.id')
+      .where('client_deal_access.client_id', '=', clientId)
+      .select(['deals.id', 'deals.title', 'deals.stage', 'deals.value', 'deals.created_at'])
+      .orderBy('deals.created_at', 'desc')
+      .execute();
 
     // Get shared items count
-    const sharedResult = await pool.query(
-      `SELECT item_type, COUNT(*) as count
-       FROM client_shared_items
-       WHERE client_id = $1
-       GROUP BY item_type`,
-      [clientId]
-    );
+    const sharedResult = await db.selectFrom('client_shared_items')
+      .select(['item_type'])
+      .select(sql`COUNT(*)`.as('count'))
+      .where('client_id', '=', clientId)
+      .groupBy('item_type')
+      .execute();
 
     const sharedItems = {};
-    sharedResult.rows.forEach(row => {
+    sharedResult.forEach(row => {
       sharedItems[row.item_type] = parseInt(row.count);
     });
 
     res.json({
       ...client,
       password_hash: undefined, // Don't expose password
-      accessibleDeals: dealsResult.rows,
+      accessibleDeals: dealsResult,
       sharedItems,
     });
   } catch (err) {
@@ -133,39 +132,25 @@ router.patch('/:clientId', auth, async (req, res) => {
   const { name, phone } = req.body;
 
   try {
-    const updates = [];
-    const params = [];
-    let paramIndex = 1;
+    const updates = {};
+    if (name?.trim()) updates.name = name.trim();
+    if (phone?.trim()) updates.phone = phone.trim();
 
-    if (name?.trim()) {
-      updates.push(`name = $${paramIndex}`);
-      params.push(name.trim());
-      paramIndex++;
-    }
-
-    if (phone?.trim()) {
-      updates.push(`phone = $${paramIndex}`);
-      params.push(phone.trim());
-      paramIndex++;
-    }
-
-    if (updates.length === 0) {
+    if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
     }
 
-    updates.push(`updated_at = NOW()`);
-    params.push(clientId);
+    const result = await db.updateTable('clients')
+      .set({ ...updates, updated_at: sql`NOW()` })
+      .where('id', '=', clientId)
+      .returningAll()
+      .executeTakeFirst();
 
-    const result = await pool.query(
-      `UPDATE clients SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
-      params
-    );
-
-    if (!result.rows[0]) {
+    if (!result) {
       return res.status(404).json({ error: 'Client not found' });
     }
 
-    res.json(result.rows[0]);
+    res.json(result);
   } catch (err) {
     console.error('Error updating client:', err);
     res.status(500).json({ error: 'Server error' });
@@ -193,8 +178,11 @@ router.post('/:clientId/grant-access', auth, async (req, res) => {
     }
 
     // Verify deal exists
-    const deal = await pool.query('SELECT id FROM deals WHERE id = $1', [dealId]);
-    if (!deal.rows[0]) {
+    const deal = await db.selectFrom('deals')
+      .select('id')
+      .where('id', '=', dealId)
+      .executeTakeFirst();
+    if (!deal) {
       return res.status(404).json({ error: 'Deal not found' });
     }
 
@@ -257,17 +245,17 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
 
     // If proposal or invoice, update sent_at and send email notification
     if (itemType === 'proposal') {
-      const result = await pool.query(
-        `UPDATE proposals SET sent_at = NOW(), status = CASE WHEN status = 'draft' THEN 'sent' ELSE status END
-         WHERE id = $1 AND sent_at IS NULL
-         RETURNING title, expires_at`,
-        [itemId]
-      );
+      const result = await db.updateTable('proposals')
+        .set({ sent_at: sql`NOW()`, status: sql`CASE WHEN status = 'draft' THEN 'sent' ELSE status END` })
+        .where('id', '=', itemId)
+        .where('sent_at', 'is', null)
+        .returning(['title', 'expires_at'])
+        .executeTakeFirst();
       
       // Send email notification to client
-      if (result.rows[0]) {
+      if (result) {
         try {
-          await sendProposalSentEmail(client.email, client.name, result.rows[0].title, req.user.id, clientId);
+          await sendProposalSentEmail(client.email, client.name, result.title, req.user.id, clientId);
         } catch (emailErr) {
           console.warn('Failed to send proposal email:', emailErr.message);
         }
@@ -281,10 +269,10 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
               if (template) {
                 const renderResult = await SMSTemplate.render(template, {
                   firstName: client.name.split(' ')[0],
-                  dealName: result.rows[0].title || 'Your proposal',
+                  dealName: result.title || 'Your proposal',
                   proposalLink: `${process.env.CLIENT_PORTAL_URL || 'https://portal.resiq.com'}/proposals/${itemId}`,
-                  expiryDate: result.rows[0].expires_at 
-                    ? new Date(result.rows[0].expires_at).toLocaleDateString()
+                  expiryDate: result.expires_at 
+                    ? new Date(result.expires_at).toLocaleDateString()
                     : 'Upon request'
                 });
 
@@ -310,18 +298,18 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
         }
       }
     } else if (itemType === 'invoice') {
-      const result = await pool.query(
-        `UPDATE invoices SET sent_at = NOW(), status = CASE WHEN status = 'draft' THEN 'sent' ELSE status END
-         WHERE id = $1 AND sent_at IS NULL
-         RETURNING line_items, due_date, invoice_number`,
-        [itemId]
-      );
+      const result = await db.updateTable('invoices')
+        .set({ sent_at: sql`NOW()`, status: sql`CASE WHEN status = 'draft' THEN 'sent' ELSE status END` })
+        .where('id', '=', itemId)
+        .where('sent_at', 'is', null)
+        .returning(['line_items', 'due_date', 'invoice_number'])
+        .executeTakeFirst();
       
       // Send email notification to client
-      if (result.rows[0]) {
+      if (result) {
         try {
-          const amount = result.rows[0].line_items.reduce((sum, item) => sum + (item.amount || 0), 0);
-          await sendInvoiceSentEmail(client.email, client.name, itemId, amount, result.rows[0].due_date);
+          const amount = result.line_items.reduce((sum, item) => sum + (item.amount || 0), 0);
+          await sendInvoiceSentEmail(client.email, client.name, itemId, amount, result.due_date);
         } catch (emailErr) {
           console.warn('Failed to send invoice email:', emailErr.message);
         }
@@ -333,11 +321,11 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
             if (!isOptedOut) {
               const template = await SMSTemplate.getBySlug('invoice_due');
               if (template) {
-                const amount = result.rows[0].line_items.reduce((sum, item) => sum + (item.amount || 0), 0);
+                const amount = result.line_items.reduce((sum, item) => sum + (item.amount || 0), 0);
                 const renderResult = await SMSTemplate.render(template, {
-                  invoiceNumber: result.rows[0].invoice_number || itemId.substring(0, 8),
+                  invoiceNumber: result.invoice_number || itemId.substring(0, 8),
                   amount: `$${amount.toFixed(2)}`,
-                  dueDate: new Date(result.rows[0].due_date).toLocaleDateString(),
+                  dueDate: new Date(result.due_date).toLocaleDateString(),
                   paymentLink: `${process.env.CLIENT_PORTAL_URL || 'https://portal.resiq.com'}/invoices/${itemId}`
                 });
 
@@ -379,16 +367,14 @@ router.get('/:clientId/activity', auth, async (req, res) => {
   const { clientId } = req.params;
 
   try {
-    const result = await pool.query(
-      `SELECT id, action, metadata, created_at
-       FROM client_activities
-       WHERE client_id = $1
-       ORDER BY created_at DESC
-       LIMIT 100`,
-      [clientId]
-    );
+    const rows = await db.selectFrom('client_activities')
+      .select(['id', 'action', 'metadata', 'created_at'])
+      .where('client_id', '=', clientId)
+      .orderBy('created_at', 'desc')
+      .limit(100)
+      .execute();
 
-    res.json(result.rows);
+    res.json(rows);
   } catch (err) {
     console.error('Error fetching client activity:', err);
     res.status(500).json({ error: 'Server error' });

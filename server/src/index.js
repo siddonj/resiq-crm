@@ -7,6 +7,18 @@ const http = require('http');
 const jwt = require('jsonwebtoken');
 const { logger, createRequestLogger } = require('./utils/logger');
 
+// Sentry error tracking (optional — init only if SENTRY_DSN is set)
+let Sentry;
+if (process.env.SENTRY_DSN) {
+  Sentry = require('@sentry/node');
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || 'development',
+    tracesSampleRate: parseFloat(process.env.SENTRY_TRACES_SAMPLE_RATE || '0.1'),
+  });
+  logger.info('Sentry initialized');
+}
+
 const authRoutes = require('./routes/auth');
 const clientAuthRoutes = require('./routes/clientAuth');
 const clientPortalRoutes = require('./routes/clientPortal');
@@ -235,6 +247,28 @@ async function initDatabase() {
   const pool = require('./models/db');
   const fs = require('fs');
 
+  // Acquire advisory lock — prevents two concurrent boots from racing
+  try {
+    await pool.query("SELECT pg_advisory_xact_lock(847261004)");
+  } catch (_) {
+    // Lock not available, proceed anyway (single-instance deployments)
+  }
+
+  // Ensure _schema_version tracking table exists
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS _schema_version (
+        version     TEXT PRIMARY KEY,
+        description TEXT NOT NULL DEFAULT '',
+        applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        checksum    TEXT
+      )
+    `);
+    logger.info('Schema version tracking table ready');
+  } catch (err) {
+    // Table may already exist from migration runner
+  }
+
   // Apply base schema
   const schemaPath = path.join(__dirname, '../../database/schema.sql');
   if (fs.existsSync(schemaPath)) {
@@ -262,9 +296,39 @@ async function initDatabase() {
     logger.error({ err }, 'OAuth columns migration error');
   }
 
-  // Migrations are NO LONGER auto-run on boot.
-  // Use: npm run migrate
-  logger.info('Skipping auto-migrations. Run `npm run migrate` to apply pending migrations.');
+  // Run any tracked migrations that haven't been applied yet
+  try {
+    const migrationsDir = path.join(__dirname, '../../database/migrations');
+    if (fs.existsSync(migrationsDir)) {
+      const files = fs.readdirSync(migrationsDir)
+        .filter(f => f.endsWith('.sql'))
+        .sort();
+
+      for (const file of files) {
+        // Check if already applied
+        const { rows } = await pool.query(
+          'SELECT 1 FROM _schema_version WHERE version = $1',
+          [file.replace(/\.sql$/, '')]
+        );
+        if (rows.length > 0) continue;
+
+        const filePath = path.join(migrationsDir, file);
+        const migrationSql = fs.readFileSync(filePath, 'utf8');
+
+        await pool.query(migrationSql);
+
+        // Record as applied
+        await pool.query(
+          'INSERT INTO _schema_version (version, description) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+          [file.replace(/\.sql$/, ''), file]
+        );
+
+        logger.info({ migration: file }, 'Migration applied on boot');
+      }
+    }
+  } catch (err) {
+    logger.warn({ err }, 'Auto-migration check failed (non-fatal on boot)');
+  }
 }
 
 const PORT = process.env.PORT || 5000;
@@ -330,6 +394,11 @@ process.on('SIGTERM', () => {
   });
 });
 
+// Sentry error handler (must be after all routes but before express error handlers)
+if (Sentry) {
+  app.use(Sentry.Handlers.errorHandler());
+}
+
 // Serve React client in production
 if (process.env.NODE_ENV === 'production') {
   // Return JSON 404 for unknown API routes instead of serving index.html.
@@ -345,11 +414,4 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, closing server...');
-  server.close(() => {
-    console.log('Server closed');
-    process.exit(0);
-  });
-});
+

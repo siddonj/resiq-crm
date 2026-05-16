@@ -1,5 +1,5 @@
 const express = require('express');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -10,8 +10,8 @@ router.get('/contact/:contactId', auth, async (req, res) => {
     const { contactId } = req.params;
 
     // Get engagement tracking records
-    const trackingResult = await pool.query(
-      `SELECT 
+    const trackingResult = await sql`
+      SELECT 
         et.id,
         et.tracking_id,
         et.asset_type,
@@ -25,22 +25,20 @@ router.get('/contact/:contactId', auth, async (req, res) => {
           WHEN et.asset_type = 'invoice' THEN i.invoice_number
           ELSE et.asset_id::text
         END AS asset_title
-       FROM engagement_tracking et
-       LEFT JOIN proposals p ON p.id = et.asset_id AND et.asset_type = 'proposal'
-       LEFT JOIN invoices i ON i.id = et.asset_id AND et.asset_type = 'invoice'
-       WHERE et.contact_id = $1 AND et.user_id = $2
-       ORDER BY COALESCE(et.opened_at, et.created_at) DESC`,
-      [contactId, req.user.id]
-    );
+      FROM engagement_tracking et
+      LEFT JOIN proposals p ON p.id = et.asset_id AND et.asset_type = 'proposal'
+      LEFT JOIN invoices i ON i.id = et.asset_id AND et.asset_type = 'invoice'
+      WHERE et.contact_id = ${contactId} AND et.user_id = ${req.user.id}
+      ORDER BY COALESCE(et.opened_at, et.created_at) DESC
+    `.execute(db);
 
     // Get related activities
-    const activitiesResult = await pool.query(
-      `SELECT *
-       FROM activities
-       WHERE contact_id = $1 AND user_id = $2 AND type LIKE '%_opened'
-       ORDER BY occurred_at DESC`,
-      [contactId, req.user.id]
-    );
+    const activitiesResult = await sql`
+      SELECT *
+      FROM activities
+      WHERE contact_id = ${contactId} AND user_id = ${req.user.id} AND type LIKE '%_opened'
+      ORDER BY occurred_at DESC
+    `.execute(db);
 
     const engagements = trackingResult.rows.map(track => ({
       id: track.id,
@@ -71,8 +69,8 @@ router.get('/asset/:assetType/:assetId', auth, async (req, res) => {
   try {
     const { assetType, assetId } = req.params;
 
-    const result = await pool.query(
-      `SELECT 
+    const result = await sql`
+      SELECT 
         id,
         tracking_id,
         contact_id,
@@ -80,11 +78,10 @@ router.get('/asset/:assetType/:assetId', auth, async (req, res) => {
         ip_address,
         user_agent,
         created_at
-       FROM engagement_tracking
-       WHERE asset_type = $1 AND asset_id = $2 AND user_id = $3
-       ORDER BY created_at DESC`,
-      [assetType, assetId, req.user.id]
-    );
+      FROM engagement_tracking
+      WHERE asset_type = ${assetType} AND asset_id = ${assetId} AND user_id = ${req.user.id}
+      ORDER BY created_at DESC
+    `.execute(db);
 
     const opens = result.rows.filter(r => r.opened_at).length;
     const totalCreated = result.rows.length;
@@ -112,16 +109,20 @@ router.post('/', auth, async (req, res) => {
     }
 
     const trackingId = require('crypto').randomUUID();
-    const result = await pool.query(
-      `INSERT INTO engagement_tracking (user_id, contact_id, tracking_id, asset_type, asset_id)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING *`,
-      [req.user.id, contactId || null, trackingId, assetType, assetId]
-    );
+    const result = await db.insertInto('engagement_tracking')
+      .values({
+        user_id: req.user.id,
+        contact_id: contactId || null,
+        tracking_id: trackingId,
+        asset_type: assetType,
+        asset_id: assetId,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
 
     res.status(201).json({
-      tracking: result.rows[0],
-      pixelUrl: `/api/track/${trackingId}.png`
+      tracking: result,
+      pixelUrl: `/api/track/${trackingId}.png`,
     });
   } catch (error) {
     console.error('Error creating tracking:', error);

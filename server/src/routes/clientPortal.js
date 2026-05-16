@@ -3,7 +3,7 @@ const multer = require('multer');
 const clientAuth = require('../middleware/clientAuth');
 const auth = require('../middleware/auth');
 const Client = require('../models/client');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const { sendProposalSignedConfirmation, sendInvoicePaidConfirmation, sendProposalSentEmail, sendInvoiceSentEmail } = require('../services/clientNotifications');
 const { uploadFile, downloadFile, deleteFile, getSignedUrl } = require('../services/fileStorage');
 
@@ -20,13 +20,12 @@ router.get('/proposals', clientAuth, async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
-      `SELECT DISTINCT p.* FROM proposals p
-       INNER JOIN client_shared_items csi ON p.id = csi.item_id
-       WHERE csi.client_id = $1 AND csi.item_type = 'proposal'
-       ORDER BY p.created_at DESC`,
-      [req.client.id]
-    );
+    const result = await sql`
+      SELECT DISTINCT p.* FROM proposals p
+      INNER JOIN client_shared_items csi ON p.id = csi.item_id
+      WHERE csi.client_id = ${req.client.id} AND csi.item_type = 'proposal'
+      ORDER BY p.created_at DESC
+    `.execute(db);
 
     // Log view activity
     await Client.logActivity(
@@ -56,12 +55,11 @@ router.get('/proposals/:proposalId', clientAuth, async (req, res) => {
 
   try {
     // Check if client has access to this proposal
-    const accessResult = await pool.query(
-      `SELECT p.* FROM proposals p
-       INNER JOIN client_shared_items csi ON p.id = csi.item_id
-       WHERE p.id = $1 AND csi.client_id = $2 AND csi.item_type = 'proposal'`,
-      [proposalId, req.client.id]
-    );
+    const accessResult = await sql`
+      SELECT p.* FROM proposals p
+      INNER JOIN client_shared_items csi ON p.id = csi.item_id
+      WHERE p.id = ${proposalId} AND csi.client_id = ${req.client.id} AND csi.item_type = 'proposal'
+    `.execute(db);
 
     if (!accessResult.rows[0]) {
       return res.status(403).json({ error: 'Access denied' });
@@ -79,10 +77,10 @@ router.get('/proposals/:proposalId', clientAuth, async (req, res) => {
 
     // Update viewed_at if not already viewed
     if (!proposal.viewed_at) {
-      await pool.query(
-        'UPDATE proposals SET viewed_at = NOW() WHERE id = $1',
-        [proposalId]
-      );
+      await db.updateTable('proposals')
+        .set({ viewed_at: sql`NOW()` })
+        .where('id', '=', proposalId)
+        .execute();
       proposal.viewed_at = new Date();
     }
 
@@ -112,27 +110,29 @@ router.patch('/proposals/:proposalId/sign', clientAuth, async (req, res) => {
 
   try {
     // Check if client has access
-    const accessResult = await pool.query(
-      `SELECT p.* FROM proposals p
-       INNER JOIN client_shared_items csi ON p.id = csi.item_id
-       WHERE p.id = $1 AND csi.client_id = $2 AND csi.item_type = 'proposal'`,
-      [proposalId, req.client.id]
-    );
+    const accessResult = await sql`
+      SELECT p.* FROM proposals p
+      INNER JOIN client_shared_items csi ON p.id = csi.item_id
+      WHERE p.id = ${proposalId} AND csi.client_id = ${req.client.id} AND csi.item_type = 'proposal'
+    `.execute(db);
 
     if (!accessResult.rows[0]) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
     // Update proposal as signed
-    const result = await pool.query(
-      `UPDATE proposals 
-       SET status = 'signed', signature_name = $1, signed_at = NOW(), updated_at = NOW()
-       WHERE id = $2
-       RETURNING *`,
-      [signatureName.trim(), proposalId]
-    );
+    const result = await db.updateTable('proposals')
+      .set({
+        status: 'signed',
+        signature_name: signatureName.trim(),
+        signed_at: sql`NOW()`,
+        updated_at: sql`NOW()`,
+      })
+      .where('id', '=', proposalId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
 
-    const proposal = result.rows[0];
+    const proposal = result;
 
     // Log activity
     await Client.logActivity(
@@ -145,18 +145,16 @@ router.patch('/proposals/:proposalId/sign', clientAuth, async (req, res) => {
     // Send confirmation email to employee (get employee from deal if available)
     if (proposal.deal_id) {
       try {
-        const dealResult = await pool.query(
-          'SELECT user_id FROM deals WHERE id = $1',
-          [proposal.deal_id]
-        );
-        if (dealResult.rows[0]) {
-          const userResult = await pool.query(
-            'SELECT email FROM users WHERE id = $1',
-            [dealResult.rows[0].user_id]
-          );
-          if (userResult.rows[0]) {
+        const dealRows = await sql`
+          SELECT user_id FROM deals WHERE id = ${proposal.deal_id}
+        `.execute(db).then(r => r.rows);
+        if (dealRows[0]) {
+          const userRows = await sql`
+            SELECT email FROM users WHERE id = ${dealRows[0].user_id}
+          `.execute(db).then(r => r.rows);
+          if (userRows[0]) {
             await sendProposalSignedConfirmation(
-              userResult.rows[0].email,
+              userRows[0].email,
               req.client.name,
               proposal.title,
               proposal.signed_at
@@ -185,13 +183,12 @@ router.get('/invoices', clientAuth, async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
-      `SELECT DISTINCT i.* FROM invoices i
-       INNER JOIN client_shared_items csi ON i.id = csi.item_id
-       WHERE csi.client_id = $1 AND csi.item_type = 'invoice'
-       ORDER BY i.created_at DESC`,
-      [req.client.id]
-    );
+    const result = await sql`
+      SELECT DISTINCT i.* FROM invoices i
+      INNER JOIN client_shared_items csi ON i.id = csi.item_id
+      WHERE csi.client_id = ${req.client.id} AND csi.item_type = 'invoice'
+      ORDER BY i.created_at DESC
+    `.execute(db);
 
     // Log activity
     await Client.logActivity(
@@ -221,12 +218,11 @@ router.get('/invoices/:invoiceId', clientAuth, async (req, res) => {
 
   try {
     // Check if client has access to this invoice
-    const accessResult = await pool.query(
-      `SELECT i.* FROM invoices i
-       INNER JOIN client_shared_items csi ON i.id = csi.item_id
-       WHERE i.id = $1 AND csi.client_id = $2 AND csi.item_type = 'invoice'`,
-      [invoiceId, req.client.id]
-    );
+    const accessResult = await sql`
+      SELECT i.* FROM invoices i
+      INNER JOIN client_shared_items csi ON i.id = csi.item_id
+      WHERE i.id = ${invoiceId} AND csi.client_id = ${req.client.id} AND csi.item_type = 'invoice'
+    `.execute(db);
 
     if (!accessResult.rows[0]) {
       return res.status(403).json({ error: 'Access denied' });
@@ -263,12 +259,11 @@ router.post('/invoices/:invoiceId/pay', clientAuth, async (req, res) => {
 
   try {
     // Check if client has access
-    const accessResult = await pool.query(
-      `SELECT i.* FROM invoices i
-       INNER JOIN client_shared_items csi ON i.id = csi.item_id
-       WHERE i.id = $1 AND csi.client_id = $2 AND csi.item_type = 'invoice'`,
-      [invoiceId, req.client.id]
-    );
+    const accessResult = await sql`
+      SELECT i.* FROM invoices i
+      INNER JOIN client_shared_items csi ON i.id = csi.item_id
+      WHERE i.id = ${invoiceId} AND csi.client_id = ${req.client.id} AND csi.item_type = 'invoice'
+    `.execute(db);
 
     if (!accessResult.rows[0]) {
       return res.status(403).json({ error: 'Access denied' });
@@ -308,14 +303,13 @@ router.get('/files', clientAuth, async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
-      `SELECT cf.id, cf.file_name, cf.file_size, cf.mime_type, cf.created_at, cfs.created_at as shared_at
-       FROM client_files cf
-       INNER JOIN client_file_shares cfs ON cf.id = cfs.file_id
-       WHERE cfs.client_id = $1
-       ORDER BY cfs.created_at DESC`,
-      [req.client.id]
-    );
+    const result = await sql`
+      SELECT cf.id, cf.file_name, cf.file_size, cf.mime_type, cf.created_at, cfs.created_at as shared_at
+      FROM client_files cf
+      INNER JOIN client_file_shares cfs ON cf.id = cfs.file_id
+      WHERE cfs.client_id = ${req.client.id}
+      ORDER BY cfs.created_at DESC
+    `.execute(db);
 
     // Log activity
     await Client.logActivity(
@@ -345,12 +339,11 @@ router.get('/files/:fileId/download', clientAuth, async (req, res) => {
 
   try {
     // Check if client has access to this file
-    const accessResult = await pool.query(
-      `SELECT cf.*, cfs.id as share_id FROM client_files cf
-       INNER JOIN client_file_shares cfs ON cf.id = cfs.file_id
-       WHERE cf.id = $1 AND cfs.client_id = $2`,
-      [fileId, req.client.id]
-    );
+    const accessResult = await sql`
+      SELECT cf.*, cfs.id as share_id FROM client_files cf
+      INNER JOIN client_file_shares cfs ON cf.id = cfs.file_id
+      WHERE cf.id = ${fileId} AND cfs.client_id = ${req.client.id}
+    `.execute(db);
 
     if (!accessResult.rows[0]) {
       return res.status(403).json({ error: 'Access denied' });
@@ -399,16 +392,14 @@ router.get('/activity', clientAuth, async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
-      `SELECT id, action, metadata, created_at 
-       FROM client_activities 
-       WHERE client_id = $1 
-       ORDER BY created_at DESC 
-       LIMIT 50`,
-      [req.client.id]
-    );
+    const result = await db.selectFrom('client_activities')
+      .select(['id', 'action', 'metadata', 'created_at'])
+      .where('client_id', '=', req.client.id)
+      .orderBy('created_at', 'desc')
+      .limit(50)
+      .execute();
 
-    res.json(result.rows);
+    res.json(result);
   } catch (err) {
     console.error('Error fetching client activity:', err);
     res.status(500).json({ error: 'Server error' });
@@ -451,19 +442,18 @@ router.get('/tickets', clientAuth, async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
-      `SELECT 
+    const result = await sql`
+      SELECT 
         t.*,
         u.name AS assigned_to_name,
         COUNT(tr.id) FILTER (WHERE tr.id IS NOT NULL) as reply_count
-       FROM tickets t
-       LEFT JOIN users u ON u.id = t.assigned_to
-       LEFT JOIN ticket_replies tr ON tr.ticket_id = t.id
-       WHERE t.client_id = $1
-       GROUP BY t.id, u.id, u.name
-       ORDER BY t.created_at DESC`,
-      [req.client.id]
-    );
+      FROM tickets t
+      LEFT JOIN users u ON u.id = t.assigned_to
+      LEFT JOIN ticket_replies tr ON tr.ticket_id = t.id
+      WHERE t.client_id = ${req.client.id}
+      GROUP BY t.id, u.id, u.name
+      ORDER BY t.created_at DESC
+    `.execute(db);
 
     // Log activity
     await Client.logActivity(
@@ -493,35 +483,33 @@ router.get('/tickets/:ticketId', clientAuth, async (req, res) => {
 
   try {
     // Check if client has access to this ticket
-    const ticketResult = await pool.query(
-      `SELECT 
+    const ticketRows = await sql`
+      SELECT 
         t.*,
         u.name AS assigned_to_name
-       FROM tickets t
-       LEFT JOIN users u ON u.id = t.assigned_to
-       WHERE t.id = $1 AND t.client_id = $2`,
-      [ticketId, req.client.id]
-    );
+      FROM tickets t
+      LEFT JOIN users u ON u.id = t.assigned_to
+      WHERE t.id = ${ticketId} AND t.client_id = ${req.client.id}
+    `.execute(db).then(r => r.rows);
 
-    if (ticketResult.rows.length === 0) {
+    if (ticketRows.length === 0) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
-    const ticket = ticketResult.rows[0];
+    const ticket = ticketRows[0];
 
     // Get replies
-    const repliesResult = await pool.query(
-      `SELECT 
+    const repliesResult = await sql`
+      SELECT 
         tr.*,
         u.name AS user_name,
         cl.name AS client_name
-       FROM ticket_replies tr
-       LEFT JOIN users u ON u.id = tr.user_id
-       LEFT JOIN clients cl ON cl.id = tr.client_id
-       WHERE tr.ticket_id = $1
-       ORDER BY tr.created_at ASC`,
-      [ticketId]
-    );
+      FROM ticket_replies tr
+      LEFT JOIN users u ON u.id = tr.user_id
+      LEFT JOIN clients cl ON cl.id = tr.client_id
+      WHERE tr.ticket_id = ${ticketId}
+      ORDER BY tr.created_at ASC
+    `.execute(db);
 
     // Log activity
     await Client.logActivity(
@@ -558,30 +546,28 @@ router.post('/tickets', clientAuth, async (req, res) => {
 
   try {
     // Get the client's associated user/contact
-    const contactResult = await pool.query(
-      `SELECT c.id FROM contacts c 
-       WHERE c.email = $1 LIMIT 1`,
-      [req.client.email]
-    );
+    const contactRows = await sql`
+      SELECT c.id FROM contacts c 
+      WHERE c.email = ${req.client.email} LIMIT 1
+    `.execute(db).then(r => r.rows);
 
-    const contactId = contactResult.rows[0]?.id || null;
+    const contactId = contactRows[0]?.id || null;
 
     // Create ticket (associate with client's manager)
-    const ticketResult = await pool.query(
-      `INSERT INTO tickets (client_id, contact_id, subject, description, priority, user_id)
-       VALUES ($1, $2, $3, $4, $5, (SELECT user_id FROM clients WHERE id = $1))
-       RETURNING *`,
-      [req.client.id, contactId, subject, description || null, priority || 'medium']
-    );
+    const ticketResult = await sql`
+      INSERT INTO tickets (client_id, contact_id, subject, description, priority, user_id)
+      VALUES (${req.client.id}, ${contactId}, ${subject}, ${description || null}, ${priority || 'medium'},
+        (SELECT user_id FROM clients WHERE id = ${req.client.id}))
+      RETURNING *
+    `.execute(db);
 
     const ticket = ticketResult.rows[0];
 
     // Log creation activity
-    await pool.query(
-      `INSERT INTO ticket_activities (ticket_id, action, details)
-       VALUES ($1, $2, $3)`,
-      [ticket.id, 'created_by_client', JSON.stringify({ client_id: req.client.id })]
-    );
+    await sql`
+      INSERT INTO ticket_activities (ticket_id, action, details)
+      VALUES (${ticket.id}, 'created_by_client', ${JSON.stringify({ client_id: req.client.id })})
+    `.execute(db);
 
     // Log client activity
     await Client.logActivity(
@@ -616,35 +602,32 @@ router.post('/tickets/:ticketId/replies', clientAuth, async (req, res) => {
 
   try {
     // Verify client owns this ticket
-    const ticketCheck = await pool.query(
-      'SELECT id FROM tickets WHERE id = $1 AND client_id = $2',
-      [ticketId, req.client.id]
-    );
+    const ticketCheck = await sql`
+      SELECT id FROM tickets WHERE id = ${ticketId} AND client_id = ${req.client.id}
+    `.execute(db).then(r => r.rows);
 
-    if (ticketCheck.rows.length === 0) {
+    if (ticketCheck.length === 0) {
       return res.status(404).json({ error: 'Ticket not found' });
     }
 
     // Add reply
-    const replyResult = await pool.query(
-      `INSERT INTO ticket_replies (ticket_id, client_id, message)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [ticketId, req.client.id, message]
-    );
+    const replyResult = await sql`
+      INSERT INTO ticket_replies (ticket_id, client_id, message)
+      VALUES (${ticketId}, ${req.client.id}, ${message})
+      RETURNING *
+    `.execute(db);
 
     // Update ticket updated_at
-    await pool.query(
-      'UPDATE tickets SET updated_at = NOW() WHERE id = $1',
-      [ticketId]
-    );
+    await db.updateTable('tickets')
+      .set({ updated_at: sql`NOW()` })
+      .where('id', '=', ticketId)
+      .execute();
 
     // Log activity
-    await pool.query(
-      `INSERT INTO ticket_activities (ticket_id, action, details)
-       VALUES ($1, $2, $3)`,
-      [ticketId, 'client_replied', JSON.stringify({ client_id: req.client.id })]
-    );
+    await sql`
+      INSERT INTO ticket_activities (ticket_id, action, details)
+      VALUES (${ticketId}, 'client_replied', ${JSON.stringify({ client_id: req.client.id })})
+    `.execute(db);
 
     // Log client activity
     await Client.logActivity(

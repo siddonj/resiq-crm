@@ -42,9 +42,9 @@ COPY --from=client-builder /app/client/dist ./client/dist
 # Expose port
 EXPOSE 5000
 
-# Health check
+# Health check against /api/health (checks DB + Redis)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD wget -qO- http://localhost:5000/api/webhooks/health || exit 1
+  CMD wget -qO- http://localhost:5000/api/health || exit 1
 
 # Start server
 CMD ["node", "server/src/index.js"]

@@ -1,4 +1,4 @@
-﻿-- P3.1: Link tickets to contacts via UI (FK already exists)
+-- P3.1: Link tickets to contacts via UI (FK already exists)
 -- No schema change needed for tickets ↔ contacts (contact_id column exists)
 
 -- P3.2: Add deal_id to projects table

@@ -1,5 +1,5 @@
 const express = require('express');
-const pool = require('../models/db');
+const { db } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -7,11 +7,13 @@ const router = express.Router();
 // Get all forms for the authenticated user
 router.get('/', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT * FROM forms WHERE user_id = $1 ORDER BY created_at DESC',
-      [req.user.id]
-    );
-    res.json(result.rows);
+    const rows = await db
+      .selectFrom('forms')
+      .where('user_id', '=', req.user.id)
+      .selectAll()
+      .orderBy('created_at', 'desc')
+      .execute();
+    res.json(rows);
   } catch (err) {
     console.error('Error fetching forms:', err);
     res.status(500).json({ error: 'Server error' });
@@ -24,11 +26,16 @@ router.post('/', auth, async (req, res) => {
   if (!title) return res.status(400).json({ error: 'Title is required' });
 
   try {
-    const result = await pool.query(
-      'INSERT INTO forms (user_id, title, redirect_url, fields) VALUES ($1, $2, $3, $4) RETURNING *',
-      [req.user.id, title, redirect_url || null, JSON.stringify(fields || [])]
-    );
-    res.status(201).json(result.rows[0]);
+    const form = await db.insertInto('forms')
+      .values({
+        user_id: req.user.id,
+        title,
+        redirect_url: redirect_url || null,
+        fields: JSON.stringify(fields || []),
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    res.status(201).json(form);
   } catch (err) {
     console.error('Error creating form:', err);
     res.status(500).json({ error: 'Server error' });
@@ -39,12 +46,19 @@ router.post('/', auth, async (req, res) => {
 router.put('/:id', auth, async (req, res) => {
   const { title, redirect_url, fields } = req.body;
   try {
-    const result = await pool.query(
-      'UPDATE forms SET title = $1, redirect_url = $2, fields = $3 WHERE id = $4 AND user_id = $5 RETURNING *',
-      [title, redirect_url || null, JSON.stringify(fields || []), req.params.id, req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Form not found' });
-    res.json(result.rows[0]);
+    const form = await db.updateTable('forms')
+      .set({
+        title,
+        redirect_url: redirect_url || null,
+        fields: JSON.stringify(fields || []),
+      })
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .returningAll()
+      .executeTakeFirst();
+
+    if (!form) return res.status(404).json({ error: 'Form not found' });
+    res.json(form);
   } catch (err) {
     console.error('Error updating form:', err);
     res.status(500).json({ error: 'Server error' });
@@ -54,7 +68,10 @@ router.put('/:id', auth, async (req, res) => {
 // Delete a form
 router.delete('/:id', auth, async (req, res) => {
   try {
-    await pool.query('DELETE FROM forms WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id]);
+    await db.deleteFrom('forms')
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .execute();
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting form:', err);

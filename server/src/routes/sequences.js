@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const pool = require('../models/db');
+const { db, sql, pool } = require('../db');
 const requireAuth = require('../middleware/auth');
 
 // Apply auth middleware to all routes
@@ -9,18 +9,17 @@ router.use(requireAuth);
 // Get all sequences for the current user
 router.get('/', async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT s.*, 
+    const { rows } = await sql`
+      SELECT s.*, 
         COUNT(DISTINCT st.id) as step_count,
         COUNT(DISTINCT e.id) as active_enrollments
-       FROM sequences s
-       LEFT JOIN sequence_steps st ON s.id = st.sequence_id
-       LEFT JOIN sequence_enrollments e ON s.id = e.sequence_id AND e.status = 'active'
-       WHERE s.user_id = $1
-       GROUP BY s.id
-       ORDER BY s.updated_at DESC`,
-      [req.user.id]
-    );
+      FROM sequences s
+      LEFT JOIN sequence_steps st ON s.id = st.sequence_id
+      LEFT JOIN sequence_enrollments e ON s.id = e.sequence_id AND e.status = 'active'
+      WHERE s.user_id = ${req.user.id}
+      GROUP BY s.id
+      ORDER BY s.updated_at DESC
+    `.execute(db);
     res.json(rows);
   } catch (err) {
     console.error('Error fetching sequences:', err);
@@ -32,13 +31,15 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   const { name, description } = req.body;
   try {
-    const { rows } = await pool.query(
-      `INSERT INTO sequences (user_id, name, description)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [req.user.id, name, description]
-    );
-    res.status(201).json(rows[0]);
+    const result = await db.insertInto('sequences')
+      .values({
+        user_id: req.user.id,
+        name,
+        description,
+      })
+      .returningAll()
+      .executeTakeFirst();
+    res.status(201).json(result);
   } catch (err) {
     console.error('Error creating sequence:', err);
     res.status(500).json({ error: 'Server error' });
@@ -48,34 +49,48 @@ router.post('/', async (req, res) => {
 // Get a specific sequence with its steps
 router.get('/:id', async (req, res) => {
   try {
-    const sequenceRes = await pool.query(
-      `SELECT * FROM sequences WHERE id = $1 AND user_id = $2`,
-      [req.params.id, req.user.id]
-    );
+    const sequence = await db.selectFrom('sequences')
+      .selectAll()
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .executeTakeFirst();
 
-    if (sequenceRes.rows.length === 0) {
+    if (!sequence) {
       return res.status(404).json({ error: 'Sequence not found' });
     }
 
-    const stepsRes = await pool.query(
-      `SELECT * FROM sequence_steps WHERE sequence_id = $1 ORDER BY step_number ASC`,
-      [req.params.id]
-    );
+    const steps = await db.selectFrom('sequence_steps')
+      .selectAll()
+      .where('sequence_id', '=', req.params.id)
+      .orderBy('step_number', 'asc')
+      .execute();
 
     // Also get active enrollments
-    const enrollmentsRes = await pool.query(
-      `SELECT e.*, c.first_name, c.last_name, c.email
-       FROM sequence_enrollments e
-       JOIN contacts c ON e.contact_id = c.id
-       WHERE e.sequence_id = $1 AND e.status = 'active'
-       ORDER BY e.created_at DESC`,
-      [req.params.id]
-    );
+    const enrollments = await db.selectFrom('sequence_enrollments as e')
+      .innerJoin('contacts as c', 'c.id', 'e.contact_id')
+      .select([
+        'e.id',
+        'e.sequence_id',
+        'e.contact_id',
+        'e.user_id',
+        'e.status',
+        'e.current_step',
+        'e.next_step_due_at',
+        'e.created_at',
+        'e.updated_at',
+        'c.first_name',
+        'c.last_name',
+        'c.email',
+      ])
+      .where('e.sequence_id', '=', req.params.id)
+      .where('e.status', '=', 'active')
+      .orderBy('e.created_at', 'desc')
+      .execute();
 
     res.json({
-      ...sequenceRes.rows[0],
-      steps: stepsRes.rows,
-      enrollments: enrollmentsRes.rows
+      ...sequence,
+      steps,
+      enrollments,
     });
   } catch (err) {
     console.error('Error fetching sequence:', err);
@@ -90,43 +105,52 @@ router.put('/:id/steps', async (req, res) => {
 
   try {
     // Verify ownership
-    const seqCheck = await pool.query(
-      `SELECT id FROM sequences WHERE id = $1 AND user_id = $2`,
-      [sequenceId, req.user.id]
-    );
+    const seqCheck = await db.selectFrom('sequences')
+      .select('id')
+      .where('id', '=', sequenceId)
+      .where('user_id', '=', req.user.id)
+      .executeTakeFirst();
 
-    if (seqCheck.rows.length === 0) {
+    if (!seqCheck) {
       return res.status(404).json({ error: 'Sequence not found' });
     }
 
-    await pool.query('BEGIN');
+    await db.transaction().execute(async (trx) => {
+      // Delete existing steps
+      await trx.deleteFrom('sequence_steps')
+        .where('sequence_id', '=', sequenceId)
+        .execute();
 
-    // Delete existing steps
-    await pool.query(`DELETE FROM sequence_steps WHERE sequence_id = $1`, [sequenceId]);
+      // Insert new steps
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        await trx.insertInto('sequence_steps')
+          .values({
+            sequence_id: sequenceId,
+            step_number: i + 1,
+            delay_days: step.delay_days || 0,
+            type: step.type,
+            subject: step.subject || null,
+            body: step.body,
+          })
+          .execute();
+      }
 
-    // Insert new steps
-    for (let i = 0; i < steps.length; i++) {
-       const step = steps[i];
-       await pool.query(
-         `INSERT INTO sequence_steps (sequence_id, step_number, delay_days, type, subject, body)
-          VALUES ($1, $2, $3, $4, $5, $6)`,
-         [sequenceId, i + 1, step.delay_days || 0, step.type, step.subject || null, step.body]
-       );
-    }
+      // Update sequence modified timestamp
+      await trx.updateTable('sequences')
+        .set({ updated_at: new Date() })
+        .where('id', '=', sequenceId)
+        .execute();
+    });
 
-    // Update sequence modified timestamp
-    await pool.query(`UPDATE sequences SET updated_at = NOW() WHERE id = $1`, [sequenceId]);
-
-    await pool.query('COMMIT');
-    
     // Fetch and return the updated steps
-    const { rows } = await pool.query(
-      `SELECT * FROM sequence_steps WHERE sequence_id = $1 ORDER BY step_number ASC`,
-      [sequenceId]
-    );
-    res.json(rows);
+    const stepsRes = await db.selectFrom('sequence_steps')
+      .selectAll()
+      .where('sequence_id', '=', sequenceId)
+      .orderBy('step_number', 'asc')
+      .execute();
+    res.json(stepsRes);
   } catch (err) {
-    await pool.query('ROLLBACK');
     console.error('Error updating sequence steps:', err);
     res.status(500).json({ error: 'Server error' });
   }
@@ -139,30 +163,39 @@ router.post('/:id/enroll', async (req, res) => {
 
   try {
     // Verify sequence ownership
-    const seqCheck = await pool.query(
-      `SELECT id FROM sequences WHERE id = $1 AND user_id = $2`,
-      [sequenceId, req.user.id]
-    );
+    const seqCheck = await db.selectFrom('sequences')
+      .select('id')
+      .where('id', '=', sequenceId)
+      .where('user_id', '=', req.user.id)
+      .executeTakeFirst();
 
-    if (seqCheck.rows.length === 0) {
+    if (!seqCheck) {
       return res.status(404).json({ error: 'Sequence not found' });
     }
 
     // Upsert enrollment (if exists, set active and reset to step 1)
-    const { rows } = await pool.query(
-      `INSERT INTO sequence_enrollments (sequence_id, contact_id, user_id, status, current_step, next_step_due_at)
-       VALUES ($1, $2, $3, 'active', 1, NOW())
-       ON CONFLICT (sequence_id, contact_id) 
-       DO UPDATE SET 
-         status = 'active', 
-         current_step = 1, 
-         next_step_due_at = NOW(),
-         updated_at = NOW()
-       RETURNING *`,
-      [sequenceId, contactId, req.user.id]
-    );
+    const result = await db.insertInto('sequence_enrollments')
+      .values({
+        sequence_id: sequenceId,
+        contact_id: contactId,
+        user_id: req.user.id,
+        status: 'active',
+        current_step: 1,
+        next_step_due_at: new Date(),
+      })
+      .onConflict(c => c
+        .columns(['sequence_id', 'contact_id'])
+        .doUpdateSet({
+          status: 'active',
+          current_step: 1,
+          next_step_due_at: new Date(),
+          updated_at: new Date(),
+        })
+      )
+      .returningAll()
+      .executeTakeFirst();
 
-    res.status(201).json(rows[0]);
+    res.status(201).json(result);
   } catch (err) {
     console.error('Error enrolling contact:', err);
     res.status(500).json({ error: 'Server error check unique constraint or references' });

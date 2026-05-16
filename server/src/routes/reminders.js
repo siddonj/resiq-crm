@@ -1,5 +1,5 @@
 const express = require('express');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -10,32 +10,30 @@ const router = express.Router();
  */
 router.get('/', auth, async (req, res) => {
   const { completed, due } = req.query;
-  const params = [req.user.id];
-  const conditions = ['r.user_id = $1'];
+  const conditions = [sql`r.user_id = ${req.user.id}`];
 
   if (completed !== undefined) {
-    params.push(completed === 'true');
-    conditions.push(`r.completed = $${params.length}`);
+    conditions.push(sql`r.completed = ${completed === 'true'}`);
   }
   if (due === 'true') {
-    conditions.push(`r.remind_at <= NOW() AND r.completed = FALSE`);
+    conditions.push(sql`r.remind_at <= NOW() AND r.completed = FALSE`);
   }
 
-  const where = conditions.join(' AND ');
+  const where = sql.join(conditions, ' AND ');
 
   try {
-    const result = await pool.query(
-      `SELECT r.*,
-        c.name AS contact_name,
-        d.title AS deal_title
-       FROM reminders r
-       LEFT JOIN contacts c ON c.id = r.contact_id
-       LEFT JOIN deals d ON d.id = r.deal_id
-       WHERE ${where}
-       ORDER BY r.remind_at ASC`,
-      params
-    );
-    res.json(result.rows);
+    const result = await db.selectFrom('reminders as r')
+      .leftJoin('contacts as c', 'c.id', 'r.contact_id')
+      .leftJoin('deals as d', 'd.id', 'r.deal_id')
+      .select([
+        'r.*',
+        'c.name as contact_name',
+        'd.title as deal_title',
+      ])
+      .where(where)
+      .orderBy('r.remind_at', 'asc')
+      .execute();
+    res.json(result);
   } catch (err) {
     console.error('Error fetching reminders:', err);
     res.status(500).json({ error: 'Server error' });
@@ -51,12 +49,17 @@ router.post('/', auth, async (req, res) => {
   if (!message?.trim()) return res.status(400).json({ error: 'message is required' });
   if (!remind_at) return res.status(400).json({ error: 'remind_at is required' });
   try {
-    const result = await pool.query(
-      `INSERT INTO reminders (user_id, message, remind_at, contact_id, deal_id)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.user.id, message.trim(), remind_at, contact_id || null, deal_id || null]
-    );
-    res.status(201).json(result.rows[0]);
+    const result = await db.insertInto('reminders')
+      .values({
+        user_id: req.user.id,
+        message: message.trim(),
+        remind_at,
+        contact_id: contact_id || null,
+        deal_id: deal_id || null,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    res.status(201).json(result);
   } catch (err) {
     console.error('Error creating reminder:', err);
     res.status(500).json({ error: 'Server error' });
@@ -70,12 +73,14 @@ router.post('/', auth, async (req, res) => {
 router.patch('/:id/complete', auth, async (req, res) => {
   const { completed = true } = req.body;
   try {
-    const result = await pool.query(
-      'UPDATE reminders SET completed = $1 WHERE id = $2 AND user_id = $3 RETURNING *',
-      [completed, req.params.id, req.user.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Reminder not found' });
-    res.json(result.rows[0]);
+    const result = await db.updateTable('reminders')
+      .set({ completed })
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .returningAll()
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'Reminder not found' });
+    res.json(result);
   } catch (err) {
     console.error('Error updating reminder:', err);
     res.status(500).json({ error: 'Server error' });
@@ -87,11 +92,12 @@ router.patch('/:id/complete', auth, async (req, res) => {
  */
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      'DELETE FROM reminders WHERE id = $1 AND user_id = $2 RETURNING id',
-      [req.params.id, req.user.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Reminder not found' });
+    const result = await db.deleteFrom('reminders')
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .returning('id')
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'Reminder not found' });
     res.json({ message: 'Deleted' });
   } catch (err) {
     console.error('Error deleting reminder:', err);

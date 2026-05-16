@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
-const pool = require('../models/db');
+const { db, sql, ownershipWhere } = require('../db');
 const auth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
 const { logAction } = require('../services/auditLogger');
@@ -14,12 +14,12 @@ const router = express.Router();
  */
 router.get('/me', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT id, name, email, role, is_active, created_at FROM users WHERE id = $1',
-      [req.user.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
-    res.json(result.rows[0]);
+    const user = await db.selectFrom('users')
+      .select(['id', 'name', 'email', 'role', 'is_active', 'created_at'])
+      .where('id', '=', req.user.id)
+      .executeTakeFirst();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(user);
   } catch (err) {
     console.error('Error fetching own profile:', err);
     res.status(500).json({ error: 'Server error' });
@@ -35,11 +35,12 @@ router.put('/me', auth, async (req, res) => {
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   if (!email?.trim()) return res.status(400).json({ error: 'email is required' });
   try {
-    const result = await pool.query(
-      'UPDATE users SET name = $1, email = $2 WHERE id = $3 RETURNING id, name, email, role, is_active',
-      [name.trim(), email.trim().toLowerCase(), req.user.id]
-    );
-    res.json(result.rows[0]);
+    const user = await db.updateTable('users')
+      .set({ name: name.trim(), email: email.trim().toLowerCase() })
+      .where('id', '=', req.user.id)
+      .returning(['id', 'name', 'email', 'role', 'is_active'])
+      .executeTakeFirstOrThrow();
+    res.json(user);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Email already in use' });
     console.error('Error updating profile:', err);
@@ -56,11 +57,17 @@ router.put('/me/password', auth, async (req, res) => {
   if (!current_password || !new_password) return res.status(400).json({ error: 'current_password and new_password are required' });
   if (new_password.length < 8) return res.status(400).json({ error: 'new_password must be at least 8 characters' });
   try {
-    const result = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
-    const match = await bcrypt.compare(current_password, result.rows[0].password_hash);
+    const user = await db.selectFrom('users')
+      .select('password_hash')
+      .where('id', '=', req.user.id)
+      .executeTakeFirstOrThrow();
+    const match = await bcrypt.compare(current_password, user.password_hash);
     if (!match) return res.status(401).json({ error: 'Current password is incorrect' });
     const hash = await bcrypt.hash(new_password, 12);
-    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+    await db.updateTable('users')
+      .set({ password_hash: hash })
+      .where('id', '=', req.user.id)
+      .execute();
     res.json({ message: 'Password updated' });
   } catch (err) {
     console.error('Error changing password:', err);
@@ -74,23 +81,24 @@ router.put('/me/password', auth, async (req, res) => {
  */
 router.get('/', auth, requireRole('admin', 'manager'), async (req, res) => {
   try {
-    let result;
+    let rows;
     if (req.user.role === 'admin') {
-      result = await pool.query(
-        'SELECT id, name, email, role, is_active, created_at FROM users ORDER BY created_at ASC'
-      );
+      rows = await db.selectFrom('users')
+        .select(['id', 'name', 'email', 'role', 'is_active', 'created_at'])
+        .orderBy('created_at', 'asc')
+        .execute();
     } else {
       // Managers only see users who share at least one team with them
-      result = await pool.query(
-        `SELECT DISTINCT u.id, u.name, u.email, u.role, u.is_active, u.created_at
-         FROM users u
-         JOIN team_members tm ON tm.user_id = u.id
-         WHERE tm.team_id IN (SELECT team_id FROM team_members WHERE user_id = $1)
-         ORDER BY u.created_at ASC`,
-        [req.user.id]
-      );
+      rows = await db.selectFrom('users')
+        .select(['id', 'name', 'email', 'role', 'is_active', 'created_at'])
+        .innerJoin('team_members as tm', 'tm.user_id', 'users.id')
+        .where('tm.team_id', 'in', 
+          db.selectFrom('team_members').select('team_id').where('user_id', '=', req.user.id)
+        )
+        .orderBy('users.created_at', 'asc')
+        .execute();
     }
-    res.json(result.rows);
+    res.json(rows);
   } catch (err) {
     console.error('Error listing users:', err);
     res.status(500).json({ error: 'Server error' });
@@ -112,14 +120,17 @@ router.post('/invite', auth, requireRole('admin'), async (req, res) => {
   const tempPassword = crypto.randomBytes(8).toString('hex');
   try {
     const hash = await bcrypt.hash(tempPassword, 12);
-    const result = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, name, email, role, is_active, created_at`,
-      [name.trim(), email.trim().toLowerCase(), hash, role]
-    );
-    logAction(req.user.id, req.user.email, 'invite', 'user', result.rows[0].id, result.rows[0].email, { role });
-    res.status(201).json({ user: result.rows[0], tempPassword });
+    const user = await db.insertInto('users')
+      .values({
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        password_hash: hash,
+        role,
+      })
+      .returning(['id', 'name', 'email', 'role', 'is_active', 'created_at'])
+      .executeTakeFirstOrThrow();
+    logAction(req.user.id, req.user.email, 'invite', 'user', user.id, user.email, { role });
+    res.status(201).json({ user, tempPassword });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Email already in use' });
     console.error('Error inviting user:', err);
@@ -133,11 +144,11 @@ router.post('/invite', auth, requireRole('admin'), async (req, res) => {
  */
 router.get('/clients', auth, requireRole('admin'), async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT id, name, email, slug, is_active, first_login_at, last_login_at, created_at
-       FROM clients ORDER BY created_at ASC`
-    );
-    res.json(result.rows);
+    const rows = await db.selectFrom('clients')
+      .select(['id', 'name', 'email', 'slug', 'is_active', 'first_login_at', 'last_login_at', 'created_at'])
+      .orderBy('created_at', 'asc')
+      .execute();
+    res.json(rows);
   } catch (err) {
     console.error('Error listing clients:', err);
     res.status(500).json({ error: 'Server error' });
@@ -150,12 +161,12 @@ router.get('/clients', auth, requireRole('admin'), async (req, res) => {
  */
 router.get('/:id', auth, requireRole('admin'), async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT id, name, email, role, is_active, created_at FROM users WHERE id = $1',
-      [req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
-    res.json(result.rows[0]);
+    const user = await db.selectFrom('users')
+      .select(['id', 'name', 'email', 'role', 'is_active', 'created_at'])
+      .where('id', '=', req.params.id)
+      .executeTakeFirst();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(user);
   } catch (err) {
     console.error('Error fetching user:', err);
     res.status(500).json({ error: 'Server error' });
@@ -177,13 +188,14 @@ router.put('/:id/role', auth, requireRole('admin'), async (req, res) => {
     return res.status(400).json({ error: 'Cannot change your own admin role' });
   }
   try {
-    const result = await pool.query(
-      'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, name, email, role, is_active',
-      [role, req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
-    logAction(req.user.id, req.user.email, 'role_change', 'user', req.params.id, result.rows[0].email, { new_role: role });
-    res.json(result.rows[0]);
+    const user = await db.updateTable('users')
+      .set({ role })
+      .where('id', '=', req.params.id)
+      .returning(['id', 'name', 'email', 'role', 'is_active'])
+      .executeTakeFirst();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    logAction(req.user.id, req.user.email, 'role_change', 'user', req.params.id, user.email, { new_role: role });
+    res.json(user);
   } catch (err) {
     console.error('Error updating role:', err);
     res.status(500).json({ error: 'Server error' });
@@ -199,13 +211,14 @@ router.put('/:id/deactivate', auth, requireRole('admin'), async (req, res) => {
     return res.status(400).json({ error: 'Cannot deactivate your own account' });
   }
   try {
-    const result = await pool.query(
-      'UPDATE users SET is_active = FALSE WHERE id = $1 RETURNING id, name, email, role, is_active',
-      [req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
-    logAction(req.user.id, req.user.email, 'deactivate', 'user', req.params.id, result.rows[0].email);
-    res.json(result.rows[0]);
+    const user = await db.updateTable('users')
+      .set({ is_active: false })
+      .where('id', '=', req.params.id)
+      .returning(['id', 'name', 'email', 'role', 'is_active'])
+      .executeTakeFirst();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    logAction(req.user.id, req.user.email, 'deactivate', 'user', req.params.id, user.email);
+    res.json(user);
   } catch (err) {
     console.error('Error deactivating user:', err);
     res.status(500).json({ error: 'Server error' });
@@ -218,13 +231,14 @@ router.put('/:id/deactivate', auth, requireRole('admin'), async (req, res) => {
  */
 router.put('/:id/activate', auth, requireRole('admin'), async (req, res) => {
   try {
-    const result = await pool.query(
-      'UPDATE users SET is_active = TRUE WHERE id = $1 RETURNING id, name, email, role, is_active',
-      [req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'User not found' });
-    logAction(req.user.id, req.user.email, 'activate', 'user', req.params.id, result.rows[0].email);
-    res.json(result.rows[0]);
+    const user = await db.updateTable('users')
+      .set({ is_active: true })
+      .where('id', '=', req.params.id)
+      .returning(['id', 'name', 'email', 'role', 'is_active'])
+      .executeTakeFirst();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    logAction(req.user.id, req.user.email, 'activate', 'user', req.params.id, user.email);
+    res.json(user);
   } catch (err) {
     console.error('Error activating user:', err);
     res.status(500).json({ error: 'Server error' });

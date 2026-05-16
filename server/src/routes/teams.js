@@ -1,5 +1,5 @@
 const express = require('express');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const auth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
 const { logAction } = require('../services/auditLogger');
@@ -12,7 +12,7 @@ const router = express.Router();
  */
 router.get('/', auth, requireRole('admin', 'manager'), async (req, res) => {
   try {
-    const result = await pool.query(`
+    const { rows } = await sql`
       SELECT t.id, t.name, t.description, t.created_at,
              u.name AS created_by_name,
              COUNT(tm.user_id) AS member_count
@@ -21,8 +21,8 @@ router.get('/', auth, requireRole('admin', 'manager'), async (req, res) => {
       LEFT JOIN team_members tm ON tm.team_id = t.id
       GROUP BY t.id, u.name
       ORDER BY t.created_at ASC
-    `);
-    res.json(result.rows);
+    `.execute(db);
+    res.json(rows);
   } catch (err) {
     console.error('Error listing teams:', err);
     res.status(500).json({ error: 'Server error' });
@@ -37,12 +37,12 @@ router.post('/', auth, requireRole('admin'), async (req, res) => {
   const { name, description } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   try {
-    const result = await pool.query(
-      'INSERT INTO teams (name, description, created_by) VALUES ($1, $2, $3) RETURNING *',
-      [name.trim(), description || null, req.user.id]
-    );
-    logAction(req.user.id, req.user.email, 'create', 'team', result.rows[0].id, result.rows[0].name);
-    res.status(201).json(result.rows[0]);
+    const team = await db.insertInto('teams')
+      .values({ name: name.trim(), description: description || null, created_by: req.user.id })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    logAction(req.user.id, req.user.email, 'create', 'team', team.id, team.name);
+    res.status(201).json(team);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'A team with that name already exists' });
     console.error('Error creating team:', err);
@@ -56,24 +56,28 @@ router.post('/', auth, requireRole('admin'), async (req, res) => {
  */
 router.get('/:id', auth, requireRole('admin', 'manager'), async (req, res) => {
   try {
-    const [teamRes, membersRes] = await Promise.all([
-      pool.query(
-        `SELECT t.*, u.name AS created_by_name
-         FROM teams t LEFT JOIN users u ON u.id = t.created_by
-         WHERE t.id = $1`,
-        [req.params.id]
-      ),
-      pool.query(
-        `SELECT u.id, u.name, u.email, u.role, tm.role AS team_role, tm.joined_at
-         FROM team_members tm
-         JOIN users u ON u.id = tm.user_id
-         WHERE tm.team_id = $1
-         ORDER BY tm.joined_at ASC`,
-        [req.params.id]
-      ),
+    const [teamRow, members] = await Promise.all([
+      sql`
+        SELECT t.*, u.name AS created_by_name
+        FROM teams t LEFT JOIN users u ON u.id = t.created_by
+        WHERE t.id = ${req.params.id}
+      `.execute(db).then(r => r.rows[0]),
+      db.selectFrom('team_members')
+        .innerJoin('users', 'users.id', 'team_members.user_id')
+        .where('team_members.team_id', '=', req.params.id)
+        .select([
+          'users.id',
+          'users.name',
+          'users.email',
+          'users.role',
+          'team_members.role as team_role',
+          'team_members.joined_at',
+        ])
+        .orderBy('team_members.joined_at', 'asc')
+        .execute(),
     ]);
-    if (!teamRes.rows[0]) return res.status(404).json({ error: 'Team not found' });
-    res.json({ ...teamRes.rows[0], members: membersRes.rows });
+    if (!teamRow) return res.status(404).json({ error: 'Team not found' });
+    res.json({ ...teamRow, members });
   } catch (err) {
     console.error('Error fetching team:', err);
     res.status(500).json({ error: 'Server error' });
@@ -88,13 +92,14 @@ router.put('/:id', auth, requireRole('admin'), async (req, res) => {
   const { name, description } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   try {
-    const result = await pool.query(
-      'UPDATE teams SET name = $1, description = $2 WHERE id = $3 RETURNING *',
-      [name.trim(), description ?? null, req.params.id]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Team not found' });
-    logAction(req.user.id, req.user.email, 'update', 'team', result.rows[0].id, result.rows[0].name);
-    res.json(result.rows[0]);
+    const team = await db.updateTable('teams')
+      .set({ name: name.trim(), description: description ?? null })
+      .where('id', '=', req.params.id)
+      .returningAll()
+      .executeTakeFirst();
+    if (!team) return res.status(404).json({ error: 'Team not found' });
+    logAction(req.user.id, req.user.email, 'update', 'team', team.id, team.name);
+    res.json(team);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'A team with that name already exists' });
     console.error('Error updating team:', err);
@@ -108,9 +113,12 @@ router.put('/:id', auth, requireRole('admin'), async (req, res) => {
  */
 router.delete('/:id', auth, requireRole('admin'), async (req, res) => {
   try {
-    const result = await pool.query('DELETE FROM teams WHERE id = $1 RETURNING id, name', [req.params.id]);
-    if (!result.rows[0]) return res.status(404).json({ error: 'Team not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'team', result.rows[0].id, result.rows[0].name);
+    const deleted = await db.deleteFrom('teams')
+      .where('id', '=', req.params.id)
+      .returning(['id', 'name'])
+      .executeTakeFirst();
+    if (!deleted) return res.status(404).json({ error: 'Team not found' });
+    logAction(req.user.id, req.user.email, 'delete', 'team', deleted.id, deleted.name);
     res.json({ message: 'Team deleted' });
   } catch (err) {
     console.error('Error deleting team:', err);
@@ -127,15 +135,14 @@ router.post('/:id/members', auth, requireRole('admin'), async (req, res) => {
   if (!user_id) return res.status(400).json({ error: 'user_id is required' });
   if (!['lead', 'member'].includes(role)) return res.status(400).json({ error: 'role must be lead or member' });
   try {
-    const result = await pool.query(
-      `INSERT INTO team_members (team_id, user_id, role)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (team_id, user_id) DO UPDATE SET role = EXCLUDED.role
-       RETURNING *`,
-      [req.params.id, user_id, role]
-    );
+    const { rows } = await sql`
+      INSERT INTO team_members (team_id, user_id, role)
+      VALUES (${req.params.id}, ${user_id}, ${role})
+      ON CONFLICT (team_id, user_id) DO UPDATE SET role = EXCLUDED.role
+      RETURNING *
+    `.execute(db);
     logAction(req.user.id, req.user.email, 'add_member', 'team', req.params.id, null, { user_id, role });
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23503') return res.status(404).json({ error: 'Team or user not found' });
     console.error('Error adding team member:', err);
@@ -151,12 +158,14 @@ router.put('/:id/members/:userId/role', auth, requireRole('admin'), async (req, 
   const { role } = req.body;
   if (!['lead', 'member'].includes(role)) return res.status(400).json({ error: 'role must be lead or member' });
   try {
-    const result = await pool.query(
-      'UPDATE team_members SET role = $1 WHERE team_id = $2 AND user_id = $3 RETURNING *',
-      [role, req.params.id, req.params.userId]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Member not found in team' });
-    res.json(result.rows[0]);
+    const member = await db.updateTable('team_members')
+      .set({ role })
+      .where('team_id', '=', req.params.id)
+      .where('user_id', '=', req.params.userId)
+      .returningAll()
+      .executeTakeFirst();
+    if (!member) return res.status(404).json({ error: 'Member not found in team' });
+    res.json(member);
   } catch (err) {
     console.error('Error updating member role:', err);
     res.status(500).json({ error: 'Server error' });
@@ -169,11 +178,12 @@ router.put('/:id/members/:userId/role', auth, requireRole('admin'), async (req, 
  */
 router.delete('/:id/members/:userId', auth, requireRole('admin'), async (req, res) => {
   try {
-    const result = await pool.query(
-      'DELETE FROM team_members WHERE team_id = $1 AND user_id = $2 RETURNING *',
-      [req.params.id, req.params.userId]
-    );
-    if (!result.rows[0]) return res.status(404).json({ error: 'Member not found in team' });
+    const member = await db.deleteFrom('team_members')
+      .where('team_id', '=', req.params.id)
+      .where('user_id', '=', req.params.userId)
+      .returningAll()
+      .executeTakeFirst();
+    if (!member) return res.status(404).json({ error: 'Member not found in team' });
     logAction(req.user.id, req.user.email, 'remove_member', 'team', req.params.id, null, { user_id: req.params.userId });
     res.json({ message: 'Member removed' });
   } catch (err) {

@@ -10,7 +10,7 @@ const authenticate = require('../middleware/auth');
 const SMS = require('../models/SMS');
 const SMSTemplate = require('../models/SMSTemplate');
 const Client = require('../models/client');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const TwilioService = require('../services/twilioService');
 const WebhookReceiverService = require('../services/webhookReceiver');
 const { MessageQueueService } = require('../services/messageQueue');
@@ -26,28 +26,14 @@ async function getContact(contactId) {
 
 // Helper to update contact
 async function updateContact(contactId, updates) {
-  const fields = [];
-  const values = [];
-  let paramCount = 1;
+  const setClauses = [];
   
-  if (updates.sms_opted_in !== undefined) {
-    fields.push(`sms_opted_in = $${paramCount}`);
-    values.push(updates.sms_opted_in);
-    paramCount++;
-  }
-  if (updates.phone_number !== undefined) {
-    fields.push(`phone_number = $${paramCount}`);
-    values.push(updates.phone_number);
-    paramCount++;
-  }
+  if (updates.sms_opted_in !== undefined) setClauses.push(sql`sms_opted_in = ${updates.sms_opted_in}`);
+  if (updates.phone_number !== undefined) setClauses.push(sql`phone_number = ${updates.phone_number}`);
   
-  if (fields.length === 0) return;
+  if (setClauses.length === 0) return;
   
-  values.push(contactId);
-  await pool.query(
-    `UPDATE clients SET ${fields.join(', ')} WHERE id = $${paramCount}`,
-    values
-  );
+  await sql`UPDATE clients SET ${sql.join(setClauses, ', ')} WHERE id = ${contactId}`.execute(db);
 }
 
 // Helper to log activity

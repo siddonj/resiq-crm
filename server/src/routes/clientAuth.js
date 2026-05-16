@@ -118,11 +118,11 @@ router.post('/client/verify/:token', clientAuth, async (req, res) => {
       const invitation = await Client.verifyInvitationToken(token);
       if (invitation) {
         // Update invitation as used
-        const pool = require('../models/db');
-        await pool.query(
-          'UPDATE client_invitations SET used_at = NOW(), used_by = $1 WHERE id = $2',
-          [clientId, invitation.id]
-        );
+        const { db: kyselyDb } = require('../db');
+        await kyselyDb.updateTable('client_invitations')
+          .set({ used_at: new Date(), used_by: clientId })
+          .where('id', '=', invitation.id)
+          .execute();
       }
     } else if (!password && name) {
       // Passwordless signup - create without password

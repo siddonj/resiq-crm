@@ -1,5 +1,5 @@
 const express = require('express');
-const pool = require('../models/db');
+const { db, sql } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -10,8 +10,8 @@ const router = express.Router();
  */
 router.get('/contacts/summary', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
+    const result = await sql`
+      SELECT
         COUNT(*) as total,
         COUNT(CASE WHEN type = 'prospect' THEN 1 END) as prospects,
         COUNT(CASE WHEN type = 'partner' THEN 1 END) as partners,
@@ -19,23 +19,21 @@ router.get('/contacts/summary', auth, async (req, res) => {
         COUNT(DISTINCT CASE WHEN id IN (SELECT DISTINCT contact_id FROM emails WHERE contact_id IS NOT NULL) THEN id END) as with_email,
         COUNT(CASE WHEN created_at >= DATE_TRUNC('month', NOW()) THEN 1 END) as new_this_month
       FROM contacts
-      WHERE user_id = $1`,
-      [req.user.id]
-    );
+      WHERE user_id = ${req.user.id}
+    `.execute(db);
 
     const summary = result.rows[0];
 
     // Get top tags by contact count
-    const tagsResult = await pool.query(
-      `SELECT t.name, COUNT(DISTINCT ct.contact_id) as count
-       FROM tags t
-       LEFT JOIN contact_tags ct ON t.id = ct.tag_id
-       WHERE t.user_id = $1
-       GROUP BY t.id, t.name
-       ORDER BY count DESC
-       LIMIT 5`,
-      [req.user.id]
-    );
+    const tagsResult = await sql`
+      SELECT t.name, COUNT(DISTINCT ct.contact_id) as count
+      FROM tags t
+      LEFT JOIN contact_tags ct ON t.id = ct.tag_id
+      WHERE t.user_id = ${req.user.id}
+      GROUP BY t.id, t.name
+      ORDER BY count DESC
+      LIMIT 5
+    `.execute(db);
 
     res.json({
       total: parseInt(summary.total),
@@ -63,8 +61,8 @@ router.get('/contacts/summary', auth, async (req, res) => {
  */
 router.get('/deals/summary', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
+    const result = await sql`
+      SELECT
         COUNT(CASE WHEN stage NOT IN ('closed_won', 'closed_lost') THEN 1 END) as active_count,
         COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as closed_won,
         COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as closed_lost,
@@ -72,9 +70,8 @@ router.get('/deals/summary', auth, async (req, res) => {
         COALESCE(SUM(CASE WHEN stage = 'closed_won' THEN value ELSE 0 END), 0) as closed_won_value,
         COALESCE(AVG(CASE WHEN stage NOT IN ('closed_won', 'closed_lost') THEN value END), 0) as avg_active_value
       FROM deals
-      WHERE user_id = $1`,
-      [req.user.id]
-    );
+      WHERE user_id = ${req.user.id}
+    `.execute(db);
 
     const summary = result.rows[0];
     const totalClosed = parseInt(summary.closed_won) + parseInt(summary.closed_lost);
@@ -101,22 +98,21 @@ router.get('/deals/summary', auth, async (req, res) => {
  */
 router.get('/deals/by-stage', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
+    const result = await sql`
+      SELECT
         stage,
         COUNT(*) as count,
         COALESCE(SUM(value), 0) as total_value,
         COALESCE(AVG(value), 0) as avg_value,
         MIN(created_at) as oldest_date
       FROM deals
-      WHERE user_id = $1
+      WHERE user_id = ${req.user.id}
       GROUP BY stage
       ORDER BY CASE stage
         WHEN 'lead' THEN 1 WHEN 'qualified' THEN 2 WHEN 'proposal' THEN 3
         WHEN 'active' THEN 4 WHEN 'closed_won' THEN 5 WHEN 'closed_lost' THEN 6
-      END`,
-      [req.user.id]
-    );
+      END
+    `.execute(db);
 
     res.json(result.rows.map(row => ({
       stage: row.stage,
@@ -137,17 +133,16 @@ router.get('/deals/by-stage', auth, async (req, res) => {
  */
 router.get('/emails/summary', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
+    const result = await sql`
+      SELECT
         COUNT(*) as total,
         COUNT(CASE WHEN is_outbound = true THEN 1 END) as outbound,
         COUNT(CASE WHEN is_outbound = false THEN 1 END) as inbound,
         COUNT(CASE WHEN received_at >= NOW() - INTERVAL '7 days' THEN 1 END) as last_7_days,
         COUNT(DISTINCT contact_id) as contacts_emailed
       FROM emails
-      WHERE user_id = $1`,
-      [req.user.id]
-    );
+      WHERE user_id = ${req.user.id}
+    `.execute(db);
 
     const summary = result.rows[0];
     const total = parseInt(summary.total);
@@ -172,22 +167,21 @@ router.get('/emails/summary', auth, async (req, res) => {
  */
 router.get('/emails/top-contacts', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
+    const result = await sql`
+      SELECT
         c.id,
         c.name,
         COUNT(e.id) as email_count,
         COUNT(DISTINCT e.gmail_thread_id) as thread_count,
         MAX(e.received_at) as last_email_date
       FROM contacts c
-      LEFT JOIN emails e ON c.id = e.contact_id AND e.user_id = $1
-      WHERE c.user_id = $1
+      LEFT JOIN emails e ON c.id = e.contact_id AND e.user_id = ${req.user.id}
+      WHERE c.user_id = ${req.user.id}
       GROUP BY c.id, c.name
       HAVING COUNT(e.id) > 0
       ORDER BY email_count DESC
-      LIMIT 10`,
-      [req.user.id]
-    );
+      LIMIT 10
+    `.execute(db);
 
     res.json(result.rows.map(row => ({
       contact_id: row.id,
@@ -209,29 +203,27 @@ router.get('/emails/top-contacts', auth, async (req, res) => {
 router.get('/workflows/summary', auth, async (req, res) => {
   try {
     // Get workflow counts
-    const workflowsResult = await pool.query(
-      `SELECT
+    const workflowsResult = await sql`
+      SELECT
         COUNT(*) as total,
         COUNT(CASE WHEN enabled = true THEN 1 END) as enabled,
         COUNT(CASE WHEN enabled = false THEN 1 END) as disabled
       FROM workflows
-      WHERE user_id = $1`,
-      [req.user.id]
-    );
+      WHERE user_id = ${req.user.id}
+    `.execute(db);
 
     // Get execution metrics for current month
-    const executionsResult = await pool.query(
-      `SELECT
+    const executionsResult = await sql`
+      SELECT
         COUNT(*) as total_executions,
         COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed,
         COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
         COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
       FROM workflow_executions we
       JOIN workflows w ON w.id = we.workflow_id
-      WHERE w.user_id = $1
-        AND executed_at >= DATE_TRUNC('month', NOW())`,
-      [req.user.id]
-    );
+      WHERE w.user_id = ${req.user.id}
+        AND executed_at >= DATE_TRUNC('month', NOW())
+    `.execute(db);
 
     const workflows = workflowsResult.rows[0];
     const executions = executionsResult.rows[0];
@@ -264,8 +256,8 @@ router.get('/workflows/summary', auth, async (req, res) => {
  */
 router.get('/workflows/top', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
+    const result = await sql`
+      SELECT
          w.id AS workflow_id,
          w.name AS workflow_name,
          COUNT(we.id) AS execution_count,
@@ -280,13 +272,12 @@ router.get('/workflows/top', auth, async (req, res) => {
        FROM workflows w
        LEFT JOIN workflow_executions we
          ON we.workflow_id = w.id
-       WHERE w.user_id = $1
+       WHERE w.user_id = ${req.user.id}
        GROUP BY w.id, w.name
        HAVING COUNT(we.id) > 0
        ORDER BY execution_count DESC
-       LIMIT 10`,
-      [req.user.id]
-    );
+       LIMIT 10
+    `.execute(db);
 
     res.json(
       result.rows.map((row) => ({
@@ -309,30 +300,28 @@ router.get('/workflows/top', auth, async (req, res) => {
 router.get('/engagement/summary', auth, async (req, res) => {
   try {
     // Get engagement metrics by asset type
-    const result = await pool.query(
-      `SELECT
+    const result = await sql`
+      SELECT
         asset_type,
         COUNT(*) as total_tracked,
         COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) as total_opened,
         ROUND(100.0 * COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) / COUNT(*), 2) as open_rate
       FROM engagement_tracking
-      WHERE user_id = $1
+      WHERE user_id = ${req.user.id}
       GROUP BY asset_type
-      ORDER BY total_tracked DESC`,
-      [req.user.id]
-    );
+      ORDER BY total_tracked DESC
+    `.execute(db);
 
     // Get overall metrics
-    const overallResult = await pool.query(
-      `SELECT
+    const overallResult = await sql`
+      SELECT
         COUNT(*) as total_tracked,
         COUNT(DISTINCT contact_id) as contacts_tracked,
         COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) as total_opened,
         COUNT(DISTINCT CASE WHEN opened_at IS NOT NULL THEN contact_id END) as contacts_opened
       FROM engagement_tracking
-      WHERE user_id = $1`,
-      [req.user.id]
-    );
+      WHERE user_id = ${req.user.id}
+    `.execute(db);
 
     const overall = overallResult.rows[0];
     const totalTracked = parseInt(overall.total_tracked);
@@ -367,8 +356,8 @@ router.get('/engagement/summary', auth, async (req, res) => {
  */
 router.get('/engagement/top-assets', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
+    const result = await sql`
+      SELECT
         asset_type,
         asset_id,
         COUNT(*) as total_tracked,
@@ -376,13 +365,12 @@ router.get('/engagement/top-assets', auth, async (req, res) => {
         ROUND(100.0 * COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) / COUNT(*), 2) as open_rate,
         MAX(opened_at) as last_opened
       FROM engagement_tracking
-      WHERE user_id = $1
+      WHERE user_id = ${req.user.id}
       GROUP BY asset_type, asset_id
       HAVING COUNT(*) > 0
       ORDER BY opened DESC
-      LIMIT 10`,
-      [req.user.id]
-    );
+      LIMIT 10
+    `.execute(db);
 
     res.json(result.rows.map(row => ({
       asset_type: row.asset_type,
@@ -408,20 +396,18 @@ router.get('/deals/stage-probabilities', auth, async (req, res) => {
 
   try {
     // Get user-defined stage probabilities
-    const userProbs = await pool.query(
-      `SELECT stage, probability FROM stage_probabilities WHERE user_id = $1`,
-      [req.user.id]
-    );
+    const userProbs = await sql`
+      SELECT stage, probability FROM stage_probabilities WHERE user_id = ${req.user.id}
+    `.execute(db);
 
     // Count total closed-won vs closed-lost deals to compute overall win rate
-    const historicalResult = await pool.query(
-      `SELECT
+    const historicalResult = await sql`
+      SELECT
         COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
         COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost
-       FROM deals
-       WHERE user_id = $1 AND stage IN ('closed_won', 'closed_lost')`,
-      [req.user.id]
-    );
+      FROM deals
+      WHERE user_id = ${req.user.id} AND stage IN ('closed_won', 'closed_lost')
+    `.execute(db);
 
     const totalWon = parseInt(historicalResult.rows[0]?.won || 0);
     const totalLost = parseInt(historicalResult.rows[0]?.lost || 0);
@@ -476,12 +462,11 @@ router.put('/deals/stage-probabilities', auth, async (req, res) => {
   }
   try {
     for (const { stage, probability } of probabilities) {
-      await pool.query(
-        `INSERT INTO stage_probabilities (user_id, stage, probability, updated_at)
-         VALUES ($1, $2, $3, NOW())
-         ON CONFLICT (user_id, stage) DO UPDATE SET probability = EXCLUDED.probability, updated_at = NOW()`,
-        [req.user.id, stage, probability]
-      );
+      await sql`
+        INSERT INTO stage_probabilities (user_id, stage, probability, updated_at)
+        VALUES (${req.user.id}, ${stage}, ${probability}, NOW())
+        ON CONFLICT (user_id, stage) DO UPDATE SET probability = EXCLUDED.probability, updated_at = NOW()
+      `.execute(db);
     }
     res.json({ success: true });
   } catch (err) {
@@ -497,8 +482,8 @@ router.put('/deals/stage-probabilities', auth, async (req, res) => {
 router.get('/deals/forecast', auth, async (req, res) => {
   try {
     // Get all active deals with their probabilities
-    const dealsResult = await pool.query(
-      `SELECT
+    const dealsResult = await sql`
+      SELECT
         d.id, d.title, d.stage, d.value, d.close_date, d.created_at,
         COALESCE(d.probability,
           COALESCE(sp.probability,
@@ -514,32 +499,30 @@ router.get('/deals/forecast', auth, async (req, res) => {
           )
         ) as effective_probability,
         c.name as contact_name
-       FROM deals d
-       LEFT JOIN contacts c ON c.id = d.contact_id
-       LEFT JOIN stage_probabilities sp ON sp.user_id = d.user_id AND sp.stage = d.stage::text
-       WHERE d.user_id = $1 AND d.stage NOT IN ('closed_won', 'closed_lost')
-       ORDER BY (COALESCE(d.value, 0) * COALESCE(d.probability,
-         COALESCE(sp.probability, 10)) / 100) DESC`,
-      [req.user.id]
-    );
+      FROM deals d
+      LEFT JOIN contacts c ON c.id = d.contact_id
+      LEFT JOIN stage_probabilities sp ON sp.user_id = d.user_id AND sp.stage = d.stage::text
+      WHERE d.user_id = ${req.user.id} AND d.stage NOT IN ('closed_won', 'closed_lost')
+      ORDER BY (COALESCE(d.value, 0) * COALESCE(d.probability,
+        COALESCE(sp.probability, 10)) / 100) DESC
+    `.execute(db);
 
     // Monthly closed_won revenue for the last 12 months
-    const monthlyActualResult = await pool.query(
-      `SELECT
+    const monthlyActualResult = await sql`
+      SELECT
         DATE_TRUNC('month', updated_at) as month,
         COALESCE(SUM(value), 0) as actual_revenue,
         COUNT(*) as deals_closed
-       FROM deals
-       WHERE user_id = $1 AND stage = 'closed_won'
-         AND updated_at >= NOW() - INTERVAL '12 months'
-       GROUP BY DATE_TRUNC('month', updated_at)
-       ORDER BY month`,
-      [req.user.id]
-    );
+      FROM deals
+      WHERE user_id = ${req.user.id} AND stage = 'closed_won'
+        AND updated_at >= NOW() - INTERVAL '12 months'
+      GROUP BY DATE_TRUNC('month', updated_at)
+      ORDER BY month
+    `.execute(db);
 
     // Monthly weighted pipeline forecast by close_date for next 6 months
-    const monthlyForecastResult = await pool.query(
-      `SELECT
+    const monthlyForecastResult = await sql`
+      SELECT
         DATE_TRUNC('month', d.close_date) as month,
         COALESCE(SUM(d.value * COALESCE(d.probability,
           COALESCE(sp.probability,
@@ -553,17 +536,16 @@ router.get('/deals/forecast', auth, async (req, res) => {
           )
         ) / 100), 0) as weighted_value,
         COUNT(*) as deal_count
-       FROM deals d
-       LEFT JOIN stage_probabilities sp ON sp.user_id = d.user_id AND sp.stage = d.stage::text
-       WHERE d.user_id = $1
-         AND d.stage NOT IN ('closed_won', 'closed_lost')
-         AND d.close_date IS NOT NULL
-         AND d.close_date >= DATE_TRUNC('month', NOW())
-         AND d.close_date < NOW() + INTERVAL '6 months'
-       GROUP BY DATE_TRUNC('month', d.close_date)
-       ORDER BY month`,
-      [req.user.id]
-    );
+      FROM deals d
+      LEFT JOIN stage_probabilities sp ON sp.user_id = d.user_id AND sp.stage = d.stage::text
+      WHERE d.user_id = ${req.user.id}
+        AND d.stage NOT IN ('closed_won', 'closed_lost')
+        AND d.close_date IS NOT NULL
+        AND d.close_date >= DATE_TRUNC('month', NOW())
+        AND d.close_date < NOW() + INTERVAL '6 months'
+      GROUP BY DATE_TRUNC('month', d.close_date)
+      ORDER BY month
+    `.execute(db);
 
     // Total weighted pipeline value
     const totalWeighted = dealsResult.rows.reduce((sum, d) => {
@@ -616,45 +598,42 @@ router.get('/deals/forecast', auth, async (req, res) => {
 router.get('/deals/win-loss', auth, async (req, res) => {
   try {
     // Stage funnel counts
-    const stageResult = await pool.query(
-      `SELECT
+    const stageResult = await sql`
+      SELECT
         stage,
         COUNT(*) as count,
         COALESCE(SUM(value), 0) as total_value
-       FROM deals
-       WHERE user_id = $1
-       GROUP BY stage
-       ORDER BY CASE stage
-         WHEN 'lead' THEN 1 WHEN 'qualified' THEN 2 WHEN 'proposal' THEN 3
-         WHEN 'active' THEN 4 WHEN 'closed_won' THEN 5 WHEN 'closed_lost' THEN 6
-       END`,
-      [req.user.id]
-    );
+      FROM deals
+      WHERE user_id = ${req.user.id}
+      GROUP BY stage
+      ORDER BY CASE stage
+        WHEN 'lead' THEN 1 WHEN 'qualified' THEN 2 WHEN 'proposal' THEN 3
+        WHEN 'active' THEN 4 WHEN 'closed_won' THEN 5 WHEN 'closed_lost' THEN 6
+      END
+    `.execute(db);
 
     // Win/loss by service line
-    const serviceLineResult = await pool.query(
-      `SELECT
+    const serviceLineResult = await sql`
+      SELECT
         COALESCE(NULLIF(service_line, ''), 'unspecified') as service_line,
         COUNT(*) as total,
         COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
         COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost
-       FROM deals
-       WHERE user_id = $1
-       GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
-       ORDER BY total DESC`,
-      [req.user.id]
-    );
+      FROM deals
+      WHERE user_id = ${req.user.id}
+      GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
+      ORDER BY total DESC
+    `.execute(db);
 
     // Overall stats
-    const overallResult = await pool.query(
-      `SELECT
+    const overallResult = await sql`
+      SELECT
         COUNT(*) as total,
         COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
         COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost,
         COUNT(CASE WHEN stage NOT IN ('closed_won','closed_lost') THEN 1 END) as active
-       FROM deals WHERE user_id = $1`,
-      [req.user.id]
-    );
+      FROM deals WHERE user_id = ${req.user.id}
+    `.execute(db);
 
     const o = overallResult.rows[0];
     const totalClosed = parseInt(o.won) + parseInt(o.lost);
@@ -698,8 +677,8 @@ router.get('/deals/win-loss', auth, async (req, res) => {
 router.get('/deals/velocity', auth, async (req, res) => {
   try {
     // Avg days for closed deals from created_at to close_date (won) or updated_at (lost)
-    const velocityResult = await pool.query(
-      `SELECT
+    const velocityResult = await sql`
+      SELECT
         COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won_count,
         COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost_count,
         ROUND(AVG(CASE WHEN stage = 'closed_won' AND close_date IS NOT NULL
@@ -713,13 +692,12 @@ router.get('/deals/velocity', auth, async (req, res) => {
         ROUND(AVG(CASE WHEN stage IN ('closed_won','closed_lost')
           THEN EXTRACT(EPOCH FROM (COALESCE(close_date::timestamptz, updated_at, NOW()) - created_at)) / 86400
         END)::numeric, 1) as avg_sales_cycle
-       FROM deals WHERE user_id = $1`,
-      [req.user.id]
-    );
+      FROM deals WHERE user_id = ${req.user.id}
+    `.execute(db);
 
     // Avg days by service line (won deals only)
-    const byServiceLineResult = await pool.query(
-      `SELECT
+    const byServiceLineResult = await sql`
+      SELECT
         COALESCE(NULLIF(service_line, ''), 'unspecified') as service_line,
         COUNT(*) as total,
         COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
@@ -728,15 +706,14 @@ router.get('/deals/velocity', auth, async (req, res) => {
           WHEN stage = 'closed_won' AND close_date IS NULL
           THEN EXTRACT(EPOCH FROM (COALESCE(updated_at, NOW()) - created_at)) / 86400
         END)::numeric, 1) as avg_days_to_win
-       FROM deals WHERE user_id = $1
-       GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
-       ORDER BY avg_days_to_win ASC NULLS LAST`,
-      [req.user.id]
-    );
+      FROM deals WHERE user_id = ${req.user.id}
+      GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
+      ORDER BY avg_days_to_win ASC NULLS LAST
+    `.execute(db);
 
     // Stage-level history if available
-    const stageVelocityResult = await pool.query(
-      `SELECT
+    const stageVelocityResult = await sql`
+      SELECT
         from_stage,
         to_stage,
         COUNT(*) as transitions,
@@ -744,12 +721,11 @@ router.get('/deals/velocity', auth, async (req, res) => {
           LEAD(changed_at) OVER (PARTITION BY deal_id ORDER BY changed_at)
           - changed_at
         )) / 86400)::numeric, 1) as avg_days_in_from_stage
-       FROM deal_stage_history
-       WHERE user_id = $1
-       GROUP BY from_stage, to_stage
-       ORDER BY from_stage`,
-      [req.user.id]
-    ).catch(err => { console.error('Error fetching stage velocity (table may not exist yet):', err.message); return { rows: [] }; }); // graceful fallback if table doesn't exist yet
+      FROM deal_stage_history
+      WHERE user_id = ${req.user.id}
+      GROUP BY from_stage, to_stage
+      ORDER BY from_stage
+    `.execute(db).catch(err => { console.error('Error fetching stage velocity (table may not exist yet):', err.message); return { rows: [] }; }); // graceful fallback if table doesn't exist yet
 
     const v = velocityResult.rows[0];
     res.json({
@@ -778,32 +754,30 @@ router.get('/deals/velocity', auth, async (req, res) => {
  */
 router.get('/deals/mrr', auth, async (req, res) => {
   try {
-    const monthlyResult = await pool.query(
-      `SELECT
+    const monthlyResult = await sql`
+      SELECT
         DATE_TRUNC('month', COALESCE(close_date::timestamptz, updated_at, created_at)) as month,
         COALESCE(SUM(value), 0) as revenue,
         COUNT(*) as deals_closed,
         COALESCE(AVG(value), 0) as avg_deal_size
-       FROM deals
-       WHERE user_id = $1
-         AND stage = 'closed_won'
-         AND COALESCE(close_date::timestamptz, updated_at, created_at) >= NOW() - INTERVAL '24 months'
-       GROUP BY DATE_TRUNC('month', COALESCE(close_date::timestamptz, updated_at, created_at))
-       ORDER BY month`,
-      [req.user.id]
-    );
+      FROM deals
+      WHERE user_id = ${req.user.id}
+        AND stage = 'closed_won'
+        AND COALESCE(close_date::timestamptz, updated_at, created_at) >= NOW() - INTERVAL '24 months'
+      GROUP BY DATE_TRUNC('month', COALESCE(close_date::timestamptz, updated_at, created_at))
+      ORDER BY month
+    `.execute(db);
 
     // YTD revenue
-    const ytdResult = await pool.query(
-      `SELECT
+    const ytdResult = await sql`
+      SELECT
         COALESCE(SUM(value), 0) as ytd_revenue,
         COUNT(*) as ytd_deals
-       FROM deals
-       WHERE user_id = $1
-         AND stage = 'closed_won'
-         AND COALESCE(close_date::timestamptz, updated_at, created_at) >= DATE_TRUNC('year', NOW())`,
-      [req.user.id]
-    );
+      FROM deals
+      WHERE user_id = ${req.user.id}
+        AND stage = 'closed_won'
+        AND COALESCE(close_date::timestamptz, updated_at, created_at) >= DATE_TRUNC('year', NOW())
+    `.execute(db);
 
     const ytd = ytdResult.rows[0];
     const monthly = monthlyResult.rows.map(r => ({
@@ -845,8 +819,8 @@ router.get('/deals/mrr', auth, async (req, res) => {
  */
 router.get('/deals/service-lines', auth, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT
+    const result = await sql`
+      SELECT
         COALESCE(NULLIF(service_line, ''), 'unspecified') as service_line,
         COUNT(*) as total_deals,
         COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
@@ -860,12 +834,11 @@ router.get('/deals/service-lines', auth, async (req, res) => {
           WHEN stage = 'closed_won' AND close_date IS NULL
           THEN EXTRACT(EPOCH FROM (COALESCE(updated_at, NOW()) - created_at)) / 86400
         END)::numeric, 1) as avg_days_to_win
-       FROM deals
-       WHERE user_id = $1
-       GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
-       ORDER BY total_revenue DESC`,
-      [req.user.id]
-    );
+      FROM deals
+      WHERE user_id = ${req.user.id}
+      GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
+      ORDER BY total_revenue DESC
+    `.execute(db);
 
     res.json(result.rows.map(r => {
       const closed = parseInt(r.won) + parseInt(r.lost);
