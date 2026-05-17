@@ -10,19 +10,9 @@ const router = express.Router();
  */
 router.get('/', auth, async (req, res) => {
   const { completed, due } = req.query;
-  const conditions = [sql`r.user_id = ${req.user.id}`];
-
-  if (completed !== undefined) {
-    conditions.push(sql`r.completed = ${completed === 'true'}`);
-  }
-  if (due === 'true') {
-    conditions.push(sql`r.remind_at <= NOW() AND r.completed = FALSE`);
-  }
-
-  const where = sql.join(conditions, ' AND ');
 
   try {
-    const result = await db.selectFrom('reminders as r')
+    let query = db.selectFrom('reminders as r')
       .leftJoin('contacts as c', 'c.id', 'r.contact_id')
       .leftJoin('deals as d', 'd.id', 'r.deal_id')
       .select([
@@ -30,9 +20,16 @@ router.get('/', auth, async (req, res) => {
         'c.name as contact_name',
         'd.title as deal_title',
       ])
-      .where(where)
-      .orderBy('r.remind_at', 'asc')
-      .execute();
+      .where('r.user_id', '=', req.user.id);
+
+    if (completed !== undefined) {
+      query = query.where('r.completed', '=', completed === 'true');
+    }
+    if (due === 'true') {
+      query = query.where(sql`r.remind_at <= NOW()`).where('r.completed', '=', false);
+    }
+
+    const result = await query.orderBy('r.remind_at', 'asc').execute();
     res.json(result);
   } catch (err) {
     console.error('Error fetching reminders:', err);
