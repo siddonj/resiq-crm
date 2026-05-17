@@ -2642,7 +2642,7 @@ SELECT
          l.status AS lead_status
        FROM data_quality_issues i
        LEFT JOIN outbound_leads l ON l.id = i.lead_id
-       WHERE ${sql.join(filters, ' AND ')}
+       WHERE ${sql.raw(filters.join(' AND '))}
        ORDER BY
          CASE i.severity
            WHEN 'high' THEN 1
@@ -3173,26 +3173,20 @@ router.patch('/sequences/enrollments/:id/state', validateBody(ChangeSequenceStat
  */
 router.get('/workflows/rules', async (req, res) => {
   const includeDisabled = String(req.query.includeDisabled || '').trim().toLowerCase() === 'true';
-  
-  try {
-    let query = db.selectFrom('workflow_rules')
-      .where('user_id', '=', req.user.id)
-      .select(['id', 'user_id', 'name', 'description', 'enabled', 'trigger_event', 'priority', 'conditions', 'true_actions', 'false_actions', 'last_tested_at', 'created_at', 'updated_at']);
-    
-    if (!includeDisabled) {
-      query = query.where('enabled', '=', true);
-    }
-    
-    const rows = await query.orderBy('priority', 'asc').orderBy('created_at', 'desc').execute();
-    
-    return res.json({
-      total: rows.length,
-      rules: rows,
-    });
-  } catch (err) {
-    console.error('[Workflow Rules] Error:', err.message);
-    return res.status(500).json({ error: 'Failed to fetch workflow rules.' });
-  }
+
+  const result = await sql`
+    SELECT id, user_id, name, description, enabled, trigger_event, priority, conditions, true_actions, false_actions,
+           last_tested_at, created_at, updated_at
+     FROM workflow_rules
+     WHERE user_id = ${req.user.id}
+       ${includeDisabled ? sql`` : sql`AND enabled = TRUE`}
+     ORDER BY priority ASC, created_at DESC
+  `.execute(db);
+
+  return res.json({
+    total: result.rows.length,
+    rules: result.rows,
+  });
 });
 
 /**
@@ -3810,7 +3804,7 @@ SELECT
      FROM linkedin_outreach_tasks t
      LEFT JOIN outbound_leads l ON l.id = t.lead_id
      LEFT JOIN outbound_message_drafts d ON d.id = t.draft_id
-     WHERE ${sql.join(filters, ' AND ')}
+     WHERE ${sql.raw(filters.join(' AND '))}
      ORDER BY
        CASE t.status
          WHEN 'approved' THEN 1
@@ -3950,41 +3944,6 @@ router.patch('/drafts/:id/approve', async (req, res) => {
   } catch (err) {
     const statusCode = err.message.includes('not found') ? 404 : 409;
     return res.status(statusCode).json({ error: err.message });
-  }
-});
-
-/**
- * PATCH /api/outbound/drafts/:id
- * Update draft subject/body before sending
- */
-router.patch('/drafts/:id', async (req, res) => {
-  const { subject, body } = req.body;
-  const draftId = req.params.id;
-  
-  if (!body || String(body).trim() === '') {
-    return res.status(400).json({ error: 'Body is required.' });
-  }
-  
-  try {
-    const result = await sql`
-      UPDATE outbound_message_drafts
-      SET subject = ${subject || null},
-          body = ${body},
-          updated_at = NOW()
-      WHERE id = ${draftId}
-        AND user_id = ${req.user.id}
-        AND status IN ('drafted', 'approved')
-      RETURNING *
-    `.execute(db);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Draft not found or cannot be edited in current status.' });
-    }
-    
-    return res.json(result.rows[0]);
-  } catch (err) {
-    console.error('[Draft Update] Error:', err.message);
-    return res.status(500).json({ error: 'Failed to update draft.' });
   }
 });
 
@@ -4882,7 +4841,7 @@ router.patch('/sla/escalations/:id', async (req, res) => {
 
   const result = await sql`
 UPDATE outbound_sla_escalations SET ${sql.raw(sets.join(', '))}
-     WHERE id = ${escalationId} AND user_id = ${req.user.id} RETURNING *
+     WHERE id = ${req.params.id} AND user_id = ${req.user.id} RETURNING *
 `.execute(db);
   if (result.rows.length === 0) return res.status(404).json({ error: 'Escalation rule not found.' });
   return res.json(formatEscalationRule(result.rows[0]));

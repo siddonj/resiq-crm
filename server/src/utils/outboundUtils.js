@@ -229,127 +229,6 @@ function computeDedupeKey(lead) {
   return `name_company:${String(lead.name || '').toLowerCase()}|${String(lead.company || '').toLowerCase()}`;
 }
 
-function buildDuplicateGroupIndex(leads) {
-  const groups = new Map();
-  const dedupeKeyToLeadIds = new Map();
-  
-  for (const lead of leads) {
-    const key = computeDedupeKey(lead);
-    if (!dedupeKeyToLeadIds.has(key)) {
-      dedupeKeyToLeadIds.set(key, []);
-    }
-    dedupeKeyToLeadIds.get(key).push(lead.id);
-  }
-  
-  for (const [key, leadIds] of dedupeKeyToLeadIds.entries()) {
-    if (leadIds.length > 1) {
-      for (const leadId of leadIds) {
-        groups.set(leadId, { key, leadIds });
-      }
-    }
-  }
-  
-  return groups;
-}
-
-function buildLeadDataQualityIssueCandidates(lead, context = {}) {
-  const issues = [];
-  const { duplicateGroup = null } = context;
-  
-  // Missing contact channel (email or LinkedIn)
-  const hasEmail = Boolean(lead.email && String(lead.email).trim());
-  const hasLinkedIn = Boolean(lead.linkedin_url && String(lead.linkedin_url).trim());
-  if (!hasEmail && !hasLinkedIn) {
-    issues.push({
-      issueKey: `missing_contact_channel:${lead.id}`,
-      issueType: 'missing_contact_channel',
-      entityType: 'outbound_lead',
-      entityId: lead.id,
-      severity: 'high',
-      isBlocking: true,
-      description: 'Lead is missing both email and LinkedIn URL',
-      metadata: { email: lead.email, linkedin_url: lead.linkedin_url },
-    });
-  }
-  
-  // Missing company
-  if (!lead.company || String(lead.company).trim() === '') {
-    issues.push({
-      issueKey: `missing_company:${lead.id}`,
-      issueType: 'missing_company',
-      entityType: 'outbound_lead',
-      entityId: lead.id,
-      severity: 'medium',
-      isBlocking: false,
-      description: 'Lead is missing company information',
-      metadata: { name: lead.name },
-    });
-  }
-  
-  // Missing title
-  if (!lead.title || String(lead.title).trim() === '') {
-    issues.push({
-      issueKey: `missing_title:${lead.id}`,
-      issueType: 'missing_title',
-      entityType: 'outbound_lead',
-      entityId: lead.id,
-      severity: 'low',
-      isBlocking: false,
-      description: 'Lead is missing job title',
-      metadata: { name: lead.name, company: lead.company },
-    });
-  }
-  
-  // Low source confidence
-  const sourceConfidence = Number(lead.source_confidence ?? 0);
-  if (sourceConfidence > 0 && sourceConfidence < 70) {
-    issues.push({
-      issueKey: `low_source_confidence:${lead.id}`,
-      issueType: 'low_source_confidence',
-      entityType: 'outbound_lead',
-      entityId: lead.id,
-      severity: 'low',
-      isBlocking: false,
-      description: `Lead source confidence is low (${sourceConfidence}%)`,
-      metadata: { source_confidence: sourceConfidence, source_type: lead.source_type },
-    });
-  }
-  
-  // Stale lead (not updated in 90+ days)
-  const updatedAt = lead.updated_at ? new Date(lead.updated_at) : null;
-  if (updatedAt) {
-    const daysSinceUpdate = Math.floor((Date.now() - updatedAt.getTime()) / (1000 * 60 * 60 * 24));
-    if (daysSinceUpdate > 90) {
-      issues.push({
-        issueKey: `stale_lead:${lead.id}`,
-        issueType: 'stale_lead',
-        entityType: 'outbound_lead',
-        entityId: lead.id,
-        severity: 'low',
-        isBlocking: false,
-        description: `Lead has not been updated in ${daysSinceUpdate} days`,
-        metadata: { updated_at: lead.updated_at, days_since_update: daysSinceUpdate },
-      });
-    }
-  }
-  
-  // Potential duplicate
-  if (duplicateGroup) {
-    issues.push({
-      issueKey: `potential_duplicate:${lead.id}:${duplicateGroup.key}`,
-      issueType: 'potential_duplicate',
-      entityType: 'outbound_lead',
-      entityId: lead.id,
-      severity: 'medium',
-      isBlocking: false,
-      description: `Lead may be a duplicate (group: ${duplicateGroup.key})`,
-      metadata: { duplicate_group_key: duplicateGroup.key, duplicate_lead_ids: duplicateGroup.leadIds },
-    });
-  }
-  
-  return issues;
-}
-
 function buildEmailDraft(lead) {
   const firstName = lead.first_name || (lead.name || '').split(' ')[0] || 'there';
   const companyName = lead.company || 'your team';
@@ -907,6 +786,59 @@ function mapDataQualityIssueRow(row) {
   };
 }
 
+/**
+ * Build a map of duplicate group key -> array of lead IDs
+ * Used by data quality sync to identify duplicates
+ */
+function buildDuplicateGroupIndex(leads) {
+  const index = new Map();
+  for (const lead of leads) {
+    const key = `${lead.email?.toLowerCase?.() || ''}|${lead.linkedin_url?.toLowerCase?.() || ''}`;
+    if (!index.has(key)) {
+      index.set(key, []);
+    }
+    index.get(key).push(lead.id);
+  }
+  return index;
+}
+
+/**
+ * Build data quality issue candidates for a lead
+ * Returns array of issue objects ready for insertion
+ */
+function buildLeadDataQualityIssueCandidates(lead) {
+  const issues = [];
+  const now = new Date();
+  
+  // Check for missing name
+  if (!lead.name || lead.name.trim() === '') {
+    issues.push({
+      lead_id: lead.id,
+      issue_type: 'missing_name',
+      severity: 'medium',
+      message: 'Lead name is missing',
+      status: 'open',
+      created_at: now,
+      updated_at: now,
+    });
+  }
+  
+  // Check for invalid/missing email
+  if (!lead.email || !lead.email.includes('@')) {
+    issues.push({
+      lead_id: lead.id,
+      issue_type: 'invalid_email',
+      severity: 'high',
+      message: 'Lead email is missing or invalid',
+      status: 'open',
+      created_at: now,
+      updated_at: now,
+    });
+  }
+  
+  return issues;
+}
+
 module.exports = {
   // Constants
   VALID_SOURCE_TYPES,
@@ -947,8 +879,6 @@ module.exports = {
   canonicalLinkedInUrl,
   buildLeadFromRow,
   computeDedupeKey,
-  buildDuplicateGroupIndex,
-  buildLeadDataQualityIssueCandidates,
   buildEmailDraft,
   buildLinkedInDraft,
   csvEscape,
@@ -974,6 +904,10 @@ module.exports = {
   compareConditionValues,
   evaluateRuleConditions,
   normalizeRuleActions,
+
+  // Data quality helpers (used by routes)
+  buildDuplicateGroupIndex,
+  buildLeadDataQualityIssueCandidates,
 
   // Dates & periods
   toPeriodDateString,
