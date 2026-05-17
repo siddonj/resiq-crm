@@ -3174,14 +3174,26 @@ router.patch('/sequences/enrollments/:id/state', validateBody(ChangeSequenceStat
 router.get('/workflows/rules', async (req, res) => {
   const includeDisabled = String(req.query.includeDisabled || '').trim().toLowerCase() === 'true';
 
-  const result = await sql`
-    SELECT id, user_id, name, description, enabled, trigger_event, priority, conditions, true_actions, false_actions,
-           last_tested_at, created_at, updated_at
-     FROM workflow_rules
-     WHERE user_id = ${req.user.id}
-       ${includeDisabled ? sql`` : sql`AND enabled = TRUE`}
-     ORDER BY priority ASC, created_at DESC
-  `.execute(db);
+  let query;
+  if (includeDisabled) {
+    query = sql`
+      SELECT id, user_id, name, description, enabled, trigger_event, priority, conditions, true_actions, false_actions,
+             last_tested_at, created_at, updated_at
+       FROM workflow_rules
+       WHERE user_id = ${req.user.id}
+       ORDER BY priority ASC, created_at DESC
+    `;
+  } else {
+    query = sql`
+      SELECT id, user_id, name, description, enabled, trigger_event, priority, conditions, true_actions, false_actions,
+             last_tested_at, created_at, updated_at
+       FROM workflow_rules
+       WHERE user_id = ${req.user.id} AND enabled = TRUE
+       ORDER BY priority ASC, created_at DESC
+    `;
+  }
+  
+  const result = await query.execute(db);
 
   return res.json({
     total: result.rows.length,
