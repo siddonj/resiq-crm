@@ -4880,8 +4880,8 @@ router.patch('/sla/escalations/:id', async (req, res) => {
   if (sets.length === 0) return res.status(400).json({ error: 'No fields to update.' });
 
   const result = await sql`
-UPDATE outbound_sla_escalations SET ${sets.join(', ')}
-     WHERE id = $1 AND user_id = $2 RETURNING *
+UPDATE outbound_sla_escalations SET ${sql.raw(sets.join(', '))}
+     WHERE id = ${escalationId} AND user_id = ${req.user.id} RETURNING *
 `.execute(db);
   if (result.rows.length === 0) return res.status(404).json({ error: 'Escalation rule not found.' });
   return res.json(formatEscalationRule(result.rows[0]));
