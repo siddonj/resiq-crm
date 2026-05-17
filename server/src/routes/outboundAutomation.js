@@ -2642,7 +2642,7 @@ SELECT
          l.status AS lead_status
        FROM data_quality_issues i
        LEFT JOIN outbound_leads l ON l.id = i.lead_id
-       WHERE ${filters.join(' AND ')}
+       WHERE ${sql.join(filters, ' AND ')}
        ORDER BY
          CASE i.severity
            WHEN 'high' THEN 1
@@ -3809,7 +3809,7 @@ SELECT
      FROM linkedin_outreach_tasks t
      LEFT JOIN outbound_leads l ON l.id = t.lead_id
      LEFT JOIN outbound_message_drafts d ON d.id = t.draft_id
-     WHERE ${filters.join(' AND ')}
+     WHERE ${sql.join(filters, ' AND ')}
      ORDER BY
        CASE t.status
          WHEN 'approved' THEN 1
