@@ -3174,24 +3174,25 @@ router.patch('/sequences/enrollments/:id/state', validateBody(ChangeSequenceStat
 router.get('/workflows/rules', async (req, res) => {
   const includeDisabled = String(req.query.includeDisabled || '').trim().toLowerCase() === 'true';
   
-  let query = sql`
-    SELECT id, user_id, name, description, enabled, trigger_event, priority, conditions, true_actions, false_actions,
-           last_tested_at, created_at, updated_at
-    FROM workflow_rules
-    WHERE user_id = ${req.user.id}`;
-  
-  if (!includeDisabled) {
-    query = sql`${query} AND enabled = TRUE`;
+  try {
+    let query = db.selectFrom('workflow_rules')
+      .where('user_id', '=', req.user.id)
+      .select(['id', 'user_id', 'name', 'description', 'enabled', 'trigger_event', 'priority', 'conditions', 'true_actions', 'false_actions', 'last_tested_at', 'created_at', 'updated_at']);
+    
+    if (!includeDisabled) {
+      query = query.where('enabled', '=', true);
+    }
+    
+    const rows = await query.orderBy('priority', 'asc').orderBy('created_at', 'desc').execute();
+    
+    return res.json({
+      total: rows.length,
+      rules: rows,
+    });
+  } catch (err) {
+    console.error('[Workflow Rules] Error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch workflow rules.' });
   }
-  
-  query = sql`${query} ORDER BY priority ASC, created_at DESC`;
-  
-  const result = await query.execute(db);
-
-  return res.json({
-    total: result.rows.length,
-    rules: result.rows,
-  });
 });
 
 /**
