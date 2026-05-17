@@ -3952,6 +3952,41 @@ router.patch('/drafts/:id/approve', async (req, res) => {
 });
 
 /**
+ * PATCH /api/outbound/drafts/:id
+ * Update draft subject/body before sending
+ */
+router.patch('/drafts/:id', async (req, res) => {
+  const { subject, body } = req.body;
+  const draftId = req.params.id;
+  
+  if (!body || String(body).trim() === '') {
+    return res.status(400).json({ error: 'Body is required.' });
+  }
+  
+  try {
+    const result = await sql`
+      UPDATE outbound_message_drafts
+      SET subject = ${subject || null},
+          body = ${body},
+          updated_at = NOW()
+      WHERE id = ${draftId}
+        AND user_id = ${req.user.id}
+        AND status IN ('drafted', 'approved')
+      RETURNING *
+    `.execute(db);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Draft not found or cannot be edited in current status.' });
+    }
+    
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error('[Draft Update] Error:', err.message);
+    return res.status(500).json({ error: 'Failed to update draft.' });
+  }
+});
+
+/**
  * POST /api/outbound/drafts/:id/send
  * Manual send confirmation for email drafts
  */

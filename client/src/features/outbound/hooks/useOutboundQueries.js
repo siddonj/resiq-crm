@@ -203,6 +203,16 @@ export function useSendDraft(token) {
   })
 }
 
+export function useUpdateDraft(token) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ draftId, subject, body }) => outboundApi.updateDraft(token, draftId, { subject, body }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: QK.draftInbox })
+    },
+  })
+}
+
 export function useDraftInbox(token) {
   return useQuery({
     queryKey: QK.draftInbox,

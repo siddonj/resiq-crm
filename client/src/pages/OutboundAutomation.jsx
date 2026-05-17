@@ -47,6 +47,7 @@ import {
   useGenerateDraft,
   useApproveDraft,
   useSendDraft,
+  useUpdateDraft,
   useCompleteLinkedinTask,
   useRebalanceLinkedinTasks,
   useCreateSavedView,
@@ -427,6 +428,7 @@ export default function OutboundAutomation() {
   const generateDraft = useGenerateDraft(token)
   const approveDraft = useApproveDraft(token)
   const sendDraft = useSendDraft(token)
+  const updateDraft = useUpdateDraft(token)
   const completeLinkedinTask = useCompleteLinkedinTask(token)
   const rebalanceLinkedinTasks = useRebalanceLinkedinTasks(token)
   const createSavedView = useCreateSavedView(token)
@@ -540,6 +542,14 @@ export default function OutboundAutomation() {
     await runAction(`approve-${draftId}`, async () => {
       await approveDraft.mutateAsync(draftId)
       setMessage('Draft approved.')
+    })
+  }
+
+  const handleUpdateDraft = async (draftId, updates, callback) => {
+    await runAction(`update-${draftId}`, async () => {
+      await updateDraft.mutateAsync({ draftId, ...updates })
+      setMessage('Draft updated.')
+      if (callback) callback()
     })
   }
 
@@ -1685,6 +1695,7 @@ export default function OutboundAutomation() {
         handleApproveDraft={handleApproveDraft}
         handleSendEmailDraft={handleSendEmailDraft}
         handleCompleteLinkedInTask={handleCompleteLinkedInTask}
+        handleUpdateDraft={handleUpdateDraft}
       />
       )}
 

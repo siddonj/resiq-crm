@@ -1,0 +1,203 @@
+[
+  {
+    "name": "wisdomseeker42",
+    "first_name": "Wisdom",
+    "company": "Boutique CA Property Management Co",
+    "title": "Accounting Manager",
+    "notes": "Looking for CRM integrations with Rentvine. Needs remote work coordination tools. Actively seeking CRM solution to scale their property management business.",
+    "source_type": "api",
+    "source_reference": "reddit-r/PropertyManagement-crm-integrations-rentvine",
+    "source_confidence": 85,
+    "location": "California",
+    "website": "https://reddit.com/r/PropertyManagement/comments/1hvz60s/crm_integrations_with_rentvine_recommendations/"
+  },
+  {
+    "name": "dvlbrn89",
+    "company": "Property Management Business",
+    "title": "Business Owner",
+    "notes": "Using AppFolio but needs CRM software because front office runs on sticky notes. Looking for property management software recommendation. High pain point - actively seeking solution.",
+    "source_type": "api",
+    "source_reference": "reddit-r/PropertyManagement-pm-software-recommendation",
+    "source_confidence": 90,
+    "location": "US",
+    "website": "https://reddit.com/r/PropertyManagement/comments/194hu3l/property_management_software_recommendation/"
+  },
+  {
+    "name": "Tenseventeen1701",
+    "title": "Leasing Manager",
+    "company": "Property Management Co",
+    "notes": "Looking for a leasing CRM that manages the leasing cycle and offers self-scheduling for prospects. Specifically needs leasing-focused CRM, not full management software.",
+    "source_type": "api",
+    "source_reference": "reddit-r/PropertyManagement-best-leasing-crm",
+    "source_confidence": 80,
+    "website": "https://reddit.com/r/PropertyManagement/comments/y4tdpo/best_leasing_crm/"
+  },
+  {
+    "name": "Neat-Ad-6002",
+    "company": "NYC Real Estate Developer/Owner/PM",
+    "title": "Operations Manager",
+    "notes": "Real estate developer, owner, and property manager based in NYC. Using AppFolio PMS. Looking to develop auto follow-up CRM system with waiting list functionality for residential and commercial vacancies. High-value prospect in prime market.",
+    "source_type": "api",
+    "source_reference": "reddit-r/CommercialRealEstate-nyc-developer-crm",
+    "source_confidence": 90,
+    "location": "New York City",
+    "website": "https://reddit.com/r/CommercialRealEstate/comments/1pof2wg/we_are_a_real_estate_developer_owner_property/"
+  },
+  {
+    "name": "ruben_vanwyk",
+    "company": "Property Management Firm (70 commercial properties)",
+    "title": "Consultant",
+    "notes": "Worked with property management firm managing 70 commercial properties. All tenant communications manual - endless emails and meetings. Suggested adopting CRM but needs to justify value. Strong proptech consulting opportunity.",
+    "source_type": "api",
+    "source_reference": "reddit-r/CommercialRealEstate-crm-worth-it-cre",
+    "source_confidence": 85,
+    "website": "https://reddit.com/r/CommercialRealEstate/comments/1rbvubg/are_crms_worth_it_for_commercial_real_estate_firms/"
+  },
+  {
+    "name": "spuckcre",
+    "company": "Commercial-First Brokerage",
+    "title": "Broker/Tech Lead",
+    "notes": "Commercial-first brokerage looking for systems handling listing display, CRM, pipeline management, and optional auction support. Seeking Buildout-style solution. Regional CRE marketplace focus.",
+    "source_type": "api",
+    "source_reference": "reddit-r/CommercialRealEstate-broker-crm-platforms",
+    "source_confidence": 85,
+    "website": "https://reddit.com/r/CommercialRealEstate/comments/1p2fvb0/what_platforms_are_commercial_brokers_using_for/"
+  },
+  {
+    "name": "Purple_Mountain17",
+    "title": "Independent Real Estate Broker",
+    "company": "Independent Brokerage",
+    "notes": "Going independent as a real estate broker. Actively looking for a new CRM. Previously used Follow Up Boss. Needs solo CRM solution for independent operation. Excellent timing - switching from existing solution.",
+    "source_type": "api",
+    "source_reference": "reddit-r/RealEstateTechnology-new-crm-independent-broker",
+    "source_confidence": 90,
+    "website": "https://reddit.com/r/RealEstateTechnology/comments/1lu53ps/looking_for_a_new_crm_as_an_independent_broker/"
+  },
+  {
+    "name": "mysat",
+    "title": "Real Estate Agent",
+    "company": "Independent Agent",
+    "notes": "Transitioning away from franchised brokerage proprietary CRM. Needs third-party integrations and an open platform. Hit limitations with closed system. Actively seeking new CRM solution.",
+    "source_type": "api",
+    "source_reference": "reddit-r/RealEstateTechnology-crm-recommendation-moving-away",
+    "source_confidence": 88,
+    "website": "https://reddit.com/r/RealEstateTechnology/comments/1krp5j9/looking_for_a_crm_recommendation_as_i_move_away/"
+  },
+  {
+    "name": "Ambitious-Move-3436",
+    "company": "Small Real Estate Business",
+    "title": "Business Owner",
+    "notes": "Runs small real estate business in Washington. Juggling spreadsheets for leads, Mailchimp for newsletters. Looking for marketing automation that doesn't break the bank. Needs integrated approach.",
+    "source_type": "api",
+    "source_reference": "reddit-r/RealEstateTechnology-marketing-automation-budget",
+    "source_confidence": 82,
+    "location": "Washington State",
+    "website": "https://reddit.com/r/RealEstateTechnology/comments/1n0yolg/how_are_you_handling_marketing_automation_without/"
+  },
+  {
+    "name": "Tkfit09",
+    "company": "CRE Brokerage Firm",
+    "title": "Broker",
+    "notes": "Firm switching from Salesforce to GoHighLevel. Finding GHL a massive downgrade for commercial real estate. Looking for better CRM suited for CRE brokerage. Dissatisfied with current transition.",
+    "source_type": "api",
+    "source_reference": "reddit-r/CommercialRealEstate-gohighlevel-crm",
+    "source_confidence": 85,
+    "website": "https://reddit.com/r/CommercialRealEstate/comments/1sk2vl1/who_here_is_using_gohighlevel_crm_for_their/"
+  },
+  {
+    "name": "No-Zookeepergame5797",
+    "title": "Real Estate Agent",
+    "notes": "Looking for a CRM that will also build a website and find leads. Researching Easy Agent Pro. Needs integrated lead generation and CRM solution for real estate business.",
+    "source_type": "api",
+    "source_reference": "reddit-r/RealEstateTechnology-easy-agent-pro",
+    "source_confidence": 78,
+    "website": "https://reddit.com/r/RealEstateTechnology/comments/1rc45w5/easy_agent_pro/"
+  },
+  {
+    "name": "HelloMudsTheRealtor",
+    "title": "Long Island Realtor",
+    "notes": "Uses FollowUpBoss because team uses it. Asking what other CRMs Long Island agents actually use and what keeps them there. Actively evaluating alternatives.",
+    "source_type": "api",
+    "source_reference": "reddit-r/RealEstateTechnology-long-island-crm",
+    "source_confidence": 75,
+    "location": "Long Island, NY",
+    "website": "https://reddit.com/r/RealEstateTechnology/comments/1pet4fy/long_island_realtors_what_crm_are_you_using_and/"
+  },
+  {
+    "name": "RealtorYB",
+    "title": "Real Estate Agent",
+    "notes": "Has $1000/month marketing budget for 12 months. Asking how to best leverage for lead capture. Considering AI agents, VA, direct mail, online advertising. Looking for technology-driven lead gen solutions.",
+    "source_type": "api",
+    "source_reference": "reddit-r/realtors-marketing-budget-lead-gen",
+    "source_confidence": 75,
+    "website": "https://reddit.com/r/realtors/comments/1s5yb08/if_someone_gave_you_1000_for_12_months_that_you/"
+  },
+  {
+    "name": "ConscientiousHomeles",
+    "title": "Real Estate Agent",
+    "location": "Los Angeles, CA",
+    "notes": "2 years in, 8 transactions, feeling burnt out in LA market. Needs tools and strategies to turn around declining transaction volume. Potential client for CRM + automation consulting.",
+    "source_type": "api",
+    "source_reference": "reddit-r/realtors-burnt-out-la-market",
+    "source_confidence": 70,
+    "website": "https://reddit.com/r/realtors/comments/1qcvvby/2_years_in_8_transactions_feeling_burnt_out_in_la/"
+  },
+  {
+    "name": "Unusual_Loquat480",
+    "title": "Real Estate Agent",
+    "notes": "On the fence about getting a virtual assistant. Concerned about training, handing over CRM access. Looking for automation solutions that reduce manual work without the headache of managing staff.",
+    "source_type": "api",
+    "source_reference": "reddit-r/realtors-virtual-assistants",
+    "source_confidence": 72,
+    "website": "https://reddit.com/r/realtors/comments/1tf4b33/thoughts_on_virtual_assistants/"
+  },
+  {
+    "name": "AdStunning3131",
+    "company": "Australian Distributor ($3M revenue, 10 staff)",
+    "title": "Operations Manager",
+    "notes": "Stuck on legacy systems at $3M revenue with 10 staff. Running HubSpot for CRM, MYOB for accounting, FileMaker for inventory. Looking for sensible modernization. 5000 orders/year across 3 showrooms. Prime candidate for CRM overhaul consulting.",
+    "source_type": "api",
+    "source_reference": "reddit-r/smallbusiness-legacy-systems-modernization",
+    "source_confidence": 85,
+    "location": "Australia",
+    "website": "https://reddit.com/r/smallbusiness/comments/1tap1s9/stuck_on_legacy_systems_at_3m_revenue_with_10/"
+  },
+  {
+    "name": "BandFrosty",
+    "title": "Service Business Owner",
+    "notes": "Most leads come through Instagram DMs. Volume growing and struggling to track. Looking for a good system for handling Instagram DM leads. Needs social media lead management.",
+    "source_type": "api",
+    "source_reference": "reddit-r/smallbusiness-instagram-dm-leads",
+    "source_confidence": 75,
+    "website": "https://reddit.com/r/smallbusiness/comments/1tdyyn3/anyone_found_a_good_system_for_handling_instagram/"
+  },
+  {
+    "name": "Barcode_AKA_Jimmy",
+    "company": "Nail Salon (Ontario, Canada)",
+    "title": "Business Owner",
+    "notes": "Running a nail salon. CRM system has issues with no-show tracking accuracy. Currently getting 1.6% no-show rate but CRM miscounts. Needs better CRM for appointment management.",
+    "source_type": "api",
+    "source_reference": "reddit-r/smallbusiness-no-show-crm-issues",
+    "source_confidence": 70,
+    "location": "Ontario, Canada",
+    "website": "https://reddit.com/r/smallbusiness/comments/1tfgi54/how_do_you_deal_with_noshows/"
+  },
+  {
+    "name": "Various_Cicada_1439",
+    "title": "Developer / SaaS Founder",
+    "notes": "Considering building a stripped-down Salesforce alternative for $50/mo. Seeing pain of small teams paying $150+/user for Salesforce features they never use. Validates market need for affordable CRM.",
+    "source_type": "api",
+    "source_reference": "reddit-r/smallbusiness-salesforce-alternative",
+    "source_confidence": 78,
+    "website": "https://reddit.com/r/smallbusiness/comments/1t57dyk/small_teams_using_salesforce_would_you_switch_to/"
+  },
+  {
+    "name": "Expensive-Writer5474",
+    "title": "Small Business Owner",
+    "notes": "Asking how to stay proactive with existing customers before they go cold. Not about leads or cold outreach. Needs customer retention and engagement tools. CRM opportunity for customer lifecycle management.",
+    "source_type": "api",
+    "source_reference": "reddit-r/smallbusiness-proactive-customer-retention",
+    "source_confidence": 72,
+    "website": "https://reddit.com/r/smallbusiness/comments/1t5nvy1/how_do_you_actually_stay_proactive_with_existing/"
+  }
+]

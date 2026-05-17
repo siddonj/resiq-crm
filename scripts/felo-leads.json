@@ -1,0 +1,74 @@
+[
+  {
+    "name": "K3 Holdings RFP",
+    "company": "K3 Holdings",
+    "title": "Technology Procurement Manager",
+    "notes": "Issued RFP on Aug 25, 2025 seeking technology solutions for multifamily portfolio management in Los Angeles. Looking for: leasing automation, maintenance tracking, resident communication platforms, smart building systems, AI-driven rent pricing, data analytics. Active RFP - strong buying signal.",
+    "source_type": "api",
+    "source_reference": "felo-search-k3-holdings-rfp-2025",
+    "source_confidence": 95,
+    "location": "Los Angeles, CA",
+    "website": "https://k3holdings.com/blog/request-for-proposals-(rfp)-technology-solutions-for-real-estate-management"
+  },
+  {
+    "name": "Neat-Ad-6002 NYC Developer",
+    "company": "NYC Real Estate Developer/Owner/PM",
+    "title": "Operations Director",
+    "notes": "Previously using AppFolio PMS. Looking to develop auto follow-up CRM system with waiting list functionality for both residential and commercial vacancies. NYC-based developer, owner, and property manager. High-value prospect actively seeking tech solutions.",
+    "source_type": "api",
+    "source_reference": "felo-search-nyc-developer-appfolio-crm-2025",
+    "source_confidence": 90,
+    "location": "New York City, NY",
+    "website": "https://reddit.com/r/CommercialRealEstate/comments/1pof2wg/"
+  },
+  {
+    "name": "RE2 AI Proptech",
+    "company": "RE2 AI",
+    "title": "Real Estate Technology Consultant",
+    "notes": "Published comprehensive guide on software tools for commercial real estate tech stack. Covers lead generation, CRM, virtual tours, lease management, analytics. Industry influencer with deep knowledge of CRE tech needs - potential partner or referral source for ResiQ.",
+    "source_type": "api",
+    "source_reference": "felo-search-re2-cre-tech-stack-2026",
+    "source_confidence": 70,
+    "website": "https://www.re2.ai/post/software-tools-commercial-real-estate-tech-stack"
+  },
+  {
+    "name": "Connexus Platform",
+    "company": "Connexus",
+    "title": "Product Team",
+    "notes": "AI-powered unified platform for real estate procurement, contracts, vendors, and compliance. Competing in the proptech space. Potential integration partner or acquisition target for complementary technology.",
+    "source_type": "api",
+    "source_reference": "felo-search-connexus-proptech-2026",
+    "source_confidence": 60,
+    "website": "https://www.linkedin.com/company/join-connexus"
+  },
+  {
+    "name": "Revys",
+    "company": "Revyse",
+    "title": "Product Team",
+    "notes": "Helps multifamily operators discover vendor partners, manage contracts and compliance. AI-powered platform. Hiring Senior Program Manager for Risk and Compliance. Growing company in the proptech space.",
+    "source_type": "api",
+    "source_reference": "felo-search-revyse-multifamily-2026",
+    "source_confidence": 65,
+    "website": "https://builtin.com/job/senior-program-manager-risk-and-compliance/7977814"
+  },
+  {
+    "name": "ButterflyMX",
+    "company": "ButterflyMX",
+    "title": "Business Development",
+    "notes": "Top proptech startup focused on smart access control and security systems for multifamily properties. Listed among top 11 proptech startups to watch in 2026. Potential integration partner for ResiQ - their access control + our CRM could be bundled.",
+    "source_type": "api",
+    "source_reference": "felo-search-butterflymx-proptech-2026",
+    "source_confidence": 65,
+    "website": "https://butterflymx.com/blog/proptech-startups/"
+  },
+  {
+    "name": "Roofr",
+    "company": "Roofr",
+    "title": "Business Development",
+    "notes": "Proptech startup listed among top 11 to watch in 2026. Roofing and property estimation technology. Potential integration partner for property maintenance vertical.",
+    "source_type": "api",
+    "source_reference": "felo-search-roofr-proptech-2026",
+    "source_confidence": 60,
+    "website": "https://butterflymx.com/blog/proptech-startups/"
+  }
+]

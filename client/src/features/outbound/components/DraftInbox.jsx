@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { toInt } from '../utils/formatting.jsx'
 
 export default function DraftInbox({
@@ -9,7 +10,29 @@ export default function DraftInbox({
   handleApproveDraft,
   handleSendEmailDraft,
   handleCompleteLinkedInTask,
+  handleUpdateDraft,
 }) {
+  const [editingDraft, setEditingDraft] = useState(null)
+  const [editSubject, setEditSubject] = useState('')
+  const [editBody, setEditBody] = useState('')
+
+  const openEditModal = (draft) => {
+    setEditingDraft(draft)
+    setEditSubject(draft.subject || '')
+    setEditBody(draft.body || '')
+  }
+
+  const closeEditModal = () => {
+    setEditingDraft(null)
+    setEditSubject('')
+    setEditBody('')
+  }
+
+  const saveEdit = () => {
+    if (!editingDraft || !editBody.trim()) return
+    handleUpdateDraft(editingDraft.id, { subject: editSubject, body: editBody }, closeEditModal)
+  }
+
   return (
     <div className="bg-white rounded-xl shadow-sm p-6 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -66,6 +89,15 @@ export default function DraftInbox({
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {(draft.status === 'drafted' || draft.status === 'approved') && (
+                    <button
+                      onClick={() => openEditModal(draft)}
+                      disabled={busyKey === `update-${draft.id}`}
+                      className="text-xs border border-gray-300 text-gray-700 rounded px-2 py-1 hover:bg-gray-50 disabled:opacity-60"
+                    >
+                      Edit
+                    </button>
+                  )}
                   {draft.status === 'drafted' && (
                     <button
                       onClick={() => handleApproveDraft(draft.id)}
@@ -99,6 +131,64 @@ export default function DraftInbox({
               <p className="text-xs text-gray-600 mt-2 whitespace-pre-wrap line-clamp-3">{draft.body}</p>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Edit Draft Modal */}
+      {editingDraft && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={closeEditModal}>
+          <div className="bg-white rounded-xl shadow-lg max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6 border-b border-gray-100">
+              <h3 className="text-lg font-semibold text-navy">
+                Edit {editingDraft.channel === 'linkedin' ? 'LinkedIn' : 'Email'} Draft
+              </h3>
+              <p className="text-xs text-brand-gray mt-1">For {editingDraft.lead?.name || 'Unknown lead'}</p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {editingDraft.channel === 'email' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+                  <input
+                    type="text"
+                    value={editSubject}
+                    onChange={(e) => setEditSubject(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-navy/20"
+                    placeholder="Email subject"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {editingDraft.channel === 'linkedin' ? 'Message' : 'Body'}
+                </label>
+                <textarea
+                  value={editBody}
+                  onChange={(e) => setEditBody(e.target.value)}
+                  rows={8}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-navy/20 font-mono"
+                  placeholder="Draft content"
+                />
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-100 flex justify-end gap-2">
+              <button
+                onClick={closeEditModal}
+                className="text-sm border border-gray-200 rounded-lg px-4 py-2 text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveEdit}
+                disabled={busyKey === `update-${editingDraft.id}` || !editBody.trim()}
+                className="text-sm bg-navy text-white rounded-lg px-4 py-2 hover:bg-navy/90 disabled:opacity-60"
+              >
+                {busyKey === `update-${editingDraft.id}` ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

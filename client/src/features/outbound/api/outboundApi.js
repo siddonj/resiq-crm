@@ -62,6 +62,9 @@ export const outboundApi = {
   approveDraft: (token, draftId) =>
     axios.patch(`/api/outbound/drafts/${draftId}/approve`, {}, getAuthHeaders(token)),
 
+  updateDraft: (token, draftId, updates) =>
+    axios.patch(`/api/outbound/drafts/${draftId}`, updates, getAuthHeaders(token)),
+
   sendDraft: (token, draftId) =>
     axios.post(`/api/outbound/drafts/${draftId}/send`, {}, getAuthHeaders(token)),
 
