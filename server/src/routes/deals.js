@@ -29,7 +29,7 @@ router.get('/', auth, async (req, res) => {
           ELSE 'view'
         END AS access_permission
       FROM deals d
-      WHERE ${sql.join(conditions, ' AND ')}
+      WHERE ${sql.join(conditions, sql` AND `)}
       ORDER BY d.created_at DESC
     `.execute(db);
 

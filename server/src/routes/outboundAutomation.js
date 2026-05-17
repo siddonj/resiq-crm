@@ -567,7 +567,7 @@ async function runWorkflowRulesForEvent({
   const rulesRes = await sql`
     SELECT *
     FROM workflow_rules
-    WHERE ${sql.join(filters, ' AND ')}
+    WHERE ${sql.join(filters, sql` AND `)}
     ORDER BY priority ASC, created_at ASC
   `.execute(db);
 
@@ -2093,7 +2093,7 @@ router.get('/leads', validateQuery(LeadFiltersSchema), async (req, res) => {
       WHERE user_id = ${req.user.id}
       GROUP BY lead_id
     ) issue_counts ON issue_counts.lead_id = l.id
-    WHERE ${sql.join(conditions, ' AND ')}
+    WHERE ${sql.join(conditions, sql` AND `)}
     ${cursorClause}
     ORDER BY l.total_score DESC, l.id DESC
     LIMIT ${safeLimit + 1}
@@ -4115,7 +4115,7 @@ router.get('/events/export', async (req, res) => {
       l.company AS lead_company
     FROM lead_source_events e
     LEFT JOIN outbound_leads l ON l.id = e.lead_id
-    WHERE ${sql.join(filters, ' AND ')}
+    WHERE ${sql.join(filters, sql` AND `)}
     ORDER BY e.created_at DESC
     LIMIT ${limit}
   `;

@@ -22,7 +22,7 @@ router.get('/', auth, requireRole('admin', 'manager'), async (req, res) => {
   if (to) conditions.push(sql`created_at <= ${to}`);
 
   const whereClause = conditions.length > 0
-    ? sql`WHERE ${sql.join(conditions, ' AND ')}`
+    ? sql`WHERE ${sql.join(conditions, sql` AND `)}`
     : sql``;
 
   try {

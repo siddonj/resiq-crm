@@ -25,7 +25,7 @@ router.get('/', auth, async (req, res) => {
       conditions.push(sql`t.contact_id = ${contact_id}`);
     }
 
-    const whereClause = sql.join(conditions, ' AND ');
+    const whereClause = sql.join(conditions, sql` AND `);
     const orderSQL = sort === 'priority' 
       ? sql`ORDER BY CASE WHEN t.priority = 'urgent' THEN 1 WHEN t.priority = 'high' THEN 2 WHEN t.priority = 'medium' THEN 3 ELSE 4 END, t.created_at DESC`
       : sql`ORDER BY t.created_at DESC`;

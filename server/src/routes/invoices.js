@@ -34,7 +34,7 @@ router.get('/', auth, async (req, res) => {
       LEFT JOIN deals d ON d.id = i.deal_id
       LEFT JOIN contacts c ON c.id = d.contact_id
       LEFT JOIN proposals p ON p.id = i.proposal_id
-      WHERE ${sql.join(conditions, ' AND ')}
+      WHERE ${sql.join(conditions, sql` AND `)}
       ORDER BY i.created_at DESC
     `.execute(db);
     res.json(result.rows);

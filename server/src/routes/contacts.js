@@ -64,7 +64,7 @@ router.get('/', auth, async (req, res) => {
     conditions.push(sql`EXISTS (SELECT 1 FROM contact_tags ct JOIN tags t ON t.id = ct.tag_id WHERE ct.contact_id = c.id AND LOWER(t.name) = ${tag.toLowerCase()})`);
   }
 
-  const whereClause = sql.join(conditions, ' AND ');
+  const whereClause = sql.join(conditions, sql` AND `);
 
   try {
     const { rows } = await sql`

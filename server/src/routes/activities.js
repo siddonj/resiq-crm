@@ -26,7 +26,7 @@ router.get('/', auth, async (req, res) => {
       FROM activities a
       LEFT JOIN contacts c ON c.id = a.contact_id
       LEFT JOIN deals d ON d.id = a.deal_id
-      WHERE ${sql.join(conditions, ' AND ')}
+      WHERE ${sql.join(conditions, sql` AND `)}
       ORDER BY a.occurred_at DESC
       LIMIT 200
     `.execute(db);
