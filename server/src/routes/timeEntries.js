@@ -8,22 +8,9 @@ const router = express.Router();
 // List entries
 router.get('/', auth, async (req, res) => {
   const { deal_id, contact_id, billable } = req.query;
-  const conditions = [sql`t.user_id = ${req.user.id}`];
-
-  if (deal_id) {
-    conditions.push(sql`t.deal_id = ${deal_id}`);
-  }
-  if (contact_id) {
-    conditions.push(sql`t.contact_id = ${contact_id}`);
-  }
-  if (billable !== undefined) {
-    conditions.push(sql`t.billable = ${billable === 'true'}`);
-  }
-
-  const filterSQL = sql.join(conditions, ' AND ');
 
   try {
-    const result = await db.selectFrom('time_entries as t')
+    let query = db.selectFrom('time_entries as t')
       .leftJoin('deals as d', 'd.id', 't.deal_id')
       .leftJoin('contacts as c', sql`c.id = COALESCE(t.contact_id, d.contact_id)`)
       .select([
@@ -31,7 +18,19 @@ router.get('/', auth, async (req, res) => {
         'd.title as deal_title',
         'c.name as contact_name',
       ])
-      .where(filterSQL)
+      .where('t.user_id', '=', req.user.id);
+
+    if (deal_id) {
+      query = query.where('t.deal_id', '=', deal_id);
+    }
+    if (contact_id) {
+      query = query.where('t.contact_id', '=', contact_id);
+    }
+    if (billable !== undefined) {
+      query = query.where('t.billable', '=', billable === 'true');
+    }
+
+    const result = await query
       .orderBy('t.date', 'desc')
       .orderBy('t.created_at', 'desc')
       .execute();

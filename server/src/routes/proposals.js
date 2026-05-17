@@ -141,19 +141,9 @@ Rules:
 // List proposals
 router.get('/', auth, async (req, res) => {
   const { status, deal_id } = req.query;
-  const conditions = [sql`p.user_id = ${req.user.id}`];
-
-  if (status) {
-    conditions.push(sql`p.status = ${status}`);
-  }
-  if (deal_id) {
-    conditions.push(sql`p.deal_id = ${deal_id}`);
-  }
-
-  const filterSQL = sql.join(conditions, ' AND ');
 
   try {
-    const result = await db.selectFrom('proposals as p')
+    let query = db.selectFrom('proposals as p')
       .leftJoin('deals as d', 'd.id', 'p.deal_id')
       .leftJoin('contacts as c', 'c.id', 'd.contact_id')
       .select([
@@ -161,7 +151,16 @@ router.get('/', auth, async (req, res) => {
         'd.title as deal_title',
         'c.name as contact_name',
       ])
-      .where(filterSQL)
+      .where('p.user_id', '=', req.user.id);
+
+    if (status) {
+      query = query.where('p.status', '=', status);
+    }
+    if (deal_id) {
+      query = query.where('p.deal_id', '=', deal_id);
+    }
+
+    const result = await query
       .orderBy('p.created_at', 'desc')
       .execute();
     res.json(result);
