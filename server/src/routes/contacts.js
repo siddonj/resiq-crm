@@ -470,7 +470,7 @@ router.post('/from-lead', auth, async (req, res) => {
       .selectAll()
       .where('user_id', '=', req.user.id)
       .where('email', '=', lead.email)
-      .whereNotNull('email')
+      .where('email', 'is not', null)
       .executeTakeFirst();
 
     if (existing) {
