@@ -1520,29 +1520,27 @@ router.get('/multifamily/objects', async (req, res) => {
     return res.status(400).json({ error: 'Invalid objectType.' });
   }
 
-  const params = [req.user.id];
-  let whereClause = 'o.user_id = $1';
+  const conditions = [sql`o.user_id = ${req.user.id}`];
   if (objectType) {
-    params.push(objectType);
-    whereClause += ` AND o.object_type = $${params.length}`;
+    conditions.push(sql`o.object_type = ${objectType}`);
   }
 
   const result = await sql`
-SELECT
-       o.*,
-       COUNT(a.id)::int AS total_association_count,
-       COUNT(a.id) FILTER (WHERE a.entity_type = 'outbound_lead')::int AS outbound_lead_count,
-       COUNT(a.id) FILTER (WHERE a.entity_type = 'contact')::int AS contact_count,
-       COUNT(a.id) FILTER (WHERE a.entity_type = 'deal')::int AS deal_count,
-       COUNT(a.id) FILTER (WHERE a.entity_type = 'company')::int AS company_count
-     FROM multifamily_objects o
-     LEFT JOIN multifamily_object_associations a
-       ON a.object_id = o.id
-      AND a.user_id = o.user_id
-     WHERE ${whereClause}
-     GROUP BY o.id
-     ORDER BY o.object_type, o.updated_at DESC
-`.execute(db);
+    SELECT
+      o.*,
+      COUNT(a.id)::int AS total_association_count,
+      COUNT(a.id) FILTER (WHERE a.entity_type = 'outbound_lead')::int AS outbound_lead_count,
+      COUNT(a.id) FILTER (WHERE a.entity_type = 'contact')::int AS contact_count,
+      COUNT(a.id) FILTER (WHERE a.entity_type = 'deal')::int AS deal_count,
+      COUNT(a.id) FILTER (WHERE a.entity_type = 'company')::int AS company_count
+    FROM multifamily_objects o
+    LEFT JOIN multifamily_object_associations a
+      ON a.object_id = o.id
+     AND a.user_id = o.user_id
+    WHERE ${sql.join(conditions, sql` AND `)}
+    GROUP BY o.id
+    ORDER BY o.object_type, o.updated_at DESC
+  `.execute(db);
 
   return res.json({
     total: result.rows.length,
@@ -1679,50 +1677,52 @@ SELECT id
   }
 
   const params = [req.user.id, req.params.id];
-  let filter = 'a.user_id = $1 AND a.object_id = $2';
+  const conditions = [
+    sql`a.user_id = ${req.user.id}`,
+    sql`a.object_id = ${req.params.id}`
+  ];
   if (entityType) {
-    params.push(entityType);
-    filter += ` AND a.entity_type = $${params.length}`;
+    conditions.push(sql`a.entity_type = ${entityType}`);
   }
 
   const result = await sql`
-SELECT
-       a.*,
-       CASE
-         WHEN a.entity_type = 'outbound_lead' THEN l.name
-         WHEN a.entity_type = 'contact' THEN c.name
-         WHEN a.entity_type = 'deal' THEN d.title
-         WHEN a.entity_type = 'company' THEN a.company_name
-         ELSE NULL
-       END AS target_name,
-       CASE
-         WHEN a.entity_type = 'outbound_lead' THEN l.email
-         WHEN a.entity_type = 'contact' THEN c.email
-         ELSE NULL
-       END AS target_email,
-       CASE
-         WHEN a.entity_type = 'outbound_lead' THEN l.company
-         WHEN a.entity_type = 'contact' THEN c.company
-         ELSE NULL
-       END AS target_company,
-       CASE
-         WHEN a.entity_type = 'outbound_lead' THEN l.title
-         WHEN a.entity_type = 'deal' THEN d.service_line
-         ELSE NULL
-       END AS target_title
-     FROM multifamily_object_associations a
-     LEFT JOIN outbound_leads l
-       ON a.entity_type = 'outbound_lead'
-      AND l.id = a.entity_id
-     LEFT JOIN contacts c
-       ON a.entity_type = 'contact'
-      AND c.id = a.entity_id
-     LEFT JOIN deals d
-       ON a.entity_type = 'deal'
-      AND d.id = a.entity_id
-     WHERE ${filter}
-     ORDER BY a.updated_at DESC
-`.execute(db);
+    SELECT
+      a.*,
+      CASE
+        WHEN a.entity_type = 'outbound_lead' THEN l.name
+        WHEN a.entity_type = 'contact' THEN c.name
+        WHEN a.entity_type = 'deal' THEN d.title
+        WHEN a.entity_type = 'company' THEN a.company_name
+        ELSE NULL
+      END AS target_name,
+      CASE
+        WHEN a.entity_type = 'outbound_lead' THEN l.email
+        WHEN a.entity_type = 'contact' THEN c.email
+        ELSE NULL
+      END AS target_email,
+      CASE
+        WHEN a.entity_type = 'outbound_lead' THEN l.company
+        WHEN a.entity_type = 'contact' THEN c.company
+        ELSE NULL
+      END AS target_company,
+      CASE
+        WHEN a.entity_type = 'outbound_lead' THEN l.title
+        WHEN a.entity_type = 'deal' THEN d.service_line
+        ELSE NULL
+      END AS target_title
+    FROM multifamily_object_associations a
+    LEFT JOIN outbound_leads l
+      ON a.entity_type = 'outbound_lead'
+     AND l.id = a.entity_id
+    LEFT JOIN contacts c
+      ON a.entity_type = 'contact'
+     AND c.id = a.entity_id
+    LEFT JOIN deals d
+      ON a.entity_type = 'deal'
+     AND d.id = a.entity_id
+    WHERE ${sql.join(conditions, sql` AND `)}
+    ORDER BY a.updated_at DESC
+  `.execute(db);
 
   return res.json({
     total: result.rows.length,
