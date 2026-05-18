@@ -3778,46 +3778,41 @@ router.get('/linkedin/tasks/board', async (req, res) => {
     return res.status(400).json({ error: 'Invalid linkedin task status filter.' });
   }
 
-  const params = [req.user.id];
-  const filters = ['t.user_id = $1'];
+  const conditions = [sql`t.user_id = ${req.user.id}`];
   if (status) {
-    params.push(status);
-    filters.push(`t.status = $${params.length}`);
+    conditions.push(sql`t.status = ${status}`);
   }
 
-  params.push(limit);
-  const limitIdx = params.length;
-
   const tasksRes = await sql`
-SELECT
-       t.*,
-       l.name AS lead_name,
-       l.email AS lead_email,
-       l.company AS lead_company,
-       l.title AS lead_title,
-       l.total_score AS lead_total_score,
-       l.status AS lead_status,
-       l.suppression_reason AS lead_suppression_reason,
-       d.channel AS draft_channel,
-       d.status AS draft_status,
-       d.subject AS draft_subject
-     FROM linkedin_outreach_tasks t
-     LEFT JOIN outbound_leads l ON l.id = t.lead_id
-     LEFT JOIN outbound_message_drafts d ON d.id = t.draft_id
-     WHERE ${sql.raw(filters.join(' AND '))}
-     ORDER BY
-       CASE t.status
-         WHEN 'approved' THEN 1
-         WHEN 'drafted' THEN 2
-         WHEN 'pending' THEN 3
-         WHEN 'blocked' THEN 4
-         WHEN 'completed' THEN 5
-         ELSE 6
-       END,
-       t.due_at ASC NULLS LAST,
-       t.updated_at DESC
-     LIMIT ${sql.raw(String(limitIdx))}
-`.execute(db);
+    SELECT
+      t.*,
+      l.name AS lead_name,
+      l.email AS lead_email,
+      l.company AS lead_company,
+      l.title AS lead_title,
+      l.total_score AS lead_total_score,
+      l.status AS lead_status,
+      l.suppression_reason AS lead_suppression_reason,
+      d.channel AS draft_channel,
+      d.status AS draft_status,
+      d.subject AS draft_subject
+    FROM linkedin_outreach_tasks t
+    LEFT JOIN outbound_leads l ON l.id = t.lead_id
+    LEFT JOIN outbound_message_drafts d ON d.id = t.draft_id
+    WHERE ${sql.join(conditions, sql` AND `)}
+    ORDER BY
+      CASE t.status
+        WHEN 'approved' THEN 1
+        WHEN 'drafted' THEN 2
+        WHEN 'pending' THEN 3
+        WHEN 'blocked' THEN 4
+        WHEN 'completed' THEN 5
+        ELSE 6
+      END,
+      t.due_at ASC NULLS LAST,
+      t.updated_at DESC
+    LIMIT ${limit}
+  `.execute(db);
 
   const boardBuckets = outboundUtils.mapTaskBoardBuckets(tasksRes.rows);
   const usage = await getDailySendUsage(req.user.id, 'linkedin');
