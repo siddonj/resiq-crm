@@ -2064,7 +2064,7 @@ router.get('/leads', validateQuery(LeadFiltersSchema), async (req, res) => {
     `);
   }
 
-  let cursorClause = sql``;
+  let cursorClause = null;
   if (cursor) {
     try {
       const parsed = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8'));
@@ -2094,7 +2094,7 @@ router.get('/leads', validateQuery(LeadFiltersSchema), async (req, res) => {
       GROUP BY lead_id
     ) issue_counts ON issue_counts.lead_id = l.id
     WHERE ${sql.join(conditions, sql` AND `)}
-    ${cursorClause}
+    ${cursorClause || sql``}
     ORDER BY l.total_score DESC, l.id DESC
     LIMIT ${safeLimit + 1}
   `;
