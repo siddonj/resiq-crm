@@ -4848,10 +4848,9 @@ router.post('/sla/escalations/run', async (req, res) => {
  */
 router.get('/notifications', async (req, res) => {
   const unreadOnly = req.query.unreadOnly === 'true';
-  const whereExtra = unreadOnly ? 'AND is_read = FALSE' : '';
   const rows = await sql`
 SELECT * FROM outbound_notifications
-     WHERE user_id = ${req.user.id} ${whereExtra}
+     WHERE user_id = ${req.user.id} ${unreadOnly ? sql`AND is_read = FALSE` : sql``}
      ORDER BY is_read ASC, created_at DESC
      LIMIT 100
 `.execute(db);
