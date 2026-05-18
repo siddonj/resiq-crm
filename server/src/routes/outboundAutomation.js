@@ -3828,7 +3828,7 @@ SELECT
        END,
        t.due_at ASC NULLS LAST,
        t.updated_at DESC
-     LIMIT $${limitIdx}
+     LIMIT ${sql.raw(String(limitIdx))}
 `.execute(db);
 
   const boardBuckets = outboundUtils.mapTaskBoardBuckets(tasksRes.rows);
