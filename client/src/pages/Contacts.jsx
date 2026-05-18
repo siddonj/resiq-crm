@@ -335,7 +335,7 @@ export default function Contacts() {
 
       {/* Contact Detail Modal */}
       {showDetailModal && selectedContact && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+        <div className="fixed inset-0 bg-black/40 flex items-start sm:items-center justify-center z-50 px-4 py-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
             <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between bg-white flex-shrink-0">
               <div>
@@ -495,14 +495,14 @@ export default function Contacts() {
 
       {/* Add Contact Modal */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
-            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
+        <div className="fixed inset-0 bg-black/40 flex items-start sm:items-center justify-center z-50 px-4 py-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
               <h3 className="font-syne text-lg font-bold text-navy">{editingId ? 'Edit Contact' : 'New Contact'}</h3>
               <button onClick={closeModal} className="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
             </div>
 
-            <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+            <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
               {formError && (
                 <div className="px-4 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">{formError}</div>
               )}
