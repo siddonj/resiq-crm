@@ -1909,7 +1909,7 @@ INSERT INTO multifamily_object_associations
 INSERT INTO multifamily_object_associations
         (user_id, object_id, object_type, entity_type, entity_id, company_name, target_key, metadata, updated_at)
        VALUES
-        (${req.user.id}, ${object.id}, ${object.object_type}, ${entityType}, $5, NULL, ${entityId}, ${JSON.stringify(metadata)}::jsonb, NOW())
+        (${req.user.id}, ${object.id}, ${object.object_type}, ${entityType}, ${entityId}, NULL, ${entityId}, ${JSON.stringify(metadata)}::jsonb, NOW())
        ON CONFLICT (user_id, object_id, entity_type, target_key)
        DO UPDATE SET
          metadata = EXCLUDED.metadata,
