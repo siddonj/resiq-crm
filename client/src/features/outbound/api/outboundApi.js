@@ -99,6 +99,9 @@ export const outboundApi = {
   deleteLead: (token, leadId) =>
     axios.delete(`/api/outbound/leads/${leadId}`, getAuthHeaders(token)),
 
+  addLeadToContacts: (token, leadId) =>
+    axios.post('/api/contacts/from-lead', { leadId }, getAuthHeaders(token)),
+
   // SLA
   getSlaAlerts: (token) =>
     axios.get('/api/outbound/sla/alerts', getAuthHeaders(token)),

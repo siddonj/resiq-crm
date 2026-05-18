@@ -291,6 +291,16 @@ export function useDeleteLead(token) {
   })
 }
 
+export function useAddLeadToContacts(token) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (leadId) => outboundApi.addLeadToContacts(token, leadId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['outbound', 'leads'] })
+    },
+  })
+}
+
 export function useSlaAlerts(token) {
   return useQuery({
     queryKey: QK.slaAlerts,

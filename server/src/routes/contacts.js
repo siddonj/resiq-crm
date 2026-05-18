@@ -447,6 +447,90 @@ router.post('/enrich-all', auth, async (req, res) => {
   }
 });
 
+// Convert a lead into a contact
+router.post('/from-lead', auth, async (req, res) => {
+  const { leadId } = req.body;
+  if (!leadId) {
+    return res.status(400).json({ error: 'leadId is required' });
+  }
+  try {
+    // Fetch the lead
+    const lead = await db.selectFrom('outbound_leads')
+      .selectAll()
+      .where('id', '=', leadId)
+      .where('user_id', '=', req.user.id)
+      .executeTakeFirst();
+
+    if (!lead) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+
+    // Check if contact already exists with same email
+    const existing = await db.selectFrom('contacts')
+      .selectAll()
+      .where('user_id', '=', req.user.id)
+      .where('email', '=', lead.email)
+      .whereNotNull('email')
+      .executeTakeFirst();
+
+    if (existing) {
+      return res.status(409).json({ error: 'Contact already exists with this email', contactId: existing.id });
+    }
+
+    // Create the contact from the lead data
+    const newContact = await db.insertInto('contacts')
+      .values({
+        user_id: req.user.id,
+        name: lead.name,
+        email: lead.email,
+        phone: lead.phone,
+        company: lead.company,
+        type: 'prospect',
+        service_line: null,
+        notes: lead.notes,
+        custom_fields: JSON.stringify({
+          source: 'lead_conversion',
+          lead_id: lead.id,
+          title: lead.title,
+          linkedin_url: lead.linkedin_url,
+          website: lead.website,
+          location: lead.location,
+          fit_score: lead.fit_score,
+          intent_score: lead.intent_score,
+          total_score: lead.total_score,
+          dedupe_key: lead.dedupe_key,
+        }),
+        job_title: lead.title || null,
+        linkedin_url: lead.linkedin_url || null,
+        company_website: lead.website || null,
+        industry: null,
+        company_size: null,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    logAction(req.user.id, req.user.email, 'convert_lead_to_contact', 'contact', newContact.id, newContact.name);
+
+    // Remove any workflow triggers that use 'contact.created'
+    if (workflowEngine) {
+      const tags = await db.selectFrom('tags')
+        .innerJoin('contact_tags', 'contact_tags.tag_id', 'tags.id')
+        .where('contact_tags.contact_id', '=', newContact.id)
+        .select(['tags.id', 'tags.name'])
+        .execute();
+      workflowEngine.dispatchTrigger('contact.created', {
+        contact: { id: newContact.id, name: newContact.name, email: newContact.email, company: newContact.company, type: newContact.type, tags: tags.map(t => t.name) },
+        user_id: req.user.id,
+      }).catch(err => console.error('Error dispatching workflow trigger:', err));
+    }
+
+    res.status(201).json(newContact);
+  } catch (err) {
+    console.error('Error converting lead to contact:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 function setWorkflowEngine(engine) { workflowEngine = engine; }
 
 module.exports = router;

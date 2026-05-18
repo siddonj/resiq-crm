@@ -18,6 +18,7 @@ export default function LeadTable({
   onRescoreLead,
   onEnrollLeadInSequence,
   onAssociateObjectToLead,
+  onAddLeadToContact,
   onGenerateDraft,
   onSuppression,
   onDeleteLead,
@@ -171,6 +172,15 @@ export default function LeadTable({
                         Tag
                       </button>
                     </>
+                  )}
+                  {onAddLeadToContact && (
+                    <button
+                      onClick={() => onAddLeadToContact(lead.id)}
+                      disabled={busyKey === `contact-${lead.id}` || !lead.email}
+                      className="text-xs border border-teal/40 text-teal rounded px-2 py-1 hover:bg-teal/5 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Add to Contacts
+                    </button>
                   )}
                   <button
                     onClick={() => onGenerateDraft(lead, 'email')}

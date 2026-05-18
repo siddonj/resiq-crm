@@ -53,6 +53,7 @@ import {
   useCreateSavedView,
   useDeleteSavedView,
   useDeleteLead,
+  useAddLeadToContacts,
   useCreateEscalation,
   useToggleEscalation,
   useRunEscalations,
@@ -435,6 +436,7 @@ export default function OutboundAutomation() {
   const createSavedView = useCreateSavedView(token)
   const deleteSavedView = useDeleteSavedView(token)
   const deleteLead = useDeleteLead(token)
+  const addLeadToContacts = useAddLeadToContacts(token)
   const createEscalation = useCreateEscalation(token)
   const toggleEscalation = useToggleEscalation(token)
   const runEscalations = useRunEscalations(token)
@@ -938,10 +940,25 @@ export default function OutboundAutomation() {
   }
 
   const handleDeleteLead = async (leadId) => {
-    if (!window.confirm('Are you sure you want to permanently delete this lead? This cannot be undone.')) return
     await runAction(`delete-lead-${leadId}`, async () => {
       await deleteLead.mutateAsync(leadId)
       setMessage('Lead deleted.')
+    })
+  }
+
+  const handleAddLeadToContact = async (leadId) => {
+    await runAction(`contact-${leadId}`, async () => {
+      try {
+        await addLeadToContacts.mutateAsync(leadId)
+        setMessage('Lead added to contacts.')
+      } catch (err) {
+        const msg = err.response?.data?.error || 'Failed to add lead to contacts.'
+        if (msg.includes('already exists')) {
+          setMessage('A contact with this email already exists.')
+        } else {
+          setError(msg)
+        }
+      }
     })
   }
 
@@ -1676,6 +1693,7 @@ export default function OutboundAutomation() {
               onRescoreLead={handleRescoreLead}
               onEnrollLeadInSequence={handleEnrollLeadInSequence}
               onAssociateObjectToLead={handleAssociateObjectToLead}
+              onAddLeadToContact={handleAddLeadToContact}
               onGenerateDraft={handleGenerateDraft}
               onSuppression={handleSuppression}
               onDeleteLead={handleDeleteLead}
