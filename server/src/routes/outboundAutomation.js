@@ -2608,19 +2608,7 @@ router.get('/data-quality/issues', async (req, res) => {
 
   await syncDataQualityIssuesForUser(req.user.id);
 
-  const params = [req.user.id];
-  const filters = ['i.user_id = $1'];
-  if (status) {
-    params.push(status);
-    filters.push(`i.status = $${params.length}`);
-  }
-  if (issueType) {
-    params.push(issueType);
-    filters.push(`i.issue_type = $${params.length}`);
-  }
-
-  const [issuesRes, summaryRes] = await Promise.all([
-    sql`
+  const baseQuery = sql`
 SELECT
          i.*,
          l.name AS lead_name,
@@ -2630,7 +2618,9 @@ SELECT
          l.status AS lead_status
        FROM data_quality_issues i
        LEFT JOIN outbound_leads l ON l.id = i.lead_id
-       WHERE ${sql.raw(filters.join(' AND '))}
+       WHERE i.user_id = ${req.user.id}
+         ${status ? sql`AND i.status = ${status}` : sql``}
+         ${issueType ? sql`AND i.issue_type = ${issueType}` : sql``}
        ORDER BY
          CASE i.severity
            WHEN 'high' THEN 1
@@ -2638,8 +2628,11 @@ SELECT
            ELSE 3
          END,
          i.updated_at DESC
-       LIMIT ${sql.raw(String(limit))}
-`.execute(db),
+       LIMIT ${limit}
+`;
+
+  const [issuesRes, summaryRes] = await Promise.all([
+    baseQuery.execute(db),
     sql`
 SELECT
          COUNT(*) FILTER (WHERE status = 'open')::int AS open_count,
@@ -2649,7 +2642,7 @@ SELECT
          (
            SELECT COUNT(*)::int
            FROM data_quality_merge_operations m
-           WHERE m.user_id = $1
+           WHERE m.user_id = ${req.user.id}
              AND m.created_at >= NOW() - INTERVAL '30 days'
          ) AS merge_count_30d
        FROM data_quality_issues
@@ -4814,28 +4807,25 @@ INSERT INTO outbound_sla_escalations
  */
 router.patch('/sla/escalations/:id', async (req, res) => {
   const { isEnabled, thresholdOverride, action } = req.body;
-  const sets = [];
-  const vals = [req.params.id, req.user.id];
 
+  const setClauses = [];
   if (typeof isEnabled === 'boolean') {
-    sets.push(`is_enabled = $${vals.length + 1}`);
-    vals.push(isEnabled);
+    setClauses.push(sql`is_enabled = ${isEnabled}`);
   }
   if (thresholdOverride !== undefined) {
-    sets.push(`threshold_override = $${vals.length + 1}`);
-    vals.push(thresholdOverride !== null ? Number(thresholdOverride) : null);
+    setClauses.push(sql`threshold_override = ${thresholdOverride !== null ? Number(thresholdOverride) : null}`);
   }
   if (action !== undefined) {
     if (!VALID_ESCALATION_ACTIONS.has(action)) {
       return res.status(400).json({ error: 'action must be notify or log_event.' });
     }
-    sets.push(`action = $${vals.length + 1}`);
-    vals.push(action);
+    setClauses.push(sql`action = ${action}`);
   }
-  if (sets.length === 0) return res.status(400).json({ error: 'No fields to update.' });
+  if (setClauses.length === 0) return res.status(400).json({ error: 'No fields to update.' });
 
   const result = await sql`
-UPDATE outbound_sla_escalations SET ${sql.raw(sets.join(', '))}
+UPDATE outbound_sla_escalations
+     SET ${setClauses.reduce((acc, clause, i) => sql`${acc}${i > 0 ? sql`, ` : sql``}${clause}`, sql``)}
      WHERE id = ${req.params.id} AND user_id = ${req.user.id} RETURNING *
 `.execute(db);
   if (result.rows.length === 0) return res.status(404).json({ error: 'Escalation rule not found.' });
