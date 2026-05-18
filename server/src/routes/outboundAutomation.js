@@ -1360,32 +1360,8 @@ router.get('/multifamily/entities', async (req, res) => {
     return res.status(400).json({ error: 'Invalid entityType. Use contact, deal, or company.' });
   }
 
-  const params = [req.user.id];
-  let searchFilter = '';
-
-  if (search) {
-    params.push(`%${search}%`);
-    const searchIdx = params.length;
-    if (entityType === 'contact') {
-      searchFilter = `AND (
-        c.name ILIKE $${searchIdx}
-        OR COALESCE(c.email, '') ILIKE $${searchIdx}
-        OR COALESCE(c.company, '') ILIKE $${searchIdx}
-      )`;
-    } else if (entityType === 'deal') {
-      searchFilter = `AND (
-        d.title ILIKE $${searchIdx}
-        OR COALESCE(c.name, '') ILIKE $${searchIdx}
-        OR COALESCE(c.company, '') ILIKE $${searchIdx}
-        OR COALESCE(d.service_line, '') ILIKE $${searchIdx}
-      )`;
-    } else {
-      searchFilter = `AND company_name ILIKE $${searchIdx}`;
-    }
-  }
-
-  params.push(limit);
-  const limitIdx = params.length;
+  const userId = req.user.id;
+  const searchPattern = search ? `%${search}%` : null;
 
   if (entityType === 'contact') {
     const result = await sql`
@@ -1404,10 +1380,16 @@ SELECT
              AND moa.entity_id = c.id
          ) AS association_count
        FROM contacts c
-       WHERE c.user_id = $1
-       ${searchFilter}
+       WHERE c.user_id = ${userId}
+       ${search ? sql`
+         AND (
+           c.name ILIKE ${searchPattern}
+           OR COALESCE(c.email, '') ILIKE ${searchPattern}
+           OR COALESCE(c.company, '') ILIKE ${searchPattern}
+         )
+       ` : sql``}
        ORDER BY association_count DESC, c.created_at DESC
-       LIMIT $${limitIdx}
+       LIMIT ${sql.raw(String(limit))}
 `.execute(db);
 
     return res.json({
@@ -1445,10 +1427,17 @@ SELECT
          ) AS association_count
        FROM deals d
        LEFT JOIN contacts c ON c.id = d.contact_id
-       WHERE d.user_id = $1
-       ${searchFilter}
+       WHERE d.user_id = ${userId}
+       ${search ? sql`
+         AND (
+           d.title ILIKE ${searchPattern}
+           OR COALESCE(c.name, '') ILIKE ${searchPattern}
+           OR COALESCE(c.company, '') ILIKE ${searchPattern}
+           OR COALESCE(d.service_line, '') ILIKE ${searchPattern}
+         )
+       ` : sql``}
        ORDER BY association_count DESC, d.created_at DESC
-       LIMIT $${limitIdx}
+       LIMIT ${sql.raw(String(limit))}
 `.execute(db);
 
     return res.json({
@@ -1478,13 +1467,13 @@ WITH company_rollup AS (
        FROM (
          SELECT company, 'contact'::text AS source
          FROM contacts
-         WHERE user_id = $1
+         WHERE user_id = ${userId}
            AND company IS NOT NULL
            AND BTRIM(company) <> ''
          UNION ALL
          SELECT company, 'outbound_lead'::text AS source
          FROM outbound_leads
-         WHERE user_id = $1
+         WHERE user_id = ${userId}
            AND company IS NOT NULL
            AND BTRIM(company) <> ''
        ) companies
@@ -1497,15 +1486,15 @@ WITH company_rollup AS (
        (
          SELECT COUNT(*)::int
          FROM multifamily_object_associations moa
-         WHERE moa.user_id = $1
+         WHERE moa.user_id = ${userId}
            AND moa.entity_type = 'company'
            AND LOWER(BTRIM(moa.company_name)) = company_rollup.company_key
        ) AS association_count
      FROM company_rollup
      WHERE 1 = 1
-     ${searchFilter}
+     ${search ? sql`AND company_name ILIKE ${searchPattern}` : sql``}
      ORDER BY association_count DESC, (contact_count + lead_count) DESC, company_name ASC
-     LIMIT $${limitIdx}
+     LIMIT ${sql.raw(String(limit))}
 `.execute(db);
 
   return res.json({
@@ -2629,7 +2618,6 @@ router.get('/data-quality/issues', async (req, res) => {
     params.push(issueType);
     filters.push(`i.issue_type = $${params.length}`);
   }
-  params.push(limit);
 
   const [issuesRes, summaryRes] = await Promise.all([
     sql`
@@ -2650,7 +2638,7 @@ SELECT
            ELSE 3
          END,
          i.updated_at DESC
-       LIMIT $${params.length}
+       LIMIT ${sql.raw(String(limit))}
 `.execute(db),
     sql`
 SELECT
