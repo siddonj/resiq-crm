@@ -218,6 +218,7 @@ export default function OutboundAutomation() {
     actionType: 'set_status',
     status: 'qualified',
     reason: '',
+    confirmDelete: false,
   })
   const [importConfig, setImportConfig] = useState({
     sourceType: 'csv',
@@ -674,10 +675,17 @@ export default function OutboundAutomation() {
       }
       payload.reason = reason
     }
+    if (actionType === 'delete' && !bulkActionForm.confirmDelete) {
+      setError('Check the confirmation box before running bulk delete.')
+      return
+    }
     await runAction(`bulk-action-${actionType}`, async () => {
       await bulkAction.mutateAsync({ leadIds: selectedLeadIds, actionType, payload })
       setMessage(`Bulk action "${actionType}" updated leads.`)
       setSelectedLeadMap({})
+      if (actionType === 'delete') {
+        setBulkActionForm((prev) => ({ ...prev, confirmDelete: false }))
+      }
     })
   }
 
@@ -1575,13 +1583,20 @@ export default function OutboundAutomation() {
           <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
             <select
               value={bulkActionForm.actionType}
-              onChange={(event) => setBulkActionForm((prev) => ({ ...prev, actionType: event.target.value }))}
+              onChange={(event) =>
+                setBulkActionForm((prev) => ({
+                  ...prev,
+                  actionType: event.target.value,
+                  confirmDelete: event.target.value === 'delete' ? prev.confirmDelete : false,
+                }))
+              }
               className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
             >
               <option value="set_status">Set Status</option>
               <option value="suppress">Suppress</option>
               <option value="unsuppress">Unsuppress</option>
               <option value="rescore">Rescore</option>
+              <option value="delete">Delete</option>
             </select>
             {bulkActionForm.actionType === 'set_status' && (
               <select
@@ -1604,6 +1619,18 @@ export default function OutboundAutomation() {
                 placeholder="Suppression reason"
                 className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
               />
+            )}
+            {bulkActionForm.actionType === 'delete' && (
+              <label className="flex items-center gap-2 text-xs text-rose-700 border border-rose-200 rounded-lg px-3 py-2 bg-rose-50">
+                <input
+                  type="checkbox"
+                  checked={Boolean(bulkActionForm.confirmDelete)}
+                  onChange={(event) =>
+                    setBulkActionForm((prev) => ({ ...prev, confirmDelete: event.target.checked }))
+                  }
+                />
+                Confirm permanent delete for selected leads
+              </label>
             )}
             <button
               onClick={handleRunBulkAction}

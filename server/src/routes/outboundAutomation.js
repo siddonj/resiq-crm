@@ -2320,7 +2320,7 @@ DELETE FROM outbound_saved_views
 
 /**
  * POST /api/outbound/leads/bulk
- * Body: { leadIds: string[], actionType: set_status|suppress|unsuppress|rescore, payload?: {} }
+ * Body: { leadIds: string[], actionType: set_status|suppress|unsuppress|rescore|delete, payload?: {} }
  */
 router.post('/leads/bulk', validateBody(BulkActionSchema), async (req, res) => {
   const { leadIds, actionType, payload } = req.validatedBody;
@@ -2461,6 +2461,17 @@ UPDATE outbound_leads
         source: 'bulk_rescore',
       });
       updatedLeadIds.push(lead.id);
+      continue;
+    }
+
+    if (actionType === 'delete') {
+      await sql`
+DELETE FROM outbound_leads
+         WHERE id = ${lead.id}
+           AND user_id = ${req.user.id}
+`.execute(db);
+      updatedLeadIds.push(lead.id);
+      continue;
     }
   }
 

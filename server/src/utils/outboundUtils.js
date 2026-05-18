@@ -70,7 +70,7 @@ const VALID_DRAFT_STATUSES = new Set(['drafted', 'approved', 'sent', 'archived']
 const VALID_DRAFT_CHANNELS = new Set(['email', 'linkedin']);
 const VALID_LINKEDIN_TASK_STATUSES = new Set(['pending', 'drafted', 'approved', 'completed', 'skipped', 'blocked']);
 const VALID_OUTBOUND_SAVED_VIEW_SCOPES = new Set(['outbound_leads']);
-const VALID_OUTBOUND_BULK_ACTIONS = new Set(['set_status', 'suppress', 'unsuppress', 'rescore']);
+const VALID_OUTBOUND_BULK_ACTIONS = new Set(['set_status', 'suppress', 'unsuppress', 'rescore', 'delete']);
 
 const SEND_EVENT_TYPES = {
   email: ['draft_sent'],

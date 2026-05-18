@@ -37,7 +37,7 @@ const RuleActionType = z.enum([
   'suppress_lead', 'log_event', 'enroll_sequence',
 ])
 const SavedViewScope = z.enum(['outbound_leads'])
-const BulkActionType = z.enum(['set_status', 'suppress', 'unsuppress', 'rescore'])
+const BulkActionType = z.enum(['set_status', 'suppress', 'unsuppress', 'rescore', 'delete'])
 
 // --- Schemas ---
 
