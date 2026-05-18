@@ -20,6 +20,7 @@ export default function LeadTable({
   onAssociateObjectToLead,
   onGenerateDraft,
   onSuppression,
+  onDeleteLead,
 }) {
   if (!leads || leads.length === 0) {
     return <div className="text-sm text-brand-gray">No leads found with the current filters.</div>;
@@ -202,6 +203,13 @@ export default function LeadTable({
                       Suppress
                     </button>
                   )}
+                  <button
+                    onClick={() => onDeleteLead(lead.id)}
+                    disabled={busyKey === `delete-lead-${lead.id}`}
+                    className="text-xs border border-red-200 text-red-700 rounded px-2 py-1 hover:bg-red-50 disabled:opacity-60"
+                  >
+                    Delete
+                  </button>
                 </div>
               </td>
             </tr>

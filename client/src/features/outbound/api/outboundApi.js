@@ -95,6 +95,10 @@ export const outboundApi = {
   deleteSavedView: (token, viewId) =>
     axios.delete(`/api/outbound/saved-views/${viewId}`, getAuthHeaders(token)),
 
+  // Leads
+  deleteLead: (token, leadId) =>
+    axios.delete(`/api/outbound/leads/${leadId}`, getAuthHeaders(token)),
+
   // SLA
   getSlaAlerts: (token) =>
     axios.get('/api/outbound/sla/alerts', getAuthHeaders(token)),

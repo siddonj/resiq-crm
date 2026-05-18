@@ -280,6 +280,17 @@ export function useDeleteSavedView(token) {
   })
 }
 
+export function useDeleteLead(token) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (leadId) => outboundApi.deleteLead(token, leadId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['outbound', 'leads'] })
+      qc.invalidateQueries({ queryKey: QK.analytics })
+    },
+  })
+}
+
 export function useSlaAlerts(token) {
   return useQuery({
     queryKey: QK.slaAlerts,

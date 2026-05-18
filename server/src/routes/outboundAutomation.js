@@ -2103,6 +2103,30 @@ router.get('/leads', validateQuery(LeadFiltersSchema), async (req, res) => {
 });
 
 /**
+ * DELETE /api/outbound/leads/:id
+ * Hard-deletes a lead and all cascade-related records.
+ */
+router.delete('/leads/:id', async (req, res) => {
+  const deletedRes = await sql`
+DELETE FROM outbound_leads
+     WHERE id = ${req.params.id}
+       AND user_id = ${req.user.id}
+     RETURNING id, name, email, company
+`.execute(db);
+
+  if (!deletedRes.rows.length) {
+    return res.status(404).json({ error: 'Lead not found.' });
+  }
+
+  const deleted = deletedRes.rows[0];
+  logAction(req.user.id, req.user.email, 'outbound_lead_deleted', 'outbound_lead', deleted.id, deleted.name, {
+    email: deleted.email,
+    company: deleted.company,
+  });
+  return res.status(204).send();
+});
+
+/**
  * GET /api/outbound/saved-views
  * Query: scope=outbound_leads
  */

@@ -52,6 +52,7 @@ import {
   useRebalanceLinkedinTasks,
   useCreateSavedView,
   useDeleteSavedView,
+  useDeleteLead,
   useCreateEscalation,
   useToggleEscalation,
   useRunEscalations,
@@ -433,6 +434,7 @@ export default function OutboundAutomation() {
   const rebalanceLinkedinTasks = useRebalanceLinkedinTasks(token)
   const createSavedView = useCreateSavedView(token)
   const deleteSavedView = useDeleteSavedView(token)
+  const deleteLead = useDeleteLead(token)
   const createEscalation = useCreateEscalation(token)
   const toggleEscalation = useToggleEscalation(token)
   const runEscalations = useRunEscalations(token)
@@ -932,6 +934,14 @@ export default function OutboundAutomation() {
       }
       await suppressLead.mutateAsync({ leadId: lead.id, suppressed, reason: suppressed ? reason.trim() : null })
       setMessage(suppressed ? 'Lead suppressed.' : 'Lead unsuppressed.')
+    })
+  }
+
+  const handleDeleteLead = async (leadId) => {
+    if (!window.confirm('Are you sure you want to permanently delete this lead? This cannot be undone.')) return
+    await runAction(`delete-lead-${leadId}`, async () => {
+      await deleteLead.mutateAsync(leadId)
+      setMessage('Lead deleted.')
     })
   }
 
@@ -1668,6 +1678,7 @@ export default function OutboundAutomation() {
               onAssociateObjectToLead={handleAssociateObjectToLead}
               onGenerateDraft={handleGenerateDraft}
               onSuppression={handleSuppression}
+              onDeleteLead={handleDeleteLead}
             />
             {hasMoreLeads && (
               <div className="pt-4 text-center">
