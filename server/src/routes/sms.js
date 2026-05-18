@@ -33,7 +33,7 @@ async function updateContact(contactId, updates) {
   
   if (setClauses.length === 0) return;
   
-  await sql`UPDATE clients SET ${sql.join(setClauses, ', ')} WHERE id = ${contactId}`.execute(db);
+  await sql`UPDATE clients SET ${sql.join(setClauses, sql`, `)} WHERE id = ${contactId}`.execute(db);
 }
 
 // Helper to log activity
