@@ -808,31 +808,28 @@ function buildDuplicateGroupIndex(leads) {
  */
 function buildLeadDataQualityIssueCandidates(lead) {
   const issues = [];
-  const now = new Date();
   
   // Check for missing name
   if (!lead.name || lead.name.trim() === '') {
     issues.push({
-      lead_id: lead.id,
-      issue_type: 'missing_name',
+      leadId: lead.id,
+      issueType: 'missing_name',
+      issueKey: `missing_name:${lead.id}`,
       severity: 'medium',
-      message: 'Lead name is missing',
-      status: 'open',
-      created_at: now,
-      updated_at: now,
+      isBlocking: false,
+      details: { message: 'Lead name is missing' },
     });
   }
   
   // Check for invalid/missing email
   if (!lead.email || !lead.email.includes('@')) {
     issues.push({
-      lead_id: lead.id,
-      issue_type: 'invalid_email',
+      leadId: lead.id,
+      issueType: 'invalid_email',
+      issueKey: `invalid_email:${lead.id}`,
       severity: 'high',
-      message: 'Lead email is missing or invalid',
-      status: 'open',
-      created_at: now,
-      updated_at: now,
+      isBlocking: true,
+      details: { message: 'Lead email is missing or invalid' },
     });
   }
   
