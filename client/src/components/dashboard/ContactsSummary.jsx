@@ -29,9 +29,9 @@ export default function ContactsSummary() {
   if (!data) return <div className="text-sm text-brand-gray">No data</div>
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-sm font-semibold text-navy">Contact Management</h3>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div className="space-y-2 sm:space-y-4">
+      <h3 className="text-[11px] sm:text-sm font-semibold text-navy">Contact Management</h3>
+      <div className="grid grid-cols-2 gap-2 sm:gap-4">
         <DashboardCard
           title="Total Contacts"
           value={data.total}
@@ -63,12 +63,12 @@ export default function ContactsSummary() {
       </div>
 
       {data.top_tags && data.top_tags.length > 0 && (
-        <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-          <p className="text-xs font-semibold text-navy mb-3">Top Tags</p>
-          <div className="flex flex-wrap gap-2">
+        <div className="mt-2 sm:mt-4 p-2 sm:p-4 bg-gray-50 rounded-lg">
+          <p className="text-[10px] sm:text-xs font-semibold text-navy mb-2 sm:mb-3">Top Tags</p>
+          <div className="flex flex-wrap gap-1 sm:gap-2">
             {data.top_tags.map((tag, idx) => (
-              <span key={idx} className="inline-block px-3 py-1 bg-white border border-gray-200 text-xs font-medium text-navy rounded-full">
-                {tag.name} <span className="text-brand-gray ml-1">({tag.count})</span>
+              <span key={idx} className="inline-block px-2 sm:px-3 py-0.5 sm:py-1 bg-white border border-gray-200 text-[10px] sm:text-xs font-medium text-navy rounded-full">
+                {tag.name} <span className="text-brand-gray ml-0.5 sm:ml-1">({tag.count})</span>
               </span>
             ))}
           </div>

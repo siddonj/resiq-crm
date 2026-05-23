@@ -34,11 +34,11 @@ export default function EmailMetrics() {
   if (!summary) return <div className="text-sm text-brand-gray">No data</div>
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-sm font-semibold text-navy">Email Activity</h3>
+    <div className="space-y-2 sm:space-y-4">
+      <h3 className="text-[11px] sm:text-sm font-semibold text-navy">Email Activity</h3>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-2 sm:gap-4">
         <DashboardCard
           title="Total Emails"
           value={summary.total}
@@ -71,14 +71,14 @@ export default function EmailMetrics() {
 
       {/* Top Emailed Contacts */}
       {topContacts && topContacts.length > 0 && (
-        <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-          <p className="text-xs font-semibold text-navy mb-3">Most Emailed Contacts</p>
-          <div className="space-y-2 max-h-48 overflow-y-auto">
+        <div className="mt-2 sm:mt-4 p-2 sm:p-4 bg-gray-50 rounded-lg">
+          <p className="text-[10px] sm:text-xs font-semibold text-navy mb-2 sm:mb-3">Most Emailed Contacts</p>
+          <div className="space-y-1.5 sm:space-y-2 max-h-36 sm:max-h-48 overflow-y-auto">
             {topContacts.map((contact) => (
-              <div key={contact.contact_id} className="flex items-center justify-between p-2 bg-white rounded border border-gray-200">
-                <div>
-                  <p className="text-sm font-medium text-navy">{contact.contact_name}</p>
-                  <p className="text-xs text-brand-gray">{contact.email_count} emails • {contact.thread_count} threads</p>
+              <div key={contact.contact_id} className="flex items-center justify-between p-1.5 sm:p-2 bg-white rounded border border-gray-200">
+                <div className="min-w-0">
+                  <p className="text-[11px] sm:text-sm font-medium text-navy truncate">{contact.contact_name}</p>
+                  <p className="text-[9px] sm:text-xs text-brand-gray">{contact.email_count} emails • {contact.thread_count} threads</p>
                 </div>
                 <p className="text-xs text-brand-gray whitespace-nowrap ml-2">
                   {contact.last_email_date

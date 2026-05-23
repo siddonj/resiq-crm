@@ -37,11 +37,11 @@ export default function WorkflowMetrics() {
   const workflowList = Array.isArray(topWorkflows) ? topWorkflows : []
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-sm font-semibold text-navy">Workflow Automation</h3>
+    <div className="space-y-2 sm:space-y-4">
+      <h3 className="text-[11px] sm:text-sm font-semibold text-navy">Workflow Automation</h3>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-2 sm:gap-4">
         <DashboardCard
           title="Workflows"
           value={workflows.total}
@@ -74,18 +74,18 @@ export default function WorkflowMetrics() {
 
       {/* Top Workflows */}
       {workflowList.length > 0 && (
-        <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-          <p className="text-xs font-semibold text-navy mb-3">Most Active Workflows</p>
-          <div className="space-y-3">
+        <div className="mt-2 sm:mt-4 p-2 sm:p-4 bg-gray-50 rounded-lg">
+          <p className="text-[10px] sm:text-xs font-semibold text-navy mb-2 sm:mb-3">Most Active Workflows</p>
+          <div className="space-y-1.5 sm:space-y-3">
             {workflowList.map((wf, idx) => {
               const successRate = Number(wf.success_rate || 0)
               return (
-              <div key={idx} className="p-3 bg-white rounded border border-gray-200">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-medium text-navy">{wf.workflow_name}</p>
-                  <span className="text-xs font-semibold text-teal">{wf.execution_count} runs</span>
+              <div key={idx} className="p-2 sm:p-3 bg-white rounded border border-gray-200">
+                <div className="flex items-center justify-between mb-1 sm:mb-2">
+                  <p className="text-[11px] sm:text-sm font-medium text-navy truncate">{wf.workflow_name}</p>
+                  <span className="text-[10px] sm:text-xs font-semibold text-teal flex-shrink-0 ml-2">{wf.execution_count} runs</span>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 sm:gap-3">
                   <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-emerald-500 rounded-full"

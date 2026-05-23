@@ -34,11 +34,11 @@ export default function PipelineSummary() {
   if (!data) return <div className="text-sm text-brand-gray">No data</div>
 
   return (
-    <div className="space-y-4">
-      <h3 className="text-sm font-semibold text-navy">Sales Pipeline</h3>
+    <div className="space-y-2 sm:space-y-4">
+      <h3 className="text-[11px] sm:text-sm font-semibold text-navy">Sales Pipeline</h3>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-2 sm:gap-4">
         <DashboardCard
           title="Active Deals"
           value={data.active_count}
@@ -71,13 +71,13 @@ export default function PipelineSummary() {
 
       {/* Deal Stage Breakdown */}
       {byStage && byStage.length > 0 && (
-        <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-          <p className="text-xs font-semibold text-navy mb-3">Deals by Stage</p>
-          <div className="space-y-3">
+        <div className="mt-2 sm:mt-4 p-2 sm:p-4 bg-gray-50 rounded-lg">
+          <p className="text-[10px] sm:text-xs font-semibold text-navy mb-2 sm:mb-3">Deals by Stage</p>
+          <div className="space-y-1.5 sm:space-y-3">
             {byStage.map((stage, idx) => (
               <div key={idx} className="flex items-center justify-between">
-                <span className="text-xs font-medium text-navy capitalize">{stage.stage}</span>
-                <div className="flex items-center gap-3 flex-1 ml-4">
+                <span className="text-[10px] sm:text-xs font-medium text-navy capitalize">{stage.stage}</span>
+                <div className="flex items-center gap-1.5 sm:gap-3 flex-1 ml-2 sm:ml-4">
                   <div className="flex-1 h-2 bg-white rounded-full overflow-hidden">
                     <div
                       className="h-full rounded-full"
