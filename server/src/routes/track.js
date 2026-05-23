@@ -202,3 +202,72 @@ router.get('/asset/:assetType/:assetId', requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+
+// ── Campaign Tracking ──────────────────────────────────────────────────────────
+
+// Open tracking pixel: /api/track/c/:campaignId/:trackingId.png
+router.get('/c/:campaignId/:trackingId\\.png', async (req, res) => {
+  const { campaignId, trackingId } = req.params;
+
+  try {
+    const recipient = await db
+      .updateTable('campaign_recipients')
+      .set({
+        status: sql`CASE WHEN status = 'sent' THEN 'opened' ELSE status END`,
+        opened_at: sql`COALESCE(opened_at, NOW())`,
+      })
+      .where('tracking_id', '=', trackingId)
+      .where('campaign_id', '=', campaignId)
+      .where('status', '=', 'sent')
+      .returning(['campaign_id'])
+      .executeTakeFirst();
+
+    if (recipient) {
+      await db
+        .updateTable('email_campaigns')
+        .set({ open_count: sql`open_count + 1`, updated_at: new Date() })
+        .where('id', '=', recipient.campaign_id)
+        .execute();
+    }
+  } catch (err) {
+    console.error('Campaign tracking error:', err);
+  }
+
+  const pixel = Buffer.from('R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=', 'base64');
+  res.writeHead(200, {
+    'Content-Type': 'image/gif',
+    'Content-Length': pixel.length,
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+  });
+  res.end(pixel);
+});
+
+// Unsubscribe: /api/track/unsubscribe
+router.get('/unsubscribe', async (req, res) => {
+  const { rid, cid } = req.query;
+
+  if (rid) {
+    try {
+      await db
+        .updateTable('campaign_recipients')
+        .set({ status: 'unsubscribed', updated_at: new Date() })
+        .where('tracking_id', '=', rid)
+        .execute();
+    } catch (err) {
+      console.error('Unsubscribe error:', err);
+    }
+  }
+
+  res.send(`
+    <!DOCTYPE html>
+    <html><head><title>Unsubscribed</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>body{font-family:sans-serif;padding:40px;text-align:center}.card{max-width:400px;margin:auto;padding:20px;border-radius:8px;background:#f9fafb}h2{color:#0D1F40}p{color:#6B7280}</style>
+    </head><body>
+    <div class="card">
+      <h2>You've been unsubscribed</h2>
+      <p>You won't receive any more email campaigns from ResiQ CRM.</p>
+    </div>
+    </body></html>
+  `);
+});

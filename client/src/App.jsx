@@ -25,6 +25,7 @@ const TimeTracking = lazy(() => import('./pages/TimeTracking'))
 const Settings = lazy(() => import('./pages/Settings'))
 const HelpDesk = lazy(() => import('./pages/HelpDesk'))
 const Help = lazy(() => import('./pages/Help'))
+const EmailCampaigns = lazy(() => import('./pages/EmailCampaigns'))
 const MultiSourceLeads = lazy(() => import('./pages/MultiSourceLeads'))
 
 // Smaller pages
@@ -114,6 +115,7 @@ function AppRoutes() {
           <Route path="reddit-leads" element={<RedditLeads />} />
           <Route path="multi-source-leads" element={<MultiSourceLeads />} />
           <Route path="outbound-automation/*" element={<OutboundAutomation />} />
+          <Route path="email-campaigns" element={<EmailCampaigns />} />
           <Route path="help" element={<Help />} />
         </Route>
       </Routes>

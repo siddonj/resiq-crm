@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "ResiQ CRM for Gmail",
+  "version": "1.0.0",
+  "description": "View and manage ResiQ CRM contacts directly in Gmail. Look up contacts, log emails, and create new contacts without leaving your inbox.",
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://resiq.co/*",
+    "https://crm.resiq.co/*",
+    "https://*.resiq.co/*",
+    "http://localhost:5000/*",
+    "http://localhost:5173/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidebar/panel.html"
+  },
+  "action": {
+    "default_title": "ResiQ CRM",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "key": "ResiQCRM_Gmail_Extension_v1"
+}

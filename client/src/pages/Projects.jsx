@@ -87,6 +87,17 @@ export default function Projects() {
     setShowModal(true)
   }
 
+  const handleDelete = async (project, e) => {
+    e.stopPropagation()
+    if (!window.confirm(`Delete "${project.name}"? This will archive the project and its data.`)) return
+    try {
+      await axios.delete(`/api/projects/${project.id}`, headers)
+      loadProjects()
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete project')
+    }
+  }
+
   const selectedTemplate = templates.find((t) => t.id === form.template_id)
 
   return (
@@ -187,11 +198,20 @@ export default function Projects() {
       ) : (
         <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((p) => (
-            <div
-              key={p.id}
-              className="border rounded-lg p-4 hover:border-indigo-500 hover:shadow-sm cursor-pointer transition-all"
-              onClick={() => navigate(`/projects/${p.id}`)}
-            >
+              <div
+                key={p.id}
+                className="border rounded-lg p-4 hover:border-indigo-500 hover:shadow-sm cursor-pointer transition-all relative group"
+                onClick={() => navigate(`/projects/${p.id}`)}
+              >
+                <button
+                  onClick={(e) => handleDelete(p, e)}
+                  className="absolute top-2 right-2 p-1.5 rounded-md text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                  title="Delete project"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                  </svg>
+                </button>
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900 truncate">{p.name}</h3>
                 <span className={`flex-shrink-0 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${

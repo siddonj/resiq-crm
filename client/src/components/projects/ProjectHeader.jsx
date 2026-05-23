@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import PhaseTimeline from './PhaseTimeline'
 
-export default function ProjectHeader({ project, phases = [], users = [], members = [], onStatusChange, onSaveAsTemplate, onSaveBaseline, onPhasesChanged }) {
+export default function ProjectHeader({ project, phases = [], users = [], members = [], onStatusChange, onSaveAsTemplate, onSaveBaseline, onDelete, onPhasesChanged }) {
   const [showBaselineForm, setShowBaselineForm] = useState(false)
   const [baselineName, setBaselineName] = useState('')
 
@@ -82,6 +82,14 @@ export default function ProjectHeader({ project, phases = [], users = [], member
                 </button>
               )}
             </>
+          )}
+          {project?.status !== 'deleted' && onDelete && (
+            <button
+              onClick={onDelete}
+              className="px-3 py-2 text-sm rounded-md text-red-600 border border-red-200 hover:bg-red-50 bg-white"
+            >
+              Delete
+            </button>
           )}
         </div>
         {showBaselineForm && (

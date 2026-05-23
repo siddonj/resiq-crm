@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ResiQ CRM</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Not Authenticated -->
+    <div id="auth-view" class="view hidden">
+      <div class="auth-container">
+        <div class="logo">
+          <svg width="40" height="40" viewBox="0 0 128 128" fill="none">
+            <rect width="128" height="128" rx="24" fill="#0D1F40"/>
+            <path d="M36 44h56v8l-28 20L36 52v-8z" fill="#0FA882"/>
+            <path d="M36 52v32h56V52l-28 20L36 52z" fill="#0D8B6E"/>
+          </svg>
+        </div>
+        <h2>ResiQ CRM</h2>
+        <p class="subtitle">Connect to your CRM</p>
+        <div id="auth-error" class="error hidden"></div>
+        <form id="login-form">
+          <div class="field">
+            <label for="api-url">CRM URL</label>
+            <input type="url" id="api-url" value="https://crm.resiq.co" placeholder="https://crm.resiq.co">
+          </div>
+          <div class="field">
+            <label for="email">Email</label>
+            <input type="email" id="email" placeholder="you@resiq.co" autocomplete="email">
+          </div>
+          <div class="field">
+            <label for="password">Password</label>
+            <input type="password" id="password" placeholder="••••••••" autocomplete="current-password">
+          </div>
+          <button type="submit" id="login-btn" class="btn-primary">Sign In</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading-view" class="view hidden">
+      <div class="loading-container">
+        <div class="spinner"></div>
+        <p>Looking up contact...</p>
+      </div>
+    </div>
+
+    <!-- Contact Found -->
+    <div id="contact-view" class="view hidden">
+      <div class="header">
+        <div class="header-top">
+          <span class="badge" id="contact-source">contact</span>
+          <button id="logout-btn" class="btn-icon" title="Disconnect">⏻</button>
+        </div>
+        <div class="contact-avatar" id="contact-avatar">?</div>
+        <h3 id="contact-name">John Doe</h3>
+        <p class="contact-email" id="contact-email">john@example.com</p>
+        <div class="contact-meta" id="contact-meta"></div>
+        <div class="tags" id="contact-tags"></div>
+        <div class="action-bar">
+          <button id="action-log-email" class="btn-secondary">✓ Log Email</button>
+          <button id="action-view-crm" class="btn-secondary">Open in CRM</button>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="deals">Deals</button>
+        <button class="tab" data-tab="emails">Emails</button>
+        <button class="tab" data-tab="activity">Activity</button>
+      </div>
+
+      <div id="deals-view" class="tab-content active">
+        <p class="empty-state" id="deals-empty">No deals yet</p>
+        <div id="deals-list"></div>
+      </div>
+
+      <div id="emails-view" class="tab-content">
+        <p class="empty-state" id="emails-empty">No recent emails</p>
+        <div id="emails-list"></div>
+      </div>
+
+      <div id="activity-view" class="tab-content">
+        <p class="empty-state" id="activity-empty">No recent activity</p>
+        <div id="activity-list"></div>
+      </div>
+    </div>
+
+    <!-- Contact Not Found -->
+    <div id="notfound-view" class="view hidden">
+      <div class="notfound-container">
+        <div class="notfound-icon">?</div>
+        <h3>Contact Not Found</h3>
+        <p id="unknown-email" class="contact-email">unknown@example.com</p>
+        <p class="subtitle">This sender isn't in your CRM yet.</p>
+        <button id="add-contact-btn" class="btn-primary">Add to CRM</button>
+        <div id="add-form" class="hidden">
+          <div class="field">
+            <label for="add-name">Name</label>
+            <input type="text" id="add-name" placeholder="Contact name">
+          </div>
+          <div class="field">
+            <label for="add-company">Company (optional)</label>
+            <input type="text" id="add-company" placeholder="Company name">
+          </div>
+          <div class="field">
+            <label for="add-source">Source</label>
+            <select id="add-source">
+              <option value="gmail-extension">Gmail Extension</option>
+              <option value="email">Email</option>
+              <option value="referral">Referral</option>
+              <option value="website">Website</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <button id="save-contact-btn" class="btn-primary">Save Contact</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error -->
+    <div id="error-view" class="view hidden">
+      <div class="error-container">
+        <div class="error-icon">⚠</div>
+        <h3>Something went wrong</h3>
+        <p id="error-message">An error occurred</p>
+        <button id="retry-btn" class="btn-primary">Retry</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="panel.js"></script>
+</body>
+</html>

@@ -52,10 +52,14 @@ const redditLeadsRoutes = require('./routes/redditLeads');
 const multiSourceLeadsRoutes = require('./routes/multiSourceLeads');
 const outboundAutomationRoutes = require('./routes/outboundAutomation');
 const appSettingsRoutes = require('./routes/appSettings');
+const extensionRoutes = require('./routes/extension');
+const emailCampaignsRoutes = require('./routes/emailCampaigns');
 const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
 const { agentQueue, initAgentWorker } = require('./workers/agentWorker');
 const { initSequenceWorker } = require('./workers/sequenceWorker');
+const { initEmailTriageWorker } = require('./workers/emailTriageWorker');
+const { initEmailCampaignWorker } = require('./workers/emailCampaignWorker');
 const { MessageQueueService } = require('./services/messageQueue');
 const WorkflowEngine = require('./services/workflowEngine');
 const trackRoutes = require('./routes/track');
@@ -208,6 +212,8 @@ app.use('/api/tickets', ticketsRoutes);
 app.use('/api/reddit-leads', redditLeadsRoutes);
 app.use('/api/track', trackRoutes);
 app.use('/api/portfolios', portfoliosRoutes);
+app.use('/api/extension', extensionRoutes);
+app.use('/api/email-campaigns', emailCampaignsRoutes);
 
 app.get('/api/health', async (req, res) => {
   const checks = {};
@@ -358,6 +364,22 @@ server.listen(PORT, async () => {
     logger.info('Email sync worker initialized');
   } catch (err) {
     logger.warn({ err }, 'Email sync worker init failed');
+  }
+
+  // Initialize email triage worker (requires Redis)
+  try {
+    initEmailTriageWorker();
+    logger.info('Email triage worker initialized');
+  } catch (err) {
+    logger.warn({ err }, 'Email triage worker init failed');
+  }
+
+  // Initialize email campaign worker (requires Redis)
+  try {
+    initEmailCampaignWorker();
+    logger.info('Email campaign worker initialized');
+  } catch (err) {
+    logger.warn({ err }, 'Email campaign worker init failed');
   }
 
   // Initialize agent queue worker (requires Redis)

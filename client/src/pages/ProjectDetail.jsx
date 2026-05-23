@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import GridView from '../components/projects/GridView'
@@ -20,6 +20,7 @@ import MeetingsList from '../components/projects/MeetingsList'
 export default function ProjectDetail() {
   const { projectId } = useParams()
   const { token, user } = useAuth()
+  const navigate = useNavigate()
   const headers = { headers: { Authorization: `Bearer ${token}` } }
 
   const [project, setProject] = useState(null)
@@ -134,6 +135,16 @@ export default function ProjectDetail() {
     }
   }
 
+  const handleDeleteProject = async () => {
+    if (!window.confirm(`Delete "${project?.name}"? This will permanently archive the project and all its data.`)) return
+    try {
+      await axios.delete(`/api/projects/${projectId}`, headers)
+      navigate('/')
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete project')
+    }
+  }
+
   const handleBulkDelete = async (taskIds) => {
     try {
       await axios.post(`/api/projects/${projectId}/tasks/bulk-delete`, { task_ids: taskIds }, headers)
@@ -206,6 +217,7 @@ export default function ProjectDetail() {
         onStatusChange={handleStatusChange}
         onSaveAsTemplate={handleSaveAsTemplate}
         onSaveBaseline={handleSaveBaseline}
+        onDelete={handleDeleteProject}
         onPhasesChanged={loadProject}
       />
 
