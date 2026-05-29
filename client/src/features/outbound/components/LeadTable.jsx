@@ -169,6 +169,7 @@ export default function LeadTable({
             <th className="py-2 pr-3">Lead</th>
             <th className="py-2 pr-3">Company</th>
             <th className="py-2 pr-3">Score</th>
+            <th className="py-2 pr-3">Signals</th>
             <th className="py-2 pr-3">Status</th>
             <th className="py-2 pr-3">Actions</th>
           </tr>
@@ -200,6 +201,36 @@ export default function LeadTable({
               <td className="py-3 pr-3">
                 <p className="font-semibold text-navy">{toInt(lead.total_score)}</p>
                 <p className="text-xs text-brand-gray">Fit {toInt(lead.fit_score)} | Intent {toInt(lead.intent_score)}</p>
+              </td>
+              <td className="py-3 pr-3">
+                <div className="flex flex-wrap gap-1 max-w-[280px]">
+                  {(() => {
+                    const reasons = lead.score_reasons || {}
+                    const fitReasons = Array.isArray(reasons.fit) ? reasons.fit.slice(0, 2) : []
+                    const intentReasons = Array.isArray(reasons.intent) ? reasons.intent.slice(0, 2) : []
+                    const allSignals = [...fitReasons.map(r => ({ type: 'fit', label: r })), ...intentReasons.map(r => ({ type: 'intent', label: r }))]
+                    if (allSignals.length === 0) {
+                      return <span className="text-xs text-brand-gray italic">No signals</span>
+                    }
+                    return allSignals.map((s, i) => (
+                      <span
+                        key={i}
+                        className={`text-[10px] px-1.5 py-0.5 rounded border whitespace-nowrap ${
+                          s.type === 'fit'
+                            ? 'bg-teal/5 text-teal border-teal/20'
+                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}
+                      >
+                        {s.label}
+                      </span>
+                    ))
+                  })()}
+                  {lead.next_recommended_action && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded border bg-gray-50 text-brand-gray border-gray-200 whitespace-nowrap">
+                      → {lead.next_recommended_action.replace(/_/g, ' ')}
+                    </span>
+                  )}
+                </div>
               </td>
               <td className="py-3 pr-3">{renderStatusBadge(lead.status)}</td>
               <td className="py-3 pr-3">

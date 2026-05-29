@@ -2071,7 +2071,8 @@ router.get('/leads', validateQuery(LeadFiltersSchema), async (req, res) => {
     SELECT
       l.*,
       COALESCE(issue_counts.open_issue_count, 0)::int AS open_issue_count,
-      COALESCE(issue_counts.open_blocking_issue_count, 0)::int AS open_blocking_issue_count
+      COALESCE(issue_counts.open_blocking_issue_count, 0)::int AS open_blocking_issue_count,
+      COALESCE(score_reasons.reasons, '{}'::jsonb) AS score_reasons
     FROM outbound_leads l
     LEFT JOIN (
       SELECT
@@ -2082,6 +2083,13 @@ router.get('/leads', validateQuery(LeadFiltersSchema), async (req, res) => {
       WHERE user_id = ${req.user.id}
       GROUP BY lead_id
     ) issue_counts ON issue_counts.lead_id = l.id
+    LEFT JOIN LATERAL (
+      SELECT reasons
+      FROM lead_score_history
+      WHERE lead_id = l.id
+      ORDER BY created_at DESC
+      LIMIT 1
+    ) score_reasons ON true
     WHERE ${sql.join(conditions, sql` AND `)}
     ${cursorClause || sql``}
     ORDER BY l.total_score DESC, l.id DESC

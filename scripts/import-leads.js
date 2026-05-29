@@ -141,7 +141,7 @@ async function importLead(lead) {
              $18, $19, $20, $21, $22)
      RETURNING id`,
     [
-      userId, lead.source_type || 'api', lead.source_reference || 'web-search', lead.source_confidence || 70,
+      userId, (['csv','manual','api','other'].includes(lead.source_type) ? lead.source_type : 'other'), lead.source_reference || 'web-search', lead.source_confidence || 70,
       name, lead.first_name || null, lead.last_name || null, lead.email || null, lead.phone || null,
       lead.company || null, lead.title || null, lead.linkedin_url || null,
       lead.website || null, lead.location || null, lead.notes || null,
