@@ -4,7 +4,10 @@ const pool = require('../models/db');
 class TokenManager {
   constructor() {
     this.algorithm = 'aes-256-gcm';
-    this.key = Buffer.from(process.env.ENCRYPTION_KEY || 'dev-key-32-chars-pad-pad-pad-pad', 'utf8');
+    if (!process.env.ENCRYPTION_KEY) {
+      throw new Error('ENCRYPTION_KEY env var is required (32 bytes) - no insecure default is allowed');
+    }
+    this.key = Buffer.from(process.env.ENCRYPTION_KEY, 'utf8'); // Must be 32 bytes for aes-256
     if (this.key.length !== 32) {
       throw new Error('ENCRYPTION_KEY must be exactly 32 bytes');
     }
