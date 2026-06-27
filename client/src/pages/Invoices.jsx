@@ -553,6 +553,188 @@ function RecordPaymentModal({ invoice, onClose, onSave }) {
   )
 }
 
+// ── Time Entry Pull Modal ────────────────────────────────────────────────────
+function TimeEntryPullModal({ invoiceId, onClose, onPulled }) {
+  const { token } = useAuth()
+  const headers = { Authorization: `Bearer ${token}` }
+
+  const defaultEnd = new Date().toISOString().slice(0, 10)
+  const defaultStart = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+
+  const [start, setStart] = useState(defaultStart)
+  const [end, setEnd] = useState(defaultEnd)
+  const [entries, setEntries] = useState([])
+  const [selected, setSelected] = useState(new Set())
+  const [loading, setLoading] = useState(false)
+  const [pulling, setPulling] = useState(false)
+  const [error, setError] = useState('')
+
+  async function fetchEntries() {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await axios.get(`/api/invoices/${invoiceId}/available-time-entries`, {
+        headers,
+        params: { start, end },
+      })
+      setEntries(res.data)
+      setSelected(new Set())
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load time entries')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { fetchEntries() }, [])
+
+  function toggleAll(e) {
+    if (e.target.checked) {
+      setSelected(new Set(entries.map(te => te.id)))
+    } else {
+      setSelected(new Set())
+    }
+  }
+
+  function toggleOne(id) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function handlePull() {
+    if (selected.size === 0) return
+    setPulling(true)
+    setError('')
+    try {
+      await axios.post(`/api/invoices/${invoiceId}/pull-time-entries`,
+        { entry_ids: [...selected] },
+        { headers }
+      )
+      onPulled()
+      onClose()
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to pull time entries')
+      setPulling(false)
+    }
+  }
+
+  const selectedTotal = entries
+    .filter(te => selected.has(te.id))
+    .reduce((sum, te) => sum + parseFloat(te.hours) * Number(te.hourly_rate || 0), 0)
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-4 overflow-y-auto">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl my-8">
+        <div className="flex items-center justify-between p-5 border-b">
+          <h2 className="text-lg font-semibold text-navy">Pull Time Entries</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {/* Date range filter */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-gray-600 mb-1">From</label>
+              <input type="date" value={start} onChange={e => setStart(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal" />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-gray-600 mb-1">To</label>
+              <input type="date" value={end} onChange={e => setEnd(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal" />
+            </div>
+            <div className="pt-5">
+              <button onClick={fetchEntries} disabled={loading}
+                className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50">
+                {loading ? 'Loading…' : 'Refresh'}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm">{error}</div>
+          )}
+
+          {/* Entries table */}
+          {loading ? (
+            <div className="text-center py-8 text-gray-400 text-sm">Loading…</div>
+          ) : entries.length === 0 ? (
+            <div className="text-center py-8 text-gray-400 text-sm">
+              No unbilled billable time entries found for this contact/deal in the selected date range.
+            </div>
+          ) : (
+            <div className="border rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left w-8">
+                      <input type="checkbox"
+                        checked={selected.size === entries.length && entries.length > 0}
+                        onChange={toggleAll}
+                        className="rounded" />
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Hours</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Rate</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {entries.map(te => {
+                    const amount = parseFloat(te.hours) * Number(te.hourly_rate || 0)
+                    return (
+                      <tr key={te.id} className={`hover:bg-gray-50 ${selected.has(te.id) ? 'bg-teal/5' : ''}`}>
+                        <td className="px-3 py-2.5">
+                          <input type="checkbox"
+                            checked={selected.has(te.id)}
+                            onChange={() => toggleOne(te.id)}
+                            className="rounded" />
+                        </td>
+                        <td className="px-3 py-2.5 text-gray-600">
+                          {te.date ? new Date(te.date).toLocaleDateString() : '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-gray-800 max-w-[200px] truncate">
+                          {te.description || '—'}
+                        </td>
+                        <td className="px-3 py-2.5 text-right text-gray-600">{te.hours}</td>
+                        <td className="px-3 py-2.5 text-right text-gray-600">${Number(te.hourly_rate || 0).toFixed(2)}</td>
+                        <td className="px-3 py-2.5 text-right font-medium text-navy">${amount.toFixed(2)}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {selected.size > 0 && (
+            <div className="flex items-center justify-between text-sm bg-teal/5 border border-teal/20 rounded-lg px-4 py-2">
+              <span className="text-gray-600">{selected.size} entr{selected.size === 1 ? 'y' : 'ies'} selected</span>
+              <span className="font-semibold text-navy">${selectedTotal.toFixed(2)}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-3 px-5 pb-5">
+          <button onClick={onClose}
+            className="px-4 py-2 text-sm border rounded-lg text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button onClick={handlePull} disabled={selected.size === 0 || pulling}
+            className="px-5 py-2 text-sm rounded-lg bg-teal text-white font-medium hover:bg-teal/90 disabled:opacity-50">
+            {pulling ? 'Pulling…' : `Pull ${selected.size > 0 ? selected.size : ''} Selected`}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Page ────────────────────────────────────────────────────────────────
 export default function Invoices() {
   const { token } = useAuth()
@@ -567,6 +749,7 @@ export default function Invoices() {
   const [stripeInvoice, setStripeInvoice] = useState(null)
   const [recordPaymentInvoice, setRecordPaymentInvoice] = useState(null)
   const [paymentInvoice, setPaymentInvoice] = useState(null)
+  const [pullTimeEntriesInvoice, setPullTimeEntriesInvoice] = useState(null)
   const [tab, setTab] = useState('invoices')
   const [contacts, setContacts] = useState([])
   const [deals, setDeals] = useState([])
@@ -816,6 +999,12 @@ export default function Invoices() {
                             ✏️
                           </button>
                         )}
+                        {(inv.status === 'draft' || inv.status === 'sent') && (
+                          <button onClick={() => setPullTimeEntriesInvoice(inv)}
+                            className="text-xs text-gray-400 hover:text-purple-600 transition-colors" title="Pull Time Entries">
+                            ⏱
+                          </button>
+                        )}
                         {inv.status !== 'paid' && inv.status !== 'cancelled' && (
                           <button onClick={() => setRecordPaymentInvoice(inv)}
                             className="text-xs text-gray-400 hover:text-green-600 transition-colors" title="Record Payment">
@@ -863,6 +1052,13 @@ export default function Invoices() {
           invoice={recordPaymentInvoice}
           onClose={() => setRecordPaymentInvoice(null)}
           onSave={() => { setRecordPaymentInvoice(null); loadInvoices() }}
+        />
+      )}
+      {pullTimeEntriesInvoice && (
+        <TimeEntryPullModal
+          invoiceId={pullTimeEntriesInvoice.id}
+          onClose={() => setPullTimeEntriesInvoice(null)}
+          onPulled={() => { setPullTimeEntriesInvoice(null); load() }}
         />
       )}
     </div>

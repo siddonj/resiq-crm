@@ -403,4 +403,71 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
+// Convert proposal to invoice (creates a draft invoice pre-filled from proposal line items)
+router.post('/:id/convert-to-invoice', auth, async (req, res) => {
+  try {
+    // Fetch proposal + deal (to get contact_id)
+    const proposal = await db.selectFrom('proposals as p')
+      .leftJoin('deals as d', 'd.id', 'p.deal_id')
+      .select([
+        'p.id',
+        'p.title',
+        'p.deal_id',
+        'p.line_items',
+        'p.user_id',
+        'd.contact_id',
+      ])
+      .where('p.id', '=', req.params.id)
+      .where('p.user_id', '=', req.user.id)
+      .executeTakeFirst();
+
+    if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
+
+    // Check if already converted — look for an invoice with proposal_id = this proposal's id
+    const existing = await db.selectFrom('invoices')
+      .selectAll()
+      .where('proposal_id', '=', proposal.id)
+      .where('user_id', '=', req.user.id)
+      .executeTakeFirst();
+
+    if (existing) {
+      return res.status(200).json({ alreadyConverted: true, invoice: existing });
+    }
+
+    // Generate invoice number
+    const seqResult = await sql`SELECT nextval('invoice_number_seq') AS num`.execute(db);
+    const invoice_number = `INV-${seqResult.rows[0].num}`;
+
+    // Map proposal line_items to invoice line_items
+    const lineItems = (proposal.line_items || []).map(item => ({
+      description: item.description || '',
+      quantity: item.quantity ?? 1,
+      rate: item.rate ?? 0,
+      discount: item.discount ?? 0,
+      tax: item.tax ?? 0,
+    }));
+
+    // Insert invoice
+    const invoice = await db.insertInto('invoices')
+      .values({
+        user_id: req.user.id,
+        deal_id: proposal.deal_id || null,
+        proposal_id: proposal.id,
+        contact_id: proposal.contact_id || null,
+        invoice_number,
+        title: proposal.title,
+        line_items: JSON.stringify(lineItems),
+        status: 'draft',
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+
+    logAction(req.user.id, req.user.email, 'convert_to_invoice', 'proposal', proposal.id, proposal.title, { invoice_id: invoice.id });
+    res.status(201).json({ invoice });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;

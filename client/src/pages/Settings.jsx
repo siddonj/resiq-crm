@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import GmailConnect from '../components/GmailConnect'
+import AutomationRules from '../components/AutomationRules'
 import { useAuth } from '../context/AuthContext'
 import { ALL_ROLES as ROLES, ROLE_LABELS } from '../constants/roles'
 import HelpHint from '../components/HelpHint'
@@ -18,6 +19,7 @@ export default function Settings() {
     { id: 'profile', label: 'Profile' },
     { id: 'password', label: 'Password' },
     { id: 'integrations', label: 'Integrations' },
+    { id: 'automation', label: 'Automation' },
     ...(user?.role === 'admin'
       ? [
           { id: 'system', label: 'System' },
@@ -489,6 +491,18 @@ export default function Settings() {
               </div>
             </div>
 
+          </div>
+        )}
+
+        {activeTab === 'automation' && (
+          <div>
+            <div className="mb-4">
+              <h3 className="font-syne text-base font-semibold text-navy mb-1">Deal Stage Email Sequences</h3>
+              <p className="text-xs text-gray-500">
+                Auto-create draft email tasks when deals go inactive in a stage. Toggle each rule on or off individually.
+              </p>
+            </div>
+            <AutomationRules />
           </div>
         )}
 

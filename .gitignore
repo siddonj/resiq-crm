@@ -12,3 +12,9 @@ help-desk-live-updates-enabled.png
 .vscode/
 .idea/
 .env
+
+.env.bak-*
+*.bak
+scripts/exports/
+scripts/discovered-leads.json
+scripts/sdr-daily-leads.json

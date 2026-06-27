@@ -46,25 +46,33 @@ function parseCSV(text) {
 let workflowEngine;
 
 router.get('/', auth, async (req, res) => {
-  const { search, type, service_line, tag } = req.query;
+  const { search, type, service_line, tag, filter, sort } = req.query;
   const userId = req.user.id;
+  const today = new Date().toISOString().slice(0, 10);
   const conditions = [ownershipWhere('c', 'contact', userId, req.user.role)];
 
-  if (search) {
-    const pct = `%${search}%`;
-    conditions.push(sql`(c.name ILIKE ${pct} OR c.email ILIKE ${pct} OR c.company ILIKE ${pct})`);
-  }
-  if (type) {
-    conditions.push(sql`c.type::text = ${type}`);
-  }
-  if (service_line) {
-    conditions.push(sql`c.service_line = ${service_line}`);
-  }
-  if (tag) {
-    conditions.push(sql`EXISTS (SELECT 1 FROM contact_tags ct JOIN tags t ON t.id = ct.tag_id WHERE ct.contact_id = c.id AND LOWER(t.name) = ${tag.toLowerCase()})`);
+  if (filter === 'overdue_actions') {
+    conditions.push(sql`c.next_action_date IS NOT NULL AND c.next_action_date < ${today}::date`);
+  } else if (filter === 'today_actions') {
+    conditions.push(sql`c.next_action_date = ${today}::date`);
+  } else {
+    if (search) {
+      const pct = `%${search}%`;
+      conditions.push(sql`(c.name ILIKE ${pct} OR c.email ILIKE ${pct} OR c.company ILIKE ${pct})`);
+    }
+    if (type) conditions.push(sql`c.type::text = ${type}`);
+    if (service_line) conditions.push(sql`c.service_line = ${service_line}`);
+    if (tag) {
+      conditions.push(sql`EXISTS (SELECT 1 FROM contact_tags ct JOIN tags t ON t.id = ct.tag_id WHERE ct.contact_id = c.id AND LOWER(t.name) = ${tag.toLowerCase()})`);
+    }
   }
 
   const whereClause = sql.join(conditions, sql` AND `);
+  const orderClause = sort === 'next_action'
+    ? sql`c.next_action_date ASC NULLS LAST, c.name ASC`
+    : filter === 'overdue_actions'
+      ? sql`c.next_action_date ASC`
+      : sql`c.created_at DESC`;
 
   try {
     const { rows } = await sql`
@@ -81,7 +89,7 @@ router.get('/', auth, async (req, res) => {
         END AS access_permission
       FROM contacts c
       WHERE ${whereClause}
-      ORDER BY c.created_at DESC
+      ORDER BY ${orderClause}
     `.execute(db);
     res.json(rows);
   } catch (err) {
@@ -183,7 +191,7 @@ router.post('/import', auth, upload.single('file'), async (req, res) => {
 router.post('/', auth, async (req, res) => {
   const ObjectToCreate = req.body;
   const customFields = ObjectToCreate.custom_fields || {};
-  const { name, email, phone, company, type, service_line, notes, job_title, linkedin_url, company_website, industry, company_size } = ObjectToCreate;
+  const { name, email, phone, company, type, service_line, notes, job_title, linkedin_url, company_website, industry, company_size, next_action_text, next_action_date } = ObjectToCreate;
   try {
     const newContact = await db.insertInto('contacts')
       .values({
@@ -197,6 +205,8 @@ router.post('/', auth, async (req, res) => {
         company_website: company_website || null,
         industry: industry || null,
         company_size: company_size || null,
+        next_action_text: next_action_text || null,
+        next_action_date: next_action_date || null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -224,7 +234,7 @@ router.post('/', auth, async (req, res) => {
 router.put('/:id', auth, async (req, res) => {
   const ObjectToUpdate = req.body;
   const customFields = ObjectToUpdate.custom_fields || {};
-  const { name, email, phone, company, type, service_line, notes, job_title, linkedin_url, company_website, industry, company_size } = ObjectToUpdate;
+  const { name, email, phone, company, type, service_line, notes, job_title, linkedin_url, company_website, industry, company_size, next_action_text, next_action_date } = ObjectToUpdate;
   try {
     const { rows } = await sql`
       UPDATE contacts SET
@@ -233,7 +243,9 @@ router.put('/:id', auth, async (req, res) => {
         custom_fields = ${JSON.stringify(customFields)},
         job_title = ${job_title || null}, linkedin_url = ${linkedin_url || null},
         company_website = ${company_website || null}, industry = ${industry || null},
-        company_size = ${company_size || null}
+        company_size = ${company_size || null},
+        next_action_text = ${next_action_text || null},
+        next_action_date = ${next_action_date || null}
       WHERE id = ${req.params.id}
         AND (user_id = ${req.user.id} OR EXISTS (
           SELECT 1 FROM shared_resources
@@ -246,6 +258,41 @@ router.put('/:id', auth, async (req, res) => {
     logAction(req.user.id, req.user.email, 'update', 'contact', req.params.id, rows[0].name);
     res.json(rows[0]);
   } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.post('/:id/complete-action', auth, async (req, res) => {
+  const { completed_text, next_action_text, next_action_date } = req.body;
+  try {
+    const contact = await db.selectFrom('contacts')
+      .select('id')
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .executeTakeFirst();
+    if (!contact) return res.status(404).json({ error: 'Not found' });
+
+    await db.insertInto('activities')
+      .values({
+        user_id: req.user.id,
+        contact_id: req.params.id,
+        type: 'follow_up',
+        description: completed_text || 'Follow-up completed',
+        occurred_at: new Date(),
+      })
+      .execute();
+
+    const { rows } = await sql`
+      UPDATE contacts SET
+        next_action_text = ${next_action_text || null},
+        next_action_date = ${next_action_date || null}
+      WHERE id = ${req.params.id} AND user_id = ${req.user.id}
+      RETURNING *
+    `.execute(db);
+
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('Error completing action:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

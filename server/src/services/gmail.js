@@ -37,7 +37,7 @@ class GmailService {
 
   // Get a fresh access token using refresh token
   async refreshAccessToken(user_id) {
-    const tokens = await tokenManager.getTokens(user_id);
+    const tokens = await tokenManager.getTokens(user_id, 'gmail');
     if (!tokens?.refreshToken) {
       throw new Error('No refresh token available');
     }
@@ -66,7 +66,7 @@ class GmailService {
 
   // Set up oauth2Client with user's tokens
   async setupUserAuth(user_id) {
-    let tokens = await tokenManager.getTokens(user_id);
+    let tokens = await tokenManager.getTokens(user_id, 'gmail');
     if (!tokens) throw new Error('User not connected to Gmail');
 
     // Check if token expired, refresh if needed

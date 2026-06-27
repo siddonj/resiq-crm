@@ -6,6 +6,7 @@ import ShareModal from '../components/ShareModal'
 import ActivityLog from '../components/ActivityLog'
 import AskAIBtn from '../components/AskAIBtn'
 import HelpHint from '../components/HelpHint'
+import RetainerOfferModal from '../components/RetainerOfferModal'
 
 const STAGES = [
   { key: 'lead', label: 'Lead' },
@@ -49,6 +50,7 @@ export default function Pipeline() {
   const [draggedDeal, setDraggedDeal] = useState(null)
   const [sharingDeal, setSharingDeal] = useState(null)
   const [activityDeal, setActivityDeal] = useState(null)
+  const [retainerDeal, setRetainerDeal] = useState(null)
   const [search, setSearch] = useState('')
   const [filterServiceLine, setFilterServiceLine] = useState('')
 
@@ -168,6 +170,9 @@ export default function Pipeline() {
     try {
       const { data } = await axios.patch(`/api/deals/${dealId}/stage`, { stage: newStage }, authHeaders)
       setDeals(prev => prev.map(d => d.id === dealId ? data : d))
+      if (newStage === 'closed_won' && !data.retainer_skipped && !data.retainer_invoice_id) {
+        setRetainerDeal(data)
+      }
     } catch (err) {
       console.error(err)
     }
@@ -561,6 +566,17 @@ export default function Pipeline() {
             </form>
           </div>
         </div>
+      )}
+
+      {retainerDeal && (
+        <RetainerOfferModal
+          deal={retainerDeal}
+          contactName={contacts.find(c => c.id === retainerDeal.contact_id)?.name}
+          onClose={() => setRetainerDeal(null)}
+          onSent={(invoice) => {
+            setDeals(prev => prev.map(d => d.id === retainerDeal.id ? { ...d, retainer_invoice_id: invoice.id } : d))
+          }}
+        />
       )}
     </div>
   )

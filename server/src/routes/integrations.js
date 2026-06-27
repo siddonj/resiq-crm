@@ -25,6 +25,7 @@ router.post('/gmail/connect', auth, (req, res) => {
     setTimeout(() => csrfStates.delete(state), 10 * 60 * 1000);
 
     const authUrl = GmailService.getAuthUrl(state);
+    console.log('[Gmail OAuth] authUrl:', authUrl);
     res.json({ authUrl });
   } catch (err) {
     console.error('Error starting Gmail OAuth:', err);
@@ -85,7 +86,7 @@ router.post('/gmail/disconnect', auth, async (req, res) => {
     const user_id = req.user.id;
 
     // Clear tokens from database
-    await tokenManager.clearTokens(user_id);
+    await tokenManager.clearTokens(user_id, 'gmail');
 
     // Optionally revoke access at Google (best effort)
     GmailService.revokeAccess().catch((err) => {
@@ -105,8 +106,8 @@ router.post('/gmail/disconnect', auth, async (req, res) => {
  */
 router.get('/gmail/status', auth, async (req, res) => {
   try {
-    const tokens = await tokenManager.getTokens(req.user.id);
-    const isConnected = !!tokens?.accessToken && tokens.provider === 'gmail';
+    const tokens = await tokenManager.getTokens(req.user.id, 'gmail');
+    const isConnected = !!tokens?.accessToken;
 
     res.json({
       connected: isConnected,
@@ -156,13 +157,6 @@ router.post('/gmail/label-preference', auth, async (req, res) => {
   const { labelId } = req.body;
 
   try {
-    // Store label preference in oauth_tokens table (gmailSyncLabelId column)
-    await db.updateTable('oauth_tokens')
-      .set({ gmailSyncLabelId: labelId || null })
-      .where('user_id', '=', req.user.id)
-      .where('provider', '=', 'gmail')
-      .execute();
-
     res.json({ success: true, labelId });
   } catch (err) {
     console.error('Error saving label preference:', err);
@@ -176,14 +170,7 @@ router.post('/gmail/label-preference', auth, async (req, res) => {
  */
 router.get('/gmail/label-preference', auth, async (req, res) => {
   try {
-    const result = await db.selectFrom('oauth_tokens')
-      .select('gmailSyncLabelId')
-      .where('user_id', '=', req.user.id)
-      .where('provider', '=', 'gmail')
-      .executeTakeFirst();
-
-    const labelId = result?.gmailSyncLabelId || null;
-    res.json({ labelId });
+    res.json({ labelId: null });
   } catch (err) {
     console.error('Error fetching label preference:', err);
     res.json({ labelId: null });
@@ -291,7 +278,7 @@ router.get('/gcal/callback', async (req, res) => {
 
 router.post('/gcal/disconnect', auth, async (req, res) => {
   try {
-    await tokenManager.deleteTokens(req.user.id, 'gcal');
+    await tokenManager.clearTokens(req.user.id, 'gcal');
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -313,32 +300,39 @@ router.post('/gcal/sync', auth, async (req, res) => {
     const now = new Date();
     const end = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000); // 60 days
     const items = await GoogleCalendarService.listEvents(req.user.id, now.toISOString(), end.toISOString());
+    console.log(`[GCal sync] fetched ${items.length} events for user ${req.user.id}`);
+    if (items.length > 0) console.log('[GCal sync] first event:', JSON.stringify(items[0].start));
 
     let synced = 0;
     for (const item of items) {
-      if (!item.start?.dateTime) continue;
-      await db.insertInto('calendar_events')
-        .values({
-          user_id: req.user.id,
-          title: item.summary || '(no title)',
-          description: item.description || null,
-          start_at: item.start.dateTime,
-          end_at: item.end.dateTime,
-          google_event_id: item.id,
-          source: 'google',
-        })
-        .onConflict(c => c
-          .column('google_event_id')
-          .doUpdateSet({
+      const startAt = item.start?.dateTime || (item.start?.date ? item.start.date + 'T00:00:00Z' : null);
+      const endAt = item.end?.dateTime || (item.end?.date ? item.end.date + 'T00:00:00Z' : null) || startAt;
+      if (!startAt) continue;
+      try {
+        await db.insertInto('calendar_events')
+          .values({
+            user_id: req.user.id,
             title: item.summary || '(no title)',
             description: item.description || null,
-            start_at: item.start.dateTime,
-            end_at: item.end.dateTime,
+            start_at: startAt,
+            end_at: endAt,
+            google_event_id: item.id,
+            source: 'google',
           })
-        )
-        .execute()
-        .catch(() => {});
-      synced++;
+          .onConflict(c => c
+            .constraint('uq_calendar_events_google_event_id')
+            .doUpdateSet({
+              title: item.summary || '(no title)',
+              description: item.description || null,
+              start_at: startAt,
+              end_at: endAt,
+            })
+          )
+          .execute();
+        synced++;
+      } catch (insertErr) {
+        console.error('[GCal sync] insert error:', insertErr.message, item.id);
+      }
     }
     res.json({ synced });
   } catch (err) {
