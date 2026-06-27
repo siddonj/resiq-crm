@@ -13,3 +13,9 @@ help-desk-live-updates-enabled.png
 .idea/
 .env
 autoresearch/
+
+.env.bak-*
+*.bak
+scripts/exports/
+scripts/discovered-leads.json
+scripts/sdr-daily-leads.json

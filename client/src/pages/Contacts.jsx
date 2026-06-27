@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useAuth } from '../context/AuthContext'
 import EmailTimeline from '../components/EmailTimeline'
@@ -19,7 +20,24 @@ const PREDEFINED_SERVICE_LINES = [
   { value: 'team_process', label: 'Team Process' },
 ]
 
-const EMPTY_FORM = { name: '', email: '', phone: '', company: '', type: 'prospect', service_line: '', notes: '', job_title: '', linkedin_url: '', company_website: '', industry: '', company_size: '' }
+const EMPTY_FORM = { name: '', email: '', phone: '', company: '', type: 'prospect', service_line: '', notes: '', job_title: '', linkedin_url: '', company_website: '', industry: '', company_size: '', next_action_text: '', next_action_date: '' }
+
+function tomorrow() {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  return d.toISOString().slice(0, 10)
+}
+
+function isOverdue(dateStr) {
+  if (!dateStr) return false
+  return dateStr < new Date().toISOString().slice(0, 10)
+}
+
+function formatNextActionDate(dateStr) {
+  if (!dateStr) return null
+  const d = new Date(dateStr + 'T00:00:00')
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
 
 const formatServiceLine = (value) => {
   if (!value) return '—'
@@ -30,6 +48,8 @@ const formatServiceLine = (value) => {
 
 export default function Contacts() {
   const { token } = useAuth()
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const [contacts, setContacts] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -48,6 +68,10 @@ export default function Contacts() {
   const [enrichingId, setEnrichingId] = useState(null)
   const [importStatus, setImportStatus] = useState(null) // { imported, errors, enrichmentQueued }
   const [bulkEnriching, setBulkEnriching] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [completingAction, setCompletingAction] = useState(null) // contact being "done"
+  const [nextActionForm, setNextActionForm] = useState({ next_action_text: '', next_action_date: '' })
+  const [completingSaving, setCompletingSaving] = useState(false)
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
 
@@ -74,6 +98,13 @@ export default function Contacts() {
 
   useEffect(() => { fetchContacts() }, [token, search, filterType, filterServiceLine])
 
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      openModal()
+      navigate('/contacts', { replace: true })
+    }
+  }, [searchParams])
+
   const handleExport = async () => {
     const params = {}
     if (search) params.search = search
@@ -90,7 +121,10 @@ export default function Contacts() {
     URL.revokeObjectURL(url)
   }
 
-  const openModal = () => { setForm(EMPTY_FORM); setFormError(''); setEditingId(null); setServiceLineMode('select'); setShowModal(true) }
+  const openModal = () => {
+    setForm({ ...EMPTY_FORM, next_action_date: tomorrow() })
+    setFormError(''); setEditingId(null); setServiceLineMode('select'); setShowAdvanced(false); setShowModal(true)
+  }
   const openEdit = (c) => {
     const sl = c.service_line || ''
     const isPredefined = PREDEFINED_SERVICE_LINES.some(s => s.value === sl)
@@ -100,10 +134,13 @@ export default function Contacts() {
       job_title: c.job_title || '', linkedin_url: c.linkedin_url || '',
       company_website: c.company_website || '', industry: c.industry || '',
       company_size: c.company_size || '',
+      next_action_text: c.next_action_text || '',
+      next_action_date: c.next_action_date ? c.next_action_date.slice(0, 10) : '',
     })
     setFormError('')
     setEditingId(c.id)
     setServiceLineMode(sl && !isPredefined ? 'custom' : 'select')
+    setShowAdvanced(true) // always show all fields when editing
     setShowModal(true)
   }
   const closeModal = () => setShowModal(false)
@@ -119,7 +156,12 @@ export default function Contacts() {
     setSaving(true)
     setFormError('')
     try {
-      const payload = { ...form, service_line: form.service_line || null }
+      const payload = {
+        ...form,
+        service_line: form.service_line || null,
+        next_action_text: form.next_action_text || null,
+        next_action_date: form.next_action_date || null,
+      }
       if (editingId) {
         const { data } = await axios.put(`/api/contacts/${editingId}`, payload, authHeaders)
         setContacts(prev => prev.map(c => c.id === editingId ? data : c))
@@ -175,6 +217,33 @@ export default function Contacts() {
       alert(err.response?.data?.error || 'Failed to queue bulk enrichment')
     } finally {
       setBulkEnriching(false)
+    }
+  }
+
+  const openCompleteAction = (c) => {
+    setCompletingAction(c)
+    setNextActionForm({ next_action_text: '', next_action_date: tomorrow() })
+  }
+
+  const handleCompleteAction = async (e) => {
+    e.preventDefault()
+    setCompletingSaving(true)
+    try {
+      const { data } = await axios.post(
+        `/api/contacts/${completingAction.id}/complete-action`,
+        {
+          completed_text: completingAction.next_action_text,
+          next_action_text: nextActionForm.next_action_text || null,
+          next_action_date: nextActionForm.next_action_date || null,
+        },
+        authHeaders
+      )
+      setContacts(prev => prev.map(c => c.id === data.id ? data : c))
+      setCompletingAction(null)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setCompletingSaving(false)
     }
   }
 
@@ -276,7 +345,7 @@ export default function Contacts() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b border-gray-100">
               <tr>
-                {['Name', 'Company', 'Email', 'Type', 'Service Line', ''].map((h, i) => (
+                {['Name', 'Company', 'Email', 'Next Action', 'Type', ''].map((h, i) => (
                   <th key={i} className="text-left px-4 py-3 text-xs font-semibold text-brand-gray uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -288,9 +357,34 @@ export default function Contacts() {
                   <td className="px-4 py-3 text-gray-600">{c.company || '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{c.email || '—'}</td>
                   <td className="px-4 py-3">
+                    {c.next_action_text ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-700 truncate max-w-[160px]" title={c.next_action_text}>{c.next_action_text}</span>
+                        {c.next_action_date && (
+                          <span className={`text-xs font-medium shrink-0 ${isOverdue(c.next_action_date) ? 'text-red-500' : 'text-gray-400'}`}>
+                            {isOverdue(c.next_action_date) ? '⚠ ' : ''}{formatNextActionDate(c.next_action_date)}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => openCompleteAction(c)}
+                          className="text-xs text-teal hover:text-teal/70 shrink-0 font-medium"
+                          title="Mark done & set next action"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => openCompleteAction(c)}
+                        className="text-xs text-gray-300 hover:text-teal transition-colors"
+                      >
+                        + Set action
+                      </button>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
                     <span className="px-2 py-0.5 bg-teal/10 text-teal rounded-full text-xs font-medium capitalize">{c.type}</span>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{formatServiceLine(c.service_line)}</td>
                   <td className="px-4 py-3 text-right space-x-3">
                     {!c.is_owner && (
                       <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 mr-1">Shared</span>
@@ -483,6 +577,56 @@ export default function Contacts() {
         </div>
       )}
 
+      {/* Complete Action Modal */}
+      {completingAction && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <h3 className="font-syne text-base font-bold text-navy mb-1">Done with action</h3>
+            <p className="text-xs text-gray-500 mb-4">
+              Completed: <span className="text-gray-700 font-medium">{completingAction.next_action_text || 'action'}</span>
+            </p>
+            <form onSubmit={handleCompleteAction} className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Next action</label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={nextActionForm.next_action_text}
+                  onChange={e => setNextActionForm(f => ({ ...f, next_action_text: e.target.value }))}
+                  placeholder="e.g. Follow up on proposal"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Due date</label>
+                <input
+                  type="date"
+                  value={nextActionForm.next_action_date}
+                  onChange={e => setNextActionForm(f => ({ ...f, next_action_date: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setCompletingAction(null)}
+                  className="flex-1 border border-gray-200 text-gray-600 text-sm font-medium py-2 rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={completingSaving}
+                  className="flex-1 bg-teal text-white text-sm font-semibold py-2 rounded-lg hover:bg-teal/90 disabled:opacity-60"
+                >
+                  {completingSaving ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Share Modal */}
       {sharingContact && (
         <ShareModal
@@ -507,10 +651,12 @@ export default function Contacts() {
                 <div className="px-4 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm">{formError}</div>
               )}
 
+              {/* Quick fields — always visible */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
                   <input
+                    autoFocus
                     type="text"
                     value={form.name}
                     onChange={e => setForm({ ...form, name: e.target.value })}
@@ -519,29 +665,7 @@ export default function Contacts() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
-                  <input
-                    type="email"
-                    value={form.email}
-                    onChange={e => setForm({ ...form, email: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
-                    placeholder="email@example.com"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
-                  <input
-                    type="tel"
-                    value={form.phone}
-                    onChange={e => setForm({ ...form, phone: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
-                    placeholder="+1 555 000 0000"
-                  />
-                </div>
-
-                <div>
+                <div className="col-span-2">
                   <label className="block text-xs font-medium text-gray-600 mb-1">Company</label>
                   <input
                     type="text"
@@ -552,128 +676,184 @@ export default function Contacts() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
-                  <select
-                    value={form.type}
-                    onChange={e => setForm({ ...form, type: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal bg-white"
-                  >
-                    {CONTACT_TYPES.map(t => (
-                      <option key={t} value={t} className="capitalize">{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-                    ))}
-                  </select>
-                </div>
-
                 <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Service Line</label>
-                  {serviceLineMode === 'custom' ? (
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={form.service_line}
-                        onChange={e => setForm({ ...form, service_line: e.target.value })}
-                        className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
-                        placeholder="Enter custom service line"
-                        autoFocus
-                      />
-                      <button
-                        type="button"
-                        onClick={() => { setServiceLineMode('select'); setForm({ ...form, service_line: '' }) }}
-                        className="text-xs text-gray-400 hover:text-gray-600 px-2"
-                        title="Switch to predefined list"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ) : (
-                    <select
-                      value={form.service_line}
-                      onChange={e => {
-                        if (e.target.value === '__custom__') {
-                          setServiceLineMode('custom')
-                          setForm({ ...form, service_line: '' })
-                        } else {
-                          setForm({ ...form, service_line: e.target.value })
-                        }
-                      }}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal bg-white"
-                    >
-                      <option value="">— None —</option>
-                      {PREDEFINED_SERVICE_LINES.map(s => (
-                        <option key={s.value} value={s.value}>{s.label}</option>
-                      ))}
-                      <option value="__custom__">+ Add custom...</option>
-                    </select>
-                  )}
-                </div>
-
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-                  <textarea
-                    value={form.notes}
-                    onChange={e => setForm({ ...form, notes: e.target.value })}
-                    rows={3}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal resize-none"
-                    placeholder="Any notes about this contact..."
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Job Title</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Next Action</label>
                   <input
                     type="text"
-                    value={form.job_title}
-                    onChange={e => setForm({ ...form, job_title: e.target.value })}
+                    value={form.next_action_text}
+                    onChange={e => setForm({ ...form, next_action_text: e.target.value })}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
-                    placeholder="e.g. VP of Operations"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Industry</label>
-                  <input
-                    type="text"
-                    value={form.industry}
-                    onChange={e => setForm({ ...form, industry: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
-                    placeholder="e.g. Real Estate, PropTech"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Company Size</label>
-                  <input
-                    type="text"
-                    value={form.company_size}
-                    onChange={e => setForm({ ...form, company_size: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
-                    placeholder="e.g. 11-50"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Company Website</label>
-                  <input
-                    type="url"
-                    value={form.company_website}
-                    onChange={e => setForm({ ...form, company_website: e.target.value })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
-                    placeholder="https://example.com"
+                    placeholder="e.g. Send proposal, Schedule call"
                   />
                 </div>
 
                 <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-600 mb-1">LinkedIn URL</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Due Date</label>
                   <input
-                    type="url"
-                    value={form.linkedin_url}
-                    onChange={e => setForm({ ...form, linkedin_url: e.target.value })}
+                    type="date"
+                    value={form.next_action_date}
+                    onChange={e => setForm({ ...form, next_action_date: e.target.value })}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
-                    placeholder="https://linkedin.com/in/..."
                   />
                 </div>
               </div>
+
+              {/* Progressive disclosure */}
+              {!showAdvanced && (
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced(true)}
+                  className="text-xs text-teal hover:text-teal/70 font-medium"
+                >
+                  More details →
+                </button>
+              )}
+
+              {showAdvanced && (
+                <div className="grid grid-cols-2 gap-4 border-t border-gray-100 pt-4">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+                    <input
+                      type="email"
+                      value={form.email}
+                      onChange={e => setForm({ ...form, email: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                      placeholder="email@example.com"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
+                    <input
+                      type="tel"
+                      value={form.phone}
+                      onChange={e => setForm({ ...form, phone: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                      placeholder="+1 555 000 0000"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
+                    <select
+                      value={form.type}
+                      onChange={e => setForm({ ...form, type: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal bg-white"
+                    >
+                      {CONTACT_TYPES.map(t => (
+                        <option key={t} value={t} className="capitalize">{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Service Line</label>
+                    {serviceLineMode === 'custom' ? (
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={form.service_line}
+                          onChange={e => setForm({ ...form, service_line: e.target.value })}
+                          className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                          placeholder="Enter custom service line"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => { setServiceLineMode('select'); setForm({ ...form, service_line: '' }) }}
+                          className="text-xs text-gray-400 hover:text-gray-600 px-2"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <select
+                        value={form.service_line}
+                        onChange={e => {
+                          if (e.target.value === '__custom__') {
+                            setServiceLineMode('custom')
+                            setForm({ ...form, service_line: '' })
+                          } else {
+                            setForm({ ...form, service_line: e.target.value })
+                          }
+                        }}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal bg-white"
+                      >
+                        <option value="">— None —</option>
+                        {PREDEFINED_SERVICE_LINES.map(s => (
+                          <option key={s.value} value={s.value}>{s.label}</option>
+                        ))}
+                        <option value="__custom__">+ Add custom...</option>
+                      </select>
+                    )}
+                  </div>
+
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+                    <textarea
+                      value={form.notes}
+                      onChange={e => setForm({ ...form, notes: e.target.value })}
+                      rows={3}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal resize-none"
+                      placeholder="Any notes about this contact..."
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Job Title</label>
+                    <input
+                      type="text"
+                      value={form.job_title}
+                      onChange={e => setForm({ ...form, job_title: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                      placeholder="e.g. VP of Operations"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Industry</label>
+                    <input
+                      type="text"
+                      value={form.industry}
+                      onChange={e => setForm({ ...form, industry: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                      placeholder="e.g. Real Estate, PropTech"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Company Size</label>
+                    <input
+                      type="text"
+                      value={form.company_size}
+                      onChange={e => setForm({ ...form, company_size: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                      placeholder="e.g. 11-50"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Company Website</label>
+                    <input
+                      type="url"
+                      value={form.company_website}
+                      onChange={e => setForm({ ...form, company_website: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                      placeholder="https://example.com"
+                    />
+                  </div>
+
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">LinkedIn URL</label>
+                    <input
+                      type="url"
+                      value={form.linkedin_url}
+                      onChange={e => setForm({ ...form, linkedin_url: e.target.value })}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal"
+                      placeholder="https://linkedin.com/in/..."
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="flex gap-3 pt-1">
                 <button

@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql } = require('../db');
+const { db, sql, pool } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 
@@ -87,7 +87,7 @@ router.get('/:id', auth, async (req, res) => {
 
 // Create invoice
 router.post('/', auth, async (req, res) => {
-  const { title, deal_id, proposal_id, line_items, notes, due_date, template_id, payment_gateway } = req.body;
+  const { title, deal_id, proposal_id, line_items, notes, due_date, template_id, payment_gateway, invoice_type, recurring_cadence } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
 
   try {
@@ -107,6 +107,8 @@ router.post('/', auth, async (req, res) => {
         due_date: due_date || null,
         template_id: template_id || null,
         payment_gateway: payment_gateway || 'stripe',
+        invoice_type: invoice_type || 'one_time',
+        recurring_cadence: recurring_cadence || null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -954,6 +956,205 @@ router.delete('/templates/:id', auth, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Toggle reminders_enabled on an invoice
+router.patch('/:id/reminders', auth, async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    const result = await db.updateTable('invoices')
+      .set({ reminders_enabled: !!enabled, updated_at: sql`NOW()` })
+      .where('id', '=', req.params.id)
+      .where('user_id', '=', req.user.id)
+      .returningAll()
+      .executeTakeFirst();
+    if (!result) return res.status(404).json({ error: 'Not found' });
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get reminder history for an invoice
+router.get('/:id/reminders', auth, async (req, res) => {
+  try {
+    const invoice = await db.selectFrom('invoices').select(['id'])
+      .where('id', '=', req.params.id).where('user_id', '=', req.user.id)
+      .executeTakeFirst();
+    if (!invoice) return res.status(404).json({ error: 'Not found' });
+    const { rows } = await pool.query(
+      'SELECT * FROM invoice_reminders WHERE invoice_id = $1 ORDER BY day_offset ASC',
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Manual one-click send reminder
+router.post('/:id/reminders/send', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT i.*, c.email AS contact_email, c.name AS contact_name
+       FROM invoices i
+       LEFT JOIN deals d ON d.id = i.deal_id
+       LEFT JOIN contacts c ON c.id = COALESCE(i.contact_id, d.contact_id)
+       WHERE i.id = $1 AND i.user_id = $2`,
+      [req.params.id, req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const invoice = result.rows[0];
+    if (!invoice.contact_email) return res.status(400).json({ error: 'No contact email on file' });
+
+    const gmailService = require('../services/gmail');
+    const subject = `Friendly reminder: Invoice ${invoice.invoice_number} is outstanding`;
+    const htmlBody = `<p>Hello${invoice.contact_name ? ` ${invoice.contact_name}` : ''},</p><p>This is a friendly reminder that invoice <strong>${invoice.invoice_number}</strong> — <em>${invoice.title}</em> — remains outstanding.</p><p>Please don't hesitate to reach out if you have any questions.</p>`;
+    await gmailService.sendEmail(req.user.id, invoice.contact_email, subject, htmlBody);
+
+    const minOffset = -(Date.now() % 1000000);
+    await pool.query(
+      `INSERT INTO invoice_reminders (invoice_id, day_offset, email_subject, status) VALUES ($1, $2, $3, 'sent') ON CONFLICT DO NOTHING`,
+      [req.params.id, minOffset, subject]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Server error' });
+  }
+});
+
+// Get unbilled time entries available to pull into an invoice
+router.get('/:id/available-time-entries', auth, async (req, res) => {
+  try {
+    // Get invoice + resolve contact_id
+    const [invoice] = await sql`
+      SELECT i.*, COALESCE(i.contact_id, d.contact_id) AS resolved_contact_id
+      FROM invoices i
+      LEFT JOIN deals d ON d.id = i.deal_id
+      WHERE i.id = ${req.params.id} AND i.user_id = ${req.user.id}
+    `.execute(db).then(r => r.rows);
+
+    if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    const contactId = invoice.resolved_contact_id;
+    const dealId = invoice.deal_id;
+
+    // Default date range: last 90 days
+    const defaultEnd = new Date();
+    const defaultStart = new Date();
+    defaultStart.setDate(defaultStart.getDate() - 90);
+
+    const start = req.query.start || defaultStart.toISOString().slice(0, 10);
+    const end = req.query.end || defaultEnd.toISOString().slice(0, 10);
+
+    const { rows } = await sql`
+      SELECT te.*, c.name AS contact_name,
+             ROUND((te.minutes::numeric / 60), 2) AS hours
+      FROM time_entries te
+      LEFT JOIN contacts c ON c.id = te.contact_id
+      WHERE te.user_id = ${req.user.id}
+        AND te.billable = true
+        AND te.billed = false
+        AND (
+          (${contactId}::uuid IS NOT NULL AND te.contact_id = ${contactId}::uuid)
+          OR (${dealId}::uuid IS NOT NULL AND te.deal_id = ${dealId}::uuid)
+        )
+        AND te.date BETWEEN ${start}::date AND ${end}::date
+      ORDER BY te.date DESC
+    `.execute(db);
+
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Pull selected time entries into an invoice as line items (atomic transaction)
+router.post('/:id/pull-time-entries', auth, async (req, res) => {
+  const { entry_ids } = req.body;
+  if (!Array.isArray(entry_ids) || entry_ids.length === 0) {
+    return res.status(400).json({ error: 'entry_ids must be a non-empty array' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Get invoice (ownership check)
+    const invResult = await client.query(
+      'SELECT * FROM invoices WHERE id = $1 AND user_id = $2',
+      [req.params.id, req.user.id]
+    );
+    if (invResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+    const invoice = invResult.rows[0];
+
+    // Fetch the matching unbilled time entries
+    const placeholders = entry_ids.map((_, i) => `$${i + 2}`).join(', ');
+    const teResult = await client.query(
+      `SELECT * FROM time_entries WHERE id IN (${placeholders}) AND user_id = $1 AND billed = false`,
+      [req.user.id, ...entry_ids]
+    );
+    const entries = teResult.rows;
+
+    if (entries.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'No eligible unbilled time entries found' });
+    }
+
+    // Map each time entry to an invoice line item
+    const newLineItems = entries.map(te => ({
+      id: Math.random().toString(36).slice(2),
+      description: `${te.description || 'Time entry'} (${te.date ? new Date(te.date).toISOString().slice(0, 10) : ''})`,
+      quantity: parseFloat((te.minutes / 60).toFixed(2)),
+      rate: Number(te.hourly_rate) || 0,
+      discount: 0,
+      tax: 0,
+    }));
+
+    // Merge with existing line items
+    const existingLineItems = Array.isArray(invoice.line_items) ? invoice.line_items : [];
+    const mergedLineItems = [...existingLineItems, ...newLineItems];
+
+    // Update invoice line_items
+    await client.query(
+      'UPDATE invoices SET line_items = $1::jsonb WHERE id = $2',
+      [JSON.stringify(mergedLineItems), req.params.id]
+    );
+
+    // Mark time entries as billed
+    const updatePlaceholders = entries.map((_, i) => `$${i + 3}`).join(', ');
+    await client.query(
+      `UPDATE time_entries SET billed = true, billed_invoice_id = $1 WHERE id IN (${updatePlaceholders}) AND user_id = $2`,
+      [req.params.id, req.user.id, ...entries.map(e => e.id)]
+    );
+
+    await client.query('COMMIT');
+
+    // Fetch updated invoice to return
+    const [updated] = await sql`
+      SELECT i.*, d.title AS deal_title, c.name AS contact_name
+      FROM invoices i
+      LEFT JOIN deals d ON d.id = i.deal_id
+      LEFT JOIN contacts c ON c.id = COALESCE(i.contact_id, d.contact_id)
+      WHERE i.id = ${req.params.id}
+    `.execute(db).then(r => r.rows);
+
+    logAction(req.user.id, req.user.email, 'pull_time_entries', 'invoice', req.params.id, invoice.title, { count: entries.length });
+    res.json(updated);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 

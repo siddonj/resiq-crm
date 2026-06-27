@@ -55,6 +55,8 @@ const appSettingsRoutes = require('./routes/appSettings');
 const complianceRoutes = require('./routes/compliance');
 const unsubscribeRoutes = require('./routes/unsubscribe');
 const deliverabilityRoutes = require('./routes/deliverability');
+const automationRoutes = require('./routes/automation');
+const { startDealStageSequenceWorker } = require('./workers/dealStageSequenceWorker');
 const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
 const { agentQueue, initAgentWorker } = require('./workers/agentWorker');
@@ -233,6 +235,7 @@ app.use('/api/tickets', ticketsRoutes);
 app.use('/api/reddit-leads', redditLeadsRoutes);
 app.use('/api/track', trackRoutes);
 app.use('/api/portfolios', portfoliosRoutes);
+app.use('/api/automation', automationRoutes);
 
 app.get('/api/health', async (req, res) => {
   const checks = {};
@@ -407,6 +410,14 @@ server.listen(PORT, async () => {
     logger.info('Enrichment worker initialized');
   } catch (err) {
     logger.warn({ err }, 'Enrichment worker init failed');
+  }
+
+  // Initialize deal stage sequence worker
+  try {
+    startDealStageSequenceWorker();
+    logger.info('Deal stage sequence worker initialized');
+  } catch (err) {
+    logger.warn({ err }, 'Deal stage sequence worker init failed');
   }
 });
 

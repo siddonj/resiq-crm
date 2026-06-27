@@ -512,6 +512,8 @@ export default function Proposals() {
   const [previewProposal, setPreviewProposal] = useState(null)
   const [signTarget, setSignTarget] = useState(null)
   const [signName, setSignName] = useState('')
+  const [convertedInvoices, setConvertedInvoices] = useState({}) // proposalId -> invoiceId
+  const [converting, setConverting] = useState(null) // proposalId being converted
 
   const authHeaders = { headers: { Authorization: `Bearer ${token}` } }
 
@@ -596,23 +598,20 @@ export default function Proposals() {
   }
 
   const handleCreateInvoice = async (proposal) => {
+    setConverting(proposal.id)
     try {
-      const lineItems = (proposal.line_items || [])
-        .filter(i => i.description)
-        .map(i => ({ description: i.description, quantity: i.quantity, rate: i.rate, tax: i.tax ?? 0 }))
-      const total = proposalTotal(proposal.line_items)
-      const payload = {
-        title: `Invoice — ${proposal.title}`,
-        proposal_id: proposal.id,
-        line_items: lineItems,
-        notes: `Generated from proposal: ${proposal.title}`,
-        due_date: null,
+      const { data } = await axios.post(`/api/proposals/${proposal.id}/convert-to-invoice`, {}, authHeaders)
+      if (data.alreadyConverted) {
+        setConvertedInvoices(prev => ({ ...prev, [proposal.id]: data.invoice.id }))
+      } else {
+        setConvertedInvoices(prev => ({ ...prev, [proposal.id]: data.invoice.id }))
+        navigate('/invoices')
       }
-      await axios.post('/api/invoices', payload, authHeaders)
-      navigate('/invoices')
     } catch (err) {
       console.error(err)
       alert('Failed to create invoice. Please try again.')
+    } finally {
+      setConverting(null)
     }
   }
 
@@ -727,10 +726,19 @@ export default function Proposals() {
                     </button>
                   )}
                   {proposal.status === 'signed' && (
-                    <button onClick={() => handleCreateInvoice(proposal)}
-                      className="text-xs text-teal font-semibold border border-teal px-3 py-1.5 rounded-lg hover:bg-teal/5 transition-colors">
-                      Create Invoice
-                    </button>
+                    convertedInvoices[proposal.id] ? (
+                      <button onClick={() => navigate('/invoices')}
+                        className="text-xs text-green-600 font-semibold border border-green-300 px-3 py-1.5 rounded-lg hover:bg-green-50 transition-colors">
+                        View Invoice
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleCreateInvoice(proposal)}
+                        disabled={converting === proposal.id}
+                        className="text-xs text-teal font-semibold border border-teal px-3 py-1.5 rounded-lg hover:bg-teal/5 transition-colors disabled:opacity-50">
+                        {converting === proposal.id ? 'Creating…' : 'Convert to Invoice'}
+                      </button>
+                    )
                   )}
                   <button onClick={() => handleDelete(proposal.id)}
                     className="text-xs text-red-400 hover:text-red-600 border border-red-100 px-3 py-1.5 rounded-lg transition-colors">
