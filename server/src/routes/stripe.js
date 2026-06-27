@@ -1,5 +1,6 @@
 const express = require('express');
 const { handlePaymentIntentSucceeded, handlePaymentIntentFailed, generateStripePaymentLink } = require('../services/stripeWebhooks');
+const auth = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -54,7 +55,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
  * Create a Stripe payment link for an invoice
  * Requires: invoiceId, invoiceNumber, amount
  */
-router.post('/create-payment-link', async (req, res) => {
+router.post('/create-payment-link', auth, async (req, res) => {
   const { invoiceId, invoiceNumber, amount, description } = req.body;
 
   if (!invoiceId || !invoiceNumber || !amount) {

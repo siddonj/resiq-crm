@@ -22,22 +22,13 @@ router.get('/health', async (req, res) => {
       ) as table_exists
     `);
     
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    const hasKey = !!apiKey;
-    const keyPrefix = apiKey ? apiKey.substring(0, 10) + '...' : 'NOT_SET';
-    
-    console.log('[Health Check] Environment:', {
-      ANTHROPIC_API_KEY: keyPrefix,
-      NODE_ENV: process.env.NODE_ENV,
-    });
-    
+    const hasKey = !!process.env.ANTHROPIC_API_KEY;
+
     res.json({
       status: 'ok',
       database: 'connected',
       tableExists: result.rows[0].table_exists,
       apiKeySet: hasKey,
-      apiKeyPrefix: keyPrefix,
-      nodeEnv: process.env.NODE_ENV,
     });
   } catch (err) {
     res.status(500).json({
@@ -47,6 +38,9 @@ router.get('/health', async (req, res) => {
     });
   }
 });
+
+// All routes below require authentication (health check above stays public for monitoring)
+router.use(authMiddleware);
 
 /**
  * POST /api/leads/search
@@ -183,6 +177,9 @@ router.post('/search', async (req, res) => {
  * Test search without authentication (development only)
  */
 router.post('/test-search', async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).end();
+  }
   try {
     const allowSyntheticRequest = req.body.allowSynthetic === true;
     const allowSyntheticSetting = Boolean(await getSetting('allow_synthetic_leads'));

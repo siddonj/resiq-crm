@@ -63,7 +63,26 @@ const portfoliosRoutes = require('./routes/portfolios');
 const TicketWebSocketServer = require('./services/ticketWebSocket');
 
 const app = express();
-app.use(cors());
+
+// CORS: restrict to an explicit allowlist (CORS_ORIGIN, comma-separated).
+// No Origin header (same-origin / server-to-server) is always allowed.
+// With no allowlist set, cross-origin is permitted only outside production.
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.length === 0) {
+        return callback(null, process.env.NODE_ENV !== 'production');
+      }
+      return callback(null, allowedOrigins.includes(origin));
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

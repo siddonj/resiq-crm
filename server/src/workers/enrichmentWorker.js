@@ -3,7 +3,42 @@ const { Pool } = require('pg');
 const OpenAI = require('openai');
 const axios = require('axios');
 const cheerio = require('cheerio');
+const dns = require('dns').promises;
+const net = require('net');
 const { logAction } = require('../services/auditLogger');
+
+// SSRF guard: block requests that resolve to private / reserved IP ranges.
+function isPrivateIp(ip) {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number);
+    if (a === 10) return true;                        // 10.0.0.0/8
+    if (a === 127) return true;                       // loopback
+    if (a === 0) return true;                         // 0.0.0.0/8
+    if (a === 169 && b === 254) return true;          // link-local / cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true;          // 192.168.0.0/16
+    if (a === 100 && b >= 64 && b <= 127) return true;// CGNAT 100.64.0.0/10
+    return false;
+  }
+  const v6 = ip.toLowerCase();
+  if (v6 === '::1' || v6 === '::') return true;       // loopback / unspecified
+  if (v6.startsWith('fc') || v6.startsWith('fd')) return true; // unique-local fc00::/7
+  if (v6.startsWith('fe80')) return true;             // link-local
+  if (v6.startsWith('::ffff:')) return isPrivateIp(v6.replace('::ffff:', '')); // IPv4-mapped
+  return false;
+}
+
+// Returns true only if every resolved address for the host is a public IP.
+async function isSafeScrapeTarget(host) {
+  if (!host || net.isIP(host)) return false; // reject raw IPs / empty
+  try {
+    const addrs = await dns.lookup(host, { all: true });
+    if (!addrs.length) return false;
+    return addrs.every((a) => !isPrivateIp(a.address));
+  } catch (_) {
+    return false;
+  }
+}
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const enrichmentQueue = new Queue('enrichment-tasks', process.env.REDIS_URL || 'redis://127.0.0.1:6379');
@@ -124,10 +159,16 @@ async function processEnrichmentJob(job) {
     let webContent = '';
     let finalUrlFetched = '';
 
+    if (targetDomain && !(await isSafeScrapeTarget(targetDomain))) {
+      console.warn(`Skipping scrape of "${targetDomain}" — resolves to a private/reserved address or is unresolvable (SSRF guard).`);
+      targetDomain = null;
+    }
+
     if (targetDomain) {
       try {
         const response = await axios.get(`http://${targetDomain}`, {
           timeout: 8000,
+          maxRedirects: 0,
           headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36' }
         });
         const $ = cheerio.load(response.data);
