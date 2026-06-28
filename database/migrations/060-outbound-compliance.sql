@@ -1,4 +1,4 @@
--- Migration 053: Outbound compliance layer (M3)
+-- Migration 060: Outbound compliance layer (M3)
 -- Centralized suppression list, compliance audit events, per-campaign lawful basis (GDPR LIA),
 -- and CAN-SPAM workspace settings (physical mailing address, region, unsubscribe footer).
 

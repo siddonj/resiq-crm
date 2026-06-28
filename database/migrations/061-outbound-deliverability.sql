@@ -1,4 +1,4 @@
--- Migration 054: Outbound deliverability layer (M2)
+-- Migration 061: Outbound deliverability layer (M2)
 -- Mailbox registry (domain/provider/auth status), warmup ramp config,
 -- per-mailbox daily engagement stats for engagement-aware throttling, and
 -- rotation weighting. Additive to the existing per-user Gmail send path.
