@@ -11,6 +11,7 @@ import DashboardLayout from './components/DashboardLayout'
 // Large pages — individual lazy chunks
 const OutboundAutomation = lazy(() => import('./pages/OutboundAutomation'))
 const Compliance = lazy(() => import('./pages/Compliance'))
+const Deliverability = lazy(() => import('./pages/Deliverability'))
 const Analytics = lazy(() => import('./pages/Analytics'))
 const Invoices = lazy(() => import('./pages/Invoices'))
 const Proposals = lazy(() => import('./pages/Proposals'))
@@ -116,6 +117,7 @@ function AppRoutes() {
           <Route path="multi-source-leads" element={<MultiSourceLeads />} />
           <Route path="outbound-automation/*" element={<OutboundAutomation />} />
           <Route path="compliance" element={<Compliance />} />
+          <Route path="deliverability" element={<Deliverability />} />
           <Route path="help" element={<Help />} />
         </Route>
       </Routes>
