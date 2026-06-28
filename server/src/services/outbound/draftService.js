@@ -2,6 +2,7 @@ const pool = require('../../models/db');
 const outboundUtils = require('../../utils/outboundUtils');
 const { getDailySendUsage, requireWithinDailyLimit } = require('../outboundScoring');
 const { logAction } = require('../auditLogger');
+const compliance = require('./complianceService');
 
 /**
  * Generate an email or LinkedIn draft for a lead.
@@ -203,16 +204,20 @@ async function sendDraft({ userId, draftId, logLeadEventFn }) {
   }
 
   const leadRes = await pool.query(
-    `SELECT id, status, suppression_reason FROM outbound_leads WHERE id = $1 AND user_id = $2`,
+    `SELECT id, email, status, suppression_reason FROM outbound_leads WHERE id = $1 AND user_id = $2`,
     [draft.lead_id, userId]
   );
   if (!leadRes.rows.length) {
     throw new Error('Lead not found for this draft.');
   }
   const lead = leadRes.rows[0];
-  if (lead.status === 'suppressed' || lead.suppression_reason) {
-    throw new Error('Lead is suppressed and cannot be contacted.');
-  }
+
+  // M3 compliance: enforce per-lead flag AND the centralized do-not-contact list.
+  await compliance.assertSendAllowed(
+    userId,
+    { email: lead.email, leadStatus: lead.status, suppressionReason: lead.suppression_reason, leadId: lead.id },
+    'email'
+  );
 
   const usage = await getDailySendUsage(userId, 'email');
   if (!requireWithinDailyLimit(usage)) {
@@ -222,14 +227,18 @@ async function sendDraft({ userId, draftId, logLeadEventFn }) {
     throw err;
   }
 
+  // CAN-SPAM: ensure the transmitted body carries the unsubscribe link + physical address.
+  const finalBody = await compliance.appendComplianceFooter({ userId, email: lead.email, body: draft.body });
+
   const updatedRes = await pool.query(
     `UPDATE outbound_message_drafts
      SET status = 'sent',
+         body = $3,
          sent_at = NOW(),
          updated_at = NOW()
      WHERE id = $1 AND user_id = $2
      RETURNING *`,
-    [draftId, userId]
+    [draftId, userId, finalBody]
   );
   const updatedDraft = updatedRes.rows[0];
 

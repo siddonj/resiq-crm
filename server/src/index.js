@@ -52,6 +52,9 @@ const redditLeadsRoutes = require('./routes/redditLeads');
 const multiSourceLeadsRoutes = require('./routes/multiSourceLeads');
 const outboundAutomationRoutes = require('./routes/outboundAutomation');
 const appSettingsRoutes = require('./routes/appSettings');
+const complianceRoutes = require('./routes/compliance');
+const unsubscribeRoutes = require('./routes/unsubscribe');
+const deliverabilityRoutes = require('./routes/deliverability');
 const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
 const { agentQueue, initAgentWorker } = require('./workers/agentWorker');
@@ -63,7 +66,26 @@ const portfoliosRoutes = require('./routes/portfolios');
 const TicketWebSocketServer = require('./services/ticketWebSocket');
 
 const app = express();
-app.use(cors());
+
+// CORS: restrict to an explicit allowlist (CORS_ORIGIN, comma-separated).
+// No Origin header (same-origin / server-to-server) is always allowed.
+// With no allowlist set, cross-origin is permitted only outside production.
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.length === 0) {
+        return callback(null, process.env.NODE_ENV !== 'production');
+      }
+      return callback(null, allowedOrigins.includes(origin));
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -203,6 +225,9 @@ app.use('/api/leads', leadsRoutes);
 app.use('/api/multi-source-leads', multiSourceLeadsRoutes);
 app.use('/api/outbound', outboundLimiter, outboundAutomationRoutes);
 app.use('/api/app-settings', appSettingsRoutes);
+app.use('/api/compliance', complianceRoutes);
+app.use('/api/unsubscribe', unsubscribeRoutes);
+app.use('/api/deliverability', deliverabilityRoutes);
 app.use('/api/engagement', engagementRoutes);
 app.use('/api/tickets', ticketsRoutes);
 app.use('/api/reddit-leads', redditLeadsRoutes);
