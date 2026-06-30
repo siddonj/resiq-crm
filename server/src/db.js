@@ -79,4 +79,25 @@ function ownershipWhere(alias, resourceType, userId, role) {
   return sql`(${sql.ref(alias + '.user_id')} = ${userId} OR ${sharedCheck})`;
 }
 
-module.exports = { db, sql, ownershipWhere, pool };
+/**
+ * Filters a Kysely query to a specific organization.
+ * Use on all tenant-scoped tables.
+ * @param {string} orgId
+ */
+function orgWhere(orgId) {
+  return (qb) => qb.where('organization_id', '=', orgId);
+}
+
+/**
+ * Filters a Kysely query to a specific org AND user.
+ * Use for personal records (reminders, time_entries, calendar_events).
+ * @param {string} orgId
+ * @param {string} userId
+ */
+function orgUserWhere(orgId, userId) {
+  return (qb) => qb
+    .where('organization_id', '=', orgId)
+    .where('user_id', '=', userId);
+}
+
+module.exports = { db, sql, ownershipWhere, orgWhere, orgUserWhere, pool };

@@ -14,7 +14,7 @@ module.exports = async (req, res, next) => {
 
     // Always hydrate role/email/is_active from DB to avoid stale token-role state.
     const result = await pool.query(
-      'SELECT id, name, email, role, is_active FROM users WHERE id = $1',
+      'SELECT id, name, email, role, is_active, is_super_admin FROM users WHERE id = $1',
       [decoded.id]
     );
 
@@ -32,6 +32,7 @@ module.exports = async (req, res, next) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      is_super_admin: user.is_super_admin === true,
     };
 
     next();
