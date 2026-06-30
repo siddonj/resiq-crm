@@ -50,7 +50,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN NOT NULL DEFAU
 
 -- ── organization_id columns on all tenant-scoped tables ──────────────────────
 -- Only ALTER tables that actually exist in the schema.
--- Skipped: leads, outbound_drafts, outbound_sequence_steps, engagement_events
+-- Note: the plan used incorrect names for 4 tables; corrected names used below:
+--   leads → unified_leads
+--   outbound_drafts → outbound_message_drafts
+--   outbound_sequence_steps → sequence_steps
+--   engagement_events → engagement_tracking
 
 ALTER TABLE contacts                ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
 ALTER TABLE deals                   ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
@@ -74,6 +78,11 @@ ALTER TABLE outbound_campaigns      ADD COLUMN IF NOT EXISTS organization_id UUI
 ALTER TABLE shared_resources        ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
 ALTER TABLE audit_logs              ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
 ALTER TABLE reddit_leads            ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+-- Corrected table names (plan had wrong names):
+ALTER TABLE outbound_message_drafts ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE sequence_steps          ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE engagement_tracking     ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE unified_leads           ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
 
 -- ── Default org + backfill ───────────────────────────────────────────────────
 
@@ -107,6 +116,10 @@ BEGIN
   UPDATE shared_resources        SET organization_id = default_org_id WHERE organization_id IS NULL;
   UPDATE audit_logs              SET organization_id = default_org_id WHERE organization_id IS NULL;
   UPDATE reddit_leads            SET organization_id = default_org_id WHERE organization_id IS NULL;
+  UPDATE outbound_message_drafts SET organization_id = default_org_id WHERE organization_id IS NULL;
+  UPDATE sequence_steps          SET organization_id = default_org_id WHERE organization_id IS NULL;
+  UPDATE engagement_tracking     SET organization_id = default_org_id WHERE organization_id IS NULL;
+  UPDATE unified_leads           SET organization_id = default_org_id WHERE organization_id IS NULL;
 
   -- Mark super-admins
   UPDATE users SET is_super_admin = TRUE WHERE email = 'siddonj@gmail.com';
