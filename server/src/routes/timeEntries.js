@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 
@@ -11,6 +11,7 @@ router.get('/', auth, async (req, res) => {
 
   try {
     let query = db.selectFrom('time_entries as t')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .leftJoin('deals as d', 'd.id', 't.deal_id')
       .leftJoin('contacts as c', sql`c.id = COALESCE(t.contact_id, d.contact_id)`)
       .select([
@@ -45,6 +46,7 @@ router.get('/', auth, async (req, res) => {
 router.get('/report/deal/:deal_id', auth, async (req, res) => {
   try {
     const result = await db.selectFrom('time_entries as t')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .select([
         sql`SUM(minutes)`.as('total_minutes'),
         sql`SUM(CASE WHEN billable THEN minutes ELSE 0 END)`.as('billable_minutes'),
@@ -65,6 +67,7 @@ router.get('/report/deal/:deal_id', auth, async (req, res) => {
 router.get('/:id', auth, async (req, res) => {
   try {
     const result = await db.selectFrom('time_entries')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .selectAll()
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -83,6 +86,7 @@ router.post('/', auth, async (req, res) => {
   try {
     const result = await db.insertInto('time_entries')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         deal_id: deal_id || null,
         contact_id: contact_id || null,
@@ -109,6 +113,7 @@ router.post('/timer/start', auth, async (req, res) => {
   try {
     // Stop any running timer first
     await db.updateTable('time_entries')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .set({
         stopped_at: sql`NOW()`,
         minutes: sql`GREATEST(1, EXTRACT(EPOCH FROM (NOW() - started_at)) / 60)::int`,
@@ -121,6 +126,7 @@ router.post('/timer/start', auth, async (req, res) => {
 
     const result = await db.insertInto('time_entries')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         deal_id: deal_id || null,
         contact_id: contact_id || null,
@@ -144,6 +150,7 @@ router.post('/timer/start', auth, async (req, res) => {
 router.patch('/timer/stop', auth, async (req, res) => {
   try {
     const result = await db.updateTable('time_entries')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .set({
         stopped_at: sql`NOW()`,
         minutes: sql`GREATEST(1, EXTRACT(EPOCH FROM (NOW() - started_at)) / 60)::int`,
@@ -165,6 +172,7 @@ router.patch('/timer/stop', auth, async (req, res) => {
 router.get('/timer/active', auth, async (req, res) => {
   try {
     const result = await db.selectFrom('time_entries as t')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .leftJoin('deals as d', 'd.id', 't.deal_id')
       .leftJoin('contacts as c', sql`c.id = COALESCE(t.contact_id, d.contact_id)`)
       .select([
@@ -188,6 +196,7 @@ router.put('/:id', auth, async (req, res) => {
   const { description, minutes, hourly_rate, billable, date, deal_id, contact_id } = req.body;
   try {
     const result = await db.updateTable('time_entries')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .set({
         description: description || '',
         minutes,
@@ -213,6 +222,7 @@ router.put('/:id', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('time_entries')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('description')

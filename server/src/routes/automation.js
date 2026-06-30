@@ -1,5 +1,5 @@
 const express = require('express');
-const { db } = require('../db');
+const { db, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -30,6 +30,7 @@ router.get('/rules', auth, async (req, res) => {
   try {
     const rules = await db
       .selectFrom('stage_automation_rules')
+      .$call(orgWhere(req.orgId))
       .where('user_id', '=', req.user.id)
       .selectAll()
       .orderBy('created_at', 'asc')
@@ -51,6 +52,7 @@ router.post('/rules', auth, async (req, res) => {
     const rule = await db
       .insertInto('stage_automation_rules')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         stage,
         inactivity_days: inactivity_days || 7,
@@ -81,6 +83,7 @@ router.patch('/rules/:id', auth, async (req, res) => {
 
     const rule = await db
       .updateTable('stage_automation_rules')
+      .$call(orgWhere(req.orgId))
       .set(updates)
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -99,6 +102,7 @@ router.delete('/rules/:id', auth, async (req, res) => {
   try {
     await db
       .deleteFrom('stage_automation_rules')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .execute();
@@ -114,6 +118,7 @@ router.post('/seed-defaults', auth, async (req, res) => {
   try {
     const existing = await db
       .selectFrom('stage_automation_rules')
+      .$call(orgWhere(req.orgId))
       .where('user_id', '=', req.user.id)
       .select(['stage'])
       .execute();
@@ -123,12 +128,13 @@ router.post('/seed-defaults', auth, async (req, res) => {
     if (toInsert.length > 0) {
       await db
         .insertInto('stage_automation_rules')
-        .values(toInsert.map(r => ({ ...r, user_id: req.user.id, enabled: false })))
+        .values(toInsert.map(r => ({ ...r, organization_id: req.orgId, user_id: req.user.id, enabled: false })))
         .execute();
     }
 
     const all = await db
       .selectFrom('stage_automation_rules')
+      .$call(orgWhere(req.orgId))
       .where('user_id', '=', req.user.id)
       .selectAll()
       .orderBy('created_at', 'asc')
