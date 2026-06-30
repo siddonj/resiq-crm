@@ -14,7 +14,7 @@ BEGIN;
 
 -- ── New tables ──────────────────────────────────────────────────────────────
 
-CREATE TABLE organizations (
+CREATE TABLE IF NOT EXISTS organizations (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name        TEXT NOT NULL,
   slug        TEXT NOT NULL UNIQUE,
@@ -22,7 +22,7 @@ CREATE TABLE organizations (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE organization_members (
+CREATE TABLE IF NOT EXISTS organization_members (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id  UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -32,7 +32,7 @@ CREATE TABLE organization_members (
   UNIQUE(organization_id, user_id)
 );
 
-CREATE TABLE organization_invites (
+CREATE TABLE IF NOT EXISTS organization_invites (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id  UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   email            TEXT NOT NULL,
@@ -137,14 +137,44 @@ BEGIN
   ON CONFLICT (organization_id, user_id) DO NOTHING;
 END $$;
 
+-- ── Enforce NOT NULL after backfill ──────────────────────────────────────────
+
+ALTER TABLE contacts                ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE deals                   ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE activities              ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE proposals               ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE invoices                ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE time_entries            ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE projects                ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE project_tasks           ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE portfolios              ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE reminders               ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE forms                   ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE tickets                 ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE sequences               ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE workflows               ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE clients                 ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE calendar_events         ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE teams                   ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE outbound_leads          ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE outbound_campaigns      ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE shared_resources        ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE audit_logs              ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE reddit_leads            ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE outbound_message_drafts ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE sequence_steps          ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE engagement_tracking     ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE unified_leads           ALTER COLUMN organization_id SET NOT NULL;
+
 -- ── Performance indexes ──────────────────────────────────────────────────────
 
-CREATE INDEX idx_org_members_org_user ON organization_members(organization_id, user_id);
-CREATE INDEX idx_contacts_org         ON contacts(organization_id);
-CREATE INDEX idx_deals_org            ON deals(organization_id);
-CREATE INDEX idx_projects_org         ON projects(organization_id);
-CREATE INDEX idx_invoices_org         ON invoices(organization_id);
-CREATE INDEX idx_outbound_leads_org   ON outbound_leads(organization_id);
-CREATE INDEX idx_activities_org       ON activities(organization_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_org         ON contacts(organization_id);
+CREATE INDEX IF NOT EXISTS idx_deals_org            ON deals(organization_id);
+CREATE INDEX IF NOT EXISTS idx_projects_org         ON projects(organization_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_org         ON invoices(organization_id);
+CREATE INDEX IF NOT EXISTS idx_outbound_leads_org   ON outbound_leads(organization_id);
+CREATE INDEX IF NOT EXISTS idx_activities_org       ON activities(organization_id);
+CREATE INDEX IF NOT EXISTS idx_org_invites_org      ON organization_invites(organization_id);
+CREATE INDEX IF NOT EXISTS idx_org_members_user     ON organization_members(user_id);
 
 COMMIT;
