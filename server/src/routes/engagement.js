@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -111,6 +111,7 @@ router.post('/', auth, async (req, res) => {
     const trackingId = require('crypto').randomUUID();
     const result = await db.insertInto('engagement_tracking')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         contact_id: contactId || null,
         tracking_id: trackingId,

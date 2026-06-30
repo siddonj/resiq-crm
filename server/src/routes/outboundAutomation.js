@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { db, sql, ownershipWhere, pool } = require('../db');
+const { db, sql, ownershipWhere, orgWhere, orgUserWhere, pool } = require('../db');
 const auth = require('../middleware/auth');
 const { scoreLead } = require('../services/outboundScoring');
 const { logAction } = require('../services/auditLogger');

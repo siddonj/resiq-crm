@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const { logAction } = require('../services/auditLogger');
 
 const router = express.Router();
@@ -17,6 +17,7 @@ router.post('/:formId', async (req, res) => {
     // 1. Verify the form exists and get the target user_id owner
     const form = await db
       .selectFrom('forms')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', formId)
       .selectAll()
       .executeTakeFirst();
@@ -30,6 +31,7 @@ router.post('/:formId', async (req, res) => {
     // 2. Create the Contact
     const newContact = await db.insertInto('contacts')
       .values({
+        organization_id: req.orgId,
         user_id: userId,
         name,
         email: email || null,
@@ -45,6 +47,7 @@ router.post('/:formId', async (req, res) => {
     // 3. Create the Deal (Lead pipeline stage)
     const newDeal = await db.insertInto('deals')
       .values({
+        organization_id: req.orgId,
         user_id: userId,
         contact_id: newContact.id,
         title: `Inbound Lead: ${company || name}`,
