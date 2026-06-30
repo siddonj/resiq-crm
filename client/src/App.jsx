@@ -1,12 +1,16 @@
 import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
+import { OrgShell } from './context/OrgContext'
 
 // Login is eagerly loaded (entry point)
 import Login from './pages/Login'
 
 // Layout is eagerly loaded
 import DashboardLayout from './components/DashboardLayout'
+
+// Org routing
+const OrgRedirect = lazy(() => import('./pages/OrgRedirect'))
 
 // Large pages — individual lazy chunks
 const OutboundAutomation = lazy(() => import('./pages/OutboundAutomation'))
@@ -86,40 +90,50 @@ function AppRoutes() {
         {/* Client Portal Routes */}
         <Route path="/client/*" element={<ClientPortalApp />} />
 
-        {/* Employee Portal Routes */}
+        {/* Public */}
         <Route path="/login" element={isAuthenticated ? <Navigate to="/" replace /> : <Login />} />
         <Route path="/book/:slug" element={<BookingPage />} />
-        <Route path="/" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
-          <Route index element={<Overview />} />
-          <Route path="contacts" element={<Contacts />} />
-          <Route path="pipeline" element={<Pipeline />} />
-          <Route path="forecasting" element={<Forecasting />} />
-          <Route path="analytics" element={<Analytics />} />
-          <Route path="workflows" element={<Navigate to="/outbound-automation/execution" replace />} />
-          <Route path="sequences" element={<Navigate to="/outbound-automation/execution" replace />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="teams" element={<Teams />} />
-          <Route path="audit-logs" element={<AuditLogs />} />
-          <Route path="projects" element={<Projects />} />
-          <Route path="projects/:projectId" element={<ProjectDetail />} />
-          <Route path="portfolios" element={<Portfolios />} />
-          <Route path="portfolios/:portfolioId" element={<PortfolioDetail />} />
-          <Route path="users" element={<Users />} />
-          <Route path="reminders" element={<Reminders />} />
-          <Route path="agents" element={<Agents />} />
-          <Route path="forms" element={<Forms />} />
-          <Route path="help-desk" element={<HelpDesk />} />
-          <Route path="proposals" element={<Proposals />} />
-          <Route path="invoices" element={<Invoices />} />
-          <Route path="time-tracking" element={<TimeTracking />} />
-          <Route path="calendar" element={<Calendar />} />
-          <Route path="reddit-leads" element={<RedditLeads />} />
-          <Route path="multi-source-leads" element={<MultiSourceLeads />} />
-          <Route path="outbound-automation/*" element={<OutboundAutomation />} />
-          <Route path="compliance" element={<Compliance />} />
-          <Route path="deliverability" element={<Deliverability />} />
-          <Route path="help" element={<Help />} />
+
+        {/* Org-scoped — all pages live under /org/:orgSlug */}
+        <Route
+          path="/org/:orgSlug"
+          element={<ProtectedRoute><OrgShell /></ProtectedRoute>}
+        >
+          <Route element={<DashboardLayout />}>
+            <Route index element={<Overview />} />
+            <Route path="contacts" element={<Contacts />} />
+            <Route path="pipeline" element={<Pipeline />} />
+            <Route path="forecasting" element={<Forecasting />} />
+            <Route path="analytics" element={<Analytics />} />
+            <Route path="workflows" element={<Navigate to="outbound-automation/execution" replace />} />
+            <Route path="sequences" element={<Navigate to="outbound-automation/execution" replace />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="teams" element={<Teams />} />
+            <Route path="audit-logs" element={<AuditLogs />} />
+            <Route path="projects" element={<Projects />} />
+            <Route path="projects/:projectId" element={<ProjectDetail />} />
+            <Route path="portfolios" element={<Portfolios />} />
+            <Route path="portfolios/:portfolioId" element={<PortfolioDetail />} />
+            <Route path="users" element={<Users />} />
+            <Route path="reminders" element={<Reminders />} />
+            <Route path="agents" element={<Agents />} />
+            <Route path="forms" element={<Forms />} />
+            <Route path="help-desk" element={<HelpDesk />} />
+            <Route path="proposals" element={<Proposals />} />
+            <Route path="invoices" element={<Invoices />} />
+            <Route path="time-tracking" element={<TimeTracking />} />
+            <Route path="calendar" element={<Calendar />} />
+            <Route path="reddit-leads" element={<RedditLeads />} />
+            <Route path="multi-source-leads" element={<MultiSourceLeads />} />
+            <Route path="outbound-automation/*" element={<OutboundAutomation />} />
+            <Route path="compliance" element={<Compliance />} />
+            <Route path="deliverability" element={<Deliverability />} />
+            <Route path="help" element={<Help />} />
+          </Route>
         </Route>
+
+        {/* Post-login landing — resolves to correct org */}
+        <Route path="/" element={<ProtectedRoute><OrgRedirect /></ProtectedRoute>} />
       </Routes>
     </Suspense>
   )

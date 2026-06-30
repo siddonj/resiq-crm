@@ -1,67 +1,73 @@
 import { useEffect, useMemo, useState } from 'react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
-const soloNavItems = [
-  { to: '/', label: 'Today', end: true },
-  { to: '/contacts', label: 'Contacts' },
-  { to: '/pipeline', label: 'Pipeline' },
-  { to: '/proposals', label: 'Proposals' },
-  { to: '/invoices', label: 'Invoices' },
-  { to: '/calendar', label: 'Calendar' },
-  { to: '/reminders', label: 'Reminders' },
-  { to: '/settings', label: 'Settings' },
-]
+function buildNavItems(prefix) {
+  const p = (path) => `${prefix}${path}`
 
-const navTabs = [
-  {
-    id: 'workspace',
-    label: 'Workspace',
-    items: [
-      { to: '/', label: 'Overview', end: true },
-      { to: '/contacts', label: 'Contacts' },
-      { to: '/pipeline', label: 'Pipeline' },
-      { to: '/forecasting', label: 'Forecasting' },
-      { to: '/analytics', label: 'Analytics' },
-      { to: '/reminders', label: 'Reminders' },
-    ],
-  },
-  {
-    id: 'automation',
-    label: 'Automation',
-    items: [
-      { to: '/outbound-automation/leads', label: 'Outbound' },
-      { to: '/deliverability', label: 'Deliverability' },
-      { to: '/compliance', label: 'Compliance' },
-      { to: '/agents', label: 'AI Agents' },
-      { to: '/forms', label: 'Web Forms' },
-    ],
-  },
-  {
-    id: 'operations',
-    label: 'Operations',
-    items: [
-      { to: '/projects', label: 'Projects' },
-      { to: '/portfolios', label: 'Portfolios' },
-      { to: '/proposals', label: 'Proposals' },
-      { to: '/invoices', label: 'Invoices' },
-      { to: '/time-tracking', label: 'Time Tracking' },
-      { to: '/calendar', label: 'Calendar' },
-      { to: '/help-desk', label: 'Help Desk' },
-    ],
-  },
-  {
-    id: 'account',
-    label: 'Account',
-    items: [
-      { to: '/settings', label: 'Settings' },
-      { to: '/help', label: 'Help' },
-      { to: '/teams', label: 'Teams', roles: ['admin', 'manager'] },
-      { to: '/users', label: 'Users', roles: ['admin', 'manager'] },
-      { to: '/audit-logs', label: 'Audit Logs', roles: ['admin', 'manager'] },
-    ],
-  },
-]
+  const soloNavItems = [
+    { to: p('/'), label: 'Today', end: true },
+    { to: p('/contacts'), label: 'Contacts' },
+    { to: p('/pipeline'), label: 'Pipeline' },
+    { to: p('/proposals'), label: 'Proposals' },
+    { to: p('/invoices'), label: 'Invoices' },
+    { to: p('/calendar'), label: 'Calendar' },
+    { to: p('/reminders'), label: 'Reminders' },
+    { to: p('/settings'), label: 'Settings' },
+  ]
+
+  const navTabs = [
+    {
+      id: 'workspace',
+      label: 'Workspace',
+      items: [
+        { to: p('/'), label: 'Overview', end: true },
+        { to: p('/contacts'), label: 'Contacts' },
+        { to: p('/pipeline'), label: 'Pipeline' },
+        { to: p('/forecasting'), label: 'Forecasting' },
+        { to: p('/analytics'), label: 'Analytics' },
+        { to: p('/reminders'), label: 'Reminders' },
+      ],
+    },
+    {
+      id: 'automation',
+      label: 'Automation',
+      items: [
+        { to: p('/outbound-automation/leads'), label: 'Outbound' },
+        { to: p('/deliverability'), label: 'Deliverability' },
+        { to: p('/compliance'), label: 'Compliance' },
+        { to: p('/agents'), label: 'AI Agents' },
+        { to: p('/forms'), label: 'Web Forms' },
+      ],
+    },
+    {
+      id: 'operations',
+      label: 'Operations',
+      items: [
+        { to: p('/projects'), label: 'Projects' },
+        { to: p('/portfolios'), label: 'Portfolios' },
+        { to: p('/proposals'), label: 'Proposals' },
+        { to: p('/invoices'), label: 'Invoices' },
+        { to: p('/time-tracking'), label: 'Time Tracking' },
+        { to: p('/calendar'), label: 'Calendar' },
+        { to: p('/help-desk'), label: 'Help Desk' },
+      ],
+    },
+    {
+      id: 'account',
+      label: 'Account',
+      items: [
+        { to: p('/settings'), label: 'Settings' },
+        { to: p('/help'), label: 'Help' },
+        { to: p('/teams'), label: 'Teams', roles: ['admin', 'manager'] },
+        { to: p('/users'), label: 'Users', roles: ['admin', 'manager'] },
+        { to: p('/audit-logs'), label: 'Audit Logs', roles: ['admin', 'manager'] },
+      ],
+    },
+  ]
+
+  return { soloNavItems, navTabs }
+}
 
 function hasRouteAccess(item, role) {
   if (!item.roles || item.roles.length === 0) return true
@@ -69,7 +75,7 @@ function hasRouteAccess(item, role) {
 }
 
 function isItemActivePath(item, pathname) {
-  if (item.to === '/') return pathname === '/'
+  if (item.end) return pathname === item.to
   return pathname === item.to || pathname.startsWith(`${item.to}/`)
 }
 
@@ -77,6 +83,9 @@ export default function DashboardLayout() {
   const { user, logout } = useAuth()
   const location = useLocation()
   const role = user?.role
+  const { orgSlug } = useParams()
+  const prefix = orgSlug ? `/org/${orgSlug}` : ''
+  const { soloNavItems, navTabs } = buildNavItems(prefix)
 
   const navigate = useNavigate()
   const [powerMode, setPowerMode] = useState(() => localStorage.getItem('resiq_power_mode') === 'true')
@@ -91,7 +100,7 @@ export default function DashboardLayout() {
     const handleKey = (e) => {
       if (e.key === 'n' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) && !e.metaKey && !e.ctrlKey) {
         e.preventDefault()
-        navigate('/contacts?new=1')
+        navigate(`${prefix}/contacts?new=1`)
       }
     }
     window.addEventListener('keydown', handleKey)
