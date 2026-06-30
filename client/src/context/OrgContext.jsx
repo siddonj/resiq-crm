@@ -5,13 +5,15 @@ import api from '../api/api'
 
 const OrgContext = createContext(null)
 
-// Module-level slug ref consumed by the axios interceptor.
-// Updated synchronously whenever OrgShell renders.
+// Only one OrgShell should be active at a time — this module-level ref
+// is read by the axios interceptor outside of React's render cycle.
 let _activeOrgSlug = null
 export const getActiveOrgSlug = () => _activeOrgSlug
 
 export function OrgShell() {
   const { orgSlug } = useParams()
+  // Intentional: update module-level ref synchronously so the axios interceptor
+  // reads the correct slug before the first API call fires this render cycle.
   _activeOrgSlug = orgSlug
 
   const { data: org, isLoading, isError } = useQuery({
@@ -28,10 +30,18 @@ export function OrgShell() {
     )
   }
 
-  if (isError || !org) {
+  if (isError) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        Organization not found.
+        Failed to load workspace
+      </div>
+    )
+  }
+
+  if (!org) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        Organization not found
       </div>
     )
   }
