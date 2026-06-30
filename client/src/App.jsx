@@ -46,6 +46,9 @@ const ProjectDetail = lazy(() => import('./pages/ProjectDetail'))
 const Portfolios = lazy(() => import('./pages/Portfolios'))
 const PortfolioDetail = lazy(() => import('./pages/PortfolioDetail'))
 
+// Admin panel (super-admin only)
+const Admin = lazy(() => import('./pages/Admin'))
+
 // Client portal is a separate app entry
 const ClientPortalApp = lazy(() => import('./ClientApp'))
 
@@ -131,6 +134,9 @@ function AppRoutes() {
             <Route path="help" element={<Help />} />
           </Route>
         </Route>
+
+        {/* Super-admin panel */}
+        <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
 
         {/* Post-login landing — resolves to correct org */}
         <Route path="/" element={<ProtectedRoute><OrgRedirect /></ProtectedRoute>} />
