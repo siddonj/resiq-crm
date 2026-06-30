@@ -40,8 +40,9 @@ export function OrgShell() {
 
   if (!org) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        Organization not found
+      <div style={{ textAlign: 'center', padding: '4rem' }}>
+        <p>Organization not found.</p>
+        <a href="/">Back to workspace picker</a>
       </div>
     )
   }

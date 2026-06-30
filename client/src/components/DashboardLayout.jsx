@@ -85,7 +85,7 @@ export default function DashboardLayout() {
   const role = user?.role
   const { orgSlug } = useParams()
   const prefix = orgSlug ? `/org/${orgSlug}` : ''
-  const { soloNavItems, navTabs } = buildNavItems(prefix)
+  const { soloNavItems, navTabs } = useMemo(() => buildNavItems(prefix), [prefix])
 
   const navigate = useNavigate()
   const [powerMode, setPowerMode] = useState(() => localStorage.getItem('resiq_power_mode') === 'true')
