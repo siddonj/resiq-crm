@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { db, sql } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 
@@ -515,6 +515,7 @@ router.post('/', async (req, res) => {
         team_id: team_id || null,
         owner_id: req.user.id,
         deal_id: deal_id || null,
+        organization_id: req.orgId,
       })
       .returningAll()
       .executeTakeFirstOrThrow();

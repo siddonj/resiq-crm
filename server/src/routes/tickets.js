@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql, ownershipWhere } = require('../db');
+const { db, sql, ownershipWhere, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 const { sendTicketAssignedNotification, sendTicketReplyNotification } = require('../services/clientNotifications');
@@ -132,6 +132,7 @@ router.post('/', auth, async (req, res) => {
         subject,
         description: description || null,
         priority: ticketPriority,
+        organization_id: req.orgId,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -169,6 +170,7 @@ router.patch('/:ticketId', auth, async (req, res) => {
 
     // Get current ticket to check if assignment is changing
     const currentTicket = await db.selectFrom('tickets')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('id', '=', ticketId)
       .where('user_id', '=', req.user.id)
@@ -197,6 +199,7 @@ router.patch('/:ticketId', auth, async (req, res) => {
     }
 
     const ticket = await db.updateTable('tickets')
+      .$call(orgWhere(req.orgId))
       .set(updateValues)
       .where('id', '=', ticketId)
       .where('user_id', '=', req.user.id)
@@ -284,6 +287,7 @@ router.post('/:ticketId/replies', auth, async (req, res) => {
 
     // Verify ticket exists and user owns it
     const ticketCheck = await db.selectFrom('tickets')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('id', '=', ticketId)
       .where('user_id', '=', req.user.id)
@@ -304,6 +308,7 @@ router.post('/:ticketId/replies', auth, async (req, res) => {
 
     // Update ticket updated_at
     await db.updateTable('tickets')
+      .$call(orgWhere(req.orgId))
       .set({ updated_at: sql`NOW()` })
       .where('id', '=', ticketId)
       .execute();
@@ -338,6 +343,7 @@ router.post('/:ticketId/ai-suggest', auth, async (req, res) => {
 
     // Fetch ticket with related contact info
     const ticket = await db.selectFrom('tickets')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('id', '=', ticketId)
       .where('user_id', '=', req.user.id)
@@ -432,6 +438,7 @@ router.post('/:ticketId/ai-suggest', auth, async (req, res) => {
 
       // 7. Previous ticket replies for this contact (other closed tickets)
       const prevTickets = await db.selectFrom('tickets')
+        .$call(orgWhere(req.orgId))
         .select(['id', 'subject', 'status'])
         .where('contact_id', '=', ticket.contact_id)
         .where('id', '!=', ticketId)
@@ -517,6 +524,7 @@ router.delete('/:ticketId', auth, async (req, res) => {
     const { ticketId } = req.params;
 
     const ticketCheck = await db.selectFrom('tickets')
+      .$call(orgWhere(req.orgId))
       .select('subject')
       .where('id', '=', ticketId)
       .where('user_id', '=', req.user.id)
@@ -529,6 +537,7 @@ router.delete('/:ticketId', auth, async (req, res) => {
     const { subject } = ticketCheck;
 
     await db.deleteFrom('tickets')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', ticketId)
       .where('user_id', '=', req.user.id)
       .execute();

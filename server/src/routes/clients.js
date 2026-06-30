@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql, ownershipWhere } = require('../db');
+const { db, sql, ownershipWhere, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const Client = require('../models/client');
 const { sendProposalSentEmail, sendInvoiceSentEmail } = require('../services/clientNotifications');
@@ -66,6 +66,7 @@ router.get('/', auth, async (req, res) => {
   // TODO: Check user role (admin or manager)
   try {
     const rows = await db.selectFrom('clients')
+      .$call(orgWhere(req.orgId))
       .select(['id', 'name', 'email', 'slug', 'is_active', 'first_login_at', 'last_login_at', 'created_at'])
       .orderBy('created_at', 'desc')
       .execute();
@@ -141,6 +142,7 @@ router.patch('/:clientId', auth, async (req, res) => {
     }
 
     const result = await db.updateTable('clients')
+      .$call(orgWhere(req.orgId))
       .set({ ...updates, updated_at: sql`NOW()` })
       .where('id', '=', clientId)
       .returningAll()

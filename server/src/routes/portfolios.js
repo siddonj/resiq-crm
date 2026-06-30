@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 
@@ -37,6 +37,7 @@ router.post('/', auth, async (req, res) => {
           name: name.trim(),
           description: description || null,
           owner_id: req.user.id,
+          organization_id: req.orgId,
         })
         .returningAll()
         .executeTakeFirstOrThrow();
@@ -91,6 +92,7 @@ router.put('/:id', auth, async (req, res) => {
   const { name, description } = req.body || {};
   try {
     const result = await db.updateTable('portfolios')
+      .$call(orgWhere(req.orgId))
       .set({
         ...(name !== undefined ? { name } : {}),
         ...(description !== undefined ? { description } : {}),
@@ -111,6 +113,7 @@ router.put('/:id', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('portfolios')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('owner_id', '=', req.user.id)
       .returning(['id', 'name'])
