@@ -9,6 +9,7 @@ export function AuthProvider({ children }) {
     const u = localStorage.getItem('resiq_user')
     return u ? JSON.parse(u) : null
   })
+  const [userOrgs, setUserOrgs] = useState([])
 
   const login = (token, user) => {
     localStorage.setItem('resiq_token', token)
@@ -53,7 +54,7 @@ export function AuthProvider({ children }) {
   }, [token])
 
   return (
-    <AuthContext.Provider value={{ token, user, login, logout, isAuthenticated: !!token }}>
+    <AuthContext.Provider value={{ token, user, login, logout, isAuthenticated: !!token, userOrgs, setUserOrgs }}>
       {children}
     </AuthContext.Provider>
   )
