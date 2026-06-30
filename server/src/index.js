@@ -209,7 +209,7 @@ app.use('/api/clients', clientsRoutes);
 app.use('/api/stripe', stripeRoutes);
 
 // Global org management (not under :orgSlug)
-app.use('/api/orgs', orgsRoutes);
+app.use('/api/orgs', authMiddleware, orgsRoutes);
 
 // Public unsubscribe link — no auth required
 app.use('/api/unsubscribe', unsubscribeRoutes);
