@@ -10,9 +10,11 @@ export default function Admin() {
   const queryClient = useQueryClient()
   const [newOrg, setNewOrg] = useState({ name: '', slug: '' })
   const [createError, setCreateError] = useState(null)
+  const [createOrgSuccess, setCreateOrgSuccess] = useState('')
   const [selectedOrg, setSelectedOrg] = useState(null)
   const [inviteForm, setInviteForm] = useState({ email: '', role: 'member' })
   const [inviteError, setInviteError] = useState(null)
+  const [inviteSuccess, setInviteSuccess] = useState(false)
 
   // Guard: only super-admins
   if (!user?.is_super_admin) {
@@ -32,10 +34,12 @@ export default function Admin() {
 
   const createOrgMutation = useMutation({
     mutationFn: (payload) => api.post('/orgs', payload).then((r) => r.data.data),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['admin-orgs'] })
       setNewOrg({ name: '', slug: '' })
       setCreateError(null)
+      setCreateOrgSuccess(`Organization "${data.name || 'Untitled'}" created successfully`)
+      setTimeout(() => setCreateOrgSuccess(''), 3000)
     },
     onError: (err) => setCreateError(err.response?.data?.error || err.message),
   })
@@ -71,6 +75,8 @@ export default function Admin() {
       queryClient.invalidateQueries({ queryKey: ['admin-members', selectedOrg?.slug] })
       setInviteForm({ email: '', role: 'member' })
       setInviteError(null)
+      setInviteSuccess(true)
+      setTimeout(() => setInviteSuccess(false), 3000)
     },
     onError: (err) => setInviteError(err.response?.data?.error || err.message),
   })
@@ -156,6 +162,9 @@ export default function Admin() {
         </form>
         {createError && (
           <p style={{ color: '#dc2626', marginTop: '0.5rem', fontSize: '0.9rem' }}>{createError}</p>
+        )}
+        {createOrgSuccess && (
+          <p style={{ color: '#16a34a', marginTop: '0.5rem', fontSize: '0.9rem' }}>{createOrgSuccess}</p>
         )}
       </section>
 
@@ -253,7 +262,7 @@ export default function Admin() {
             {inviteError && (
               <p style={{ color: '#dc2626', marginTop: '0.5rem', fontSize: '0.9rem' }}>{inviteError}</p>
             )}
-            {inviteMutation.isSuccess && (
+            {inviteSuccess && (
               <p style={{ color: '#16a34a', marginTop: '0.5rem', fontSize: '0.9rem' }}>Invitation sent.</p>
             )}
           </div>
