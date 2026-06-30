@@ -369,6 +369,20 @@ DELETE /api/org/:orgSlug/members/:userId      -- remove member
 - If user doesn't exist → create a pending invite record; email a signup link scoped to the org (`/signup?invite=<token>`)
 - On invite acceptance → create user + insert membership in a single transaction
 
+**Pending invite table** (new, defined in migration):
+```sql
+CREATE TABLE organization_invites (
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id  UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  email            TEXT NOT NULL,
+  role             TEXT NOT NULL DEFAULT 'member',
+  token            TEXT NOT NULL UNIQUE,  -- secure random, used in invite link
+  expires_at       TIMESTAMPTZ NOT NULL,  -- 7-day TTL
+  accepted_at      TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
 ### Super-admin control panel
 
 Route: `/admin` (only rendered when `user.is_super_admin === true`)
@@ -471,4 +485,4 @@ for (const tbl of tables) {
 - `requireOrg` must run before any route handler that touches tenant data
 - Super-admin access (`is_super_admin = true`) bypasses membership checks but still scopes to a specific org via the URL slug
 - The default org (`slug: 'default'`) is the migration target for all pre-existing data
-- Org slugs are immutable after creation (URLs would break on rename)
+- Org slugs are immutable after creation (URLs would break on rename) — enforced by omitting a PATCH `/api/orgs/:slug` endpoint for the slug field; the `organizations.slug` column has no UPDATE trigger but the API layer simply never accepts slug changes
