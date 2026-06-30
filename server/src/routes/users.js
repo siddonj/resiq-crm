@@ -15,7 +15,7 @@ const router = express.Router();
 router.get('/me', auth, async (req, res) => {
   try {
     const user = await db.selectFrom('users')
-      .select(['id', 'name', 'email', 'role', 'is_active', 'created_at'])
+      .select(['id', 'name', 'email', 'role', 'is_active', 'is_super_admin', 'created_at'])
       .where('id', '=', req.user.id)
       .executeTakeFirst();
     if (!user) return res.status(404).json({ error: 'User not found' });
