@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql, ownershipWhere } = require('../db');
+const { db, sql, ownershipWhere, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 const GmailService = require('../services/gmail');
@@ -115,6 +115,7 @@ router.post('/', auth, async (req, res) => {
   try {
     const newDeal = await db.insertInto('deals')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         contact_id,
         title,
@@ -150,6 +151,7 @@ router.patch('/:id/stage', auth, async (req, res) => {
   try {
     const oldDeal = await db
       .selectFrom('deals')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .selectAll()
@@ -158,6 +160,7 @@ router.patch('/:id/stage', auth, async (req, res) => {
     if (!oldDeal) return res.status(404).json({ error: 'Deal not found' });
 
     const newDeal = await db.updateTable('deals')
+      .$call(orgWhere(req.orgId))
       .set({ stage, updated_at: new Date() })
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -195,6 +198,7 @@ router.patch('/:id/stage', auth, async (req, res) => {
 router.patch('/:id/retainer-skip', auth, async (req, res) => {
   try {
     const deal = await db.updateTable('deals')
+      .$call(orgWhere(req.orgId))
       .set({ retainer_skipped: true, updated_at: new Date() })
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -212,6 +216,7 @@ router.patch('/:id/retainer-link', auth, async (req, res) => {
   const { retainer_invoice_id } = req.body;
   try {
     const deal = await db.updateTable('deals')
+      .$call(orgWhere(req.orgId))
       .set({ retainer_invoice_id: retainer_invoice_id || null, updated_at: new Date() })
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -272,6 +277,7 @@ router.post('/:id/log-activity', auth, async (req, res) => {
   try {
     // Verify ownership
     const deal = await db.selectFrom('deals')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .select(['id', 'contact_id'])
@@ -282,6 +288,7 @@ router.post('/:id/log-activity', auth, async (req, res) => {
     // Insert activity
     const activity = await db.insertInto('activities')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         type,
         description: description.trim(),
@@ -313,6 +320,7 @@ router.get('/:id/followup-tasks', auth, async (req, res) => {
   try {
     // Ownership check
     const deal = await db.selectFrom('deals')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .select(['id'])
@@ -342,6 +350,7 @@ router.post('/:id/followup-tasks/:taskId/send', auth, async (req, res) => {
   try {
     // Ownership check
     const deal = await db.selectFrom('deals')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .selectAll()
@@ -365,6 +374,7 @@ router.post('/:id/followup-tasks/:taskId/send', auth, async (req, res) => {
     let toEmail = null;
     if (task.contact_id) {
       const contact = await db.selectFrom('contacts')
+        .$call(orgWhere(req.orgId))
         .where('id', '=', task.contact_id)
         .select(['email', 'name'])
         .executeTakeFirst();
@@ -413,6 +423,7 @@ router.post('/:id/followup-tasks/:taskId/dismiss', auth, async (req, res) => {
   try {
     // Ownership check
     const deal = await db.selectFrom('deals')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .select(['id'])
@@ -446,6 +457,7 @@ router.post('/:id/followup-tasks/:taskId/dismiss', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('deals')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('title')

@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const { db, sql, ownershipWhere } = require('../db');
+const { db, sql, ownershipWhere, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const Email = require('../models/email');
 const { logAction } = require('../services/auditLogger');
@@ -100,6 +100,7 @@ router.get('/', auth, async (req, res) => {
 router.get('/export', auth, async (req, res) => {
   try {
     const rows = await db.selectFrom('contacts')
+      .$call(orgWhere(req.orgId))
       .select([
         'name', 'email', 'phone', 'company', 'type', 'job_title',
         'service_line', 'industry', 'company_size', 'company_website',
@@ -146,6 +147,7 @@ router.post('/import', auth, upload.single('file'), async (req, res) => {
       try {
         const contact = await db.insertInto('contacts')
           .values({
+            organization_id: req.orgId,
             user_id: req.user.id,
             name: name.trim(),
             email: row.email || null,
@@ -195,6 +197,7 @@ router.post('/', auth, async (req, res) => {
   try {
     const newContact = await db.insertInto('contacts')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         name, email, phone, company,
         type: type || 'prospect',
@@ -214,6 +217,7 @@ router.post('/', auth, async (req, res) => {
 
     if (workflowEngine) {
       const tags = await db.selectFrom('tags')
+        .$call(orgWhere(req.orgId))
         .innerJoin('contact_tags', 'contact_tags.tag_id', 'tags.id')
         .where('contact_tags.contact_id', '=', newContact.id)
         .select(['tags.id', 'tags.name'])
@@ -266,6 +270,7 @@ router.post('/:id/complete-action', auth, async (req, res) => {
   const { completed_text, next_action_text, next_action_date } = req.body;
   try {
     const contact = await db.selectFrom('contacts')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -274,6 +279,7 @@ router.post('/:id/complete-action', auth, async (req, res) => {
 
     await db.insertInto('activities')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         contact_id: req.params.id,
         type: 'follow_up',
@@ -300,6 +306,7 @@ router.post('/:id/complete-action', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('contacts')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('name')
@@ -315,6 +322,7 @@ router.get('/:id/timeline', auth, async (req, res) => {
   try {
     const contact_id = req.params.id;
     const contactCheck = await db.selectFrom('contacts')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('id', '=', contact_id)
       .where('user_id', '=', req.user.id)
@@ -345,6 +353,7 @@ router.get('/:id/timeline', auth, async (req, res) => {
 router.get('/tags', auth, async (req, res) => {
   try {
     const rows = await db.selectFrom('tags')
+      .$call(orgWhere(req.orgId))
       .select(['id', 'name', 'color'])
       .where('user_id', '=', req.user.id)
       .orderBy('name', 'asc')
@@ -361,6 +370,7 @@ router.post('/tags', auth, async (req, res) => {
     if (!name?.trim()) return res.status(400).json({ error: 'Tag name is required' });
     const tag = await db.insertInto('tags')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         name: name.trim(),
         color: color || '#3B82F6',
@@ -377,12 +387,14 @@ router.post('/tags', auth, async (req, res) => {
 router.get('/:id/tags', auth, async (req, res) => {
   try {
     const contact = await db.selectFrom('contacts')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .executeTakeFirst();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
     const rows = await db.selectFrom('tags')
+      .$call(orgWhere(req.orgId))
       .innerJoin('contact_tags', 'contact_tags.tag_id', 'tags.id')
       .where('contact_tags.contact_id', '=', req.params.id)
       .select(['tags.id', 'tags.name', 'tags.color'])
@@ -398,12 +410,14 @@ router.post('/:id/tags', auth, async (req, res) => {
   const { tag_id } = req.body;
   try {
     const contact = await db.selectFrom('contacts')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .executeTakeFirst();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
     const tag = await db.selectFrom('tags')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('id', '=', tag_id)
       .where('user_id', '=', req.user.id)
@@ -422,12 +436,14 @@ router.post('/:id/tags', auth, async (req, res) => {
 router.delete('/:id/tags/:tagId', auth, async (req, res) => {
   try {
     const contact = await db.selectFrom('contacts')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .executeTakeFirst();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
     const tag = await db.selectFrom('tags')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('id', '=', req.params.tagId)
       .where('user_id', '=', req.user.id)
@@ -451,6 +467,7 @@ router.post('/:id/enrich', auth, async (req, res) => {
     
     // Find the latest deal for this contact if any
     const deal = await db.selectFrom('deals')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('contact_id', '=', id)
       .where('user_id', '=', req.user.id)
@@ -477,6 +494,7 @@ router.post('/enrich-all', auth, async (req, res) => {
   try {
     const { enrichmentQueue } = require('../workers/enrichmentWorker');
     const rows = await db.selectFrom('contacts')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('user_id', '=', req.user.id)
       .where((eb) => eb('email', 'is not', null).or('company', 'is not', null))
@@ -514,6 +532,7 @@ router.post('/from-lead', auth, async (req, res) => {
 
     // Check if contact already exists with same email
     const existing = await db.selectFrom('contacts')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('user_id', '=', req.user.id)
       .where('email', '=', lead.email)
@@ -527,6 +546,7 @@ router.post('/from-lead', auth, async (req, res) => {
     // Create the contact from the lead data
     const newContact = await db.insertInto('contacts')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         name: lead.name,
         email: lead.email,
@@ -561,6 +581,7 @@ router.post('/from-lead', auth, async (req, res) => {
     // Remove any workflow triggers that use 'contact.created'
     if (workflowEngine) {
       const tags = await db.selectFrom('tags')
+        .$call(orgWhere(req.orgId))
         .innerJoin('contact_tags', 'contact_tags.tag_id', 'tags.id')
         .where('contact_tags.contact_id', '=', newContact.id)
         .select(['tags.id', 'tags.name'])

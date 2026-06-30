@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql, pool } = require('../db');
+const { db, sql, pool, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 
@@ -97,6 +97,7 @@ router.post('/', auth, async (req, res) => {
 
     const invoice = await db.insertInto('invoices')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         deal_id: deal_id || null,
         proposal_id: proposal_id || null,
@@ -126,6 +127,7 @@ router.put('/:id', auth, async (req, res) => {
   const { title, deal_id, proposal_id, line_items, notes, due_date, template_id, payment_gateway } = req.body;
   try {
     const result = await db.updateTable('invoices')
+      .$call(orgWhere(req.orgId))
       .set({
         title,
         deal_id: deal_id || null,
@@ -162,6 +164,7 @@ router.patch('/:id/status', auth, async (req, res) => {
 
   try {
     const result = await db.updateTable('invoices')
+      .$call(orgWhere(req.orgId))
       .set(updateData)
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -175,6 +178,7 @@ router.patch('/:id/status', auth, async (req, res) => {
       try {
         await db.insertInto('reminders')
           .values({
+            organization_id: req.orgId,
             user_id: req.user.id,
             title: `Invoice overdue: ${result.title}`,
             due_date: result.due_date,
@@ -196,6 +200,7 @@ router.patch('/:id/payment-url', auth, async (req, res) => {
   const { stripe_payment_url } = req.body;
   try {
     const result = await db.updateTable('invoices')
+      .$call(orgWhere(req.orgId))
       .set({
         stripe_payment_url: stripe_payment_url || null,
         updated_at: sql`NOW()`,
@@ -215,6 +220,7 @@ router.patch('/:id/payment-url', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('invoices')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('title')
@@ -277,6 +283,7 @@ router.post('/recurring', auth, async (req, res) => {
   try {
     const result = await db.insertInto('recurring_invoices')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         deal_id: deal_id || null,
         contact_id: contact_id || null,
@@ -333,6 +340,7 @@ router.put('/recurring/:id', auth, async (req, res) => {
 router.delete('/recurring/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('recurring_invoices')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('title')
@@ -364,6 +372,7 @@ router.post('/recurring/:id/generate', auth, async (req, res) => {
 
     const invoice = await db.insertInto('invoices')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         deal_id: ri.deal_id,
         invoice_number,
@@ -390,6 +399,7 @@ router.post('/recurring/:id/generate', auth, async (req, res) => {
     let newStatus = ri.status;
     if (ri.end_date && newNext > ri.end_date) newStatus = 'completed';
     await db.updateTable('recurring_invoices')
+      .$call(orgWhere(req.orgId))
       .set({
         next_send_date: newNext,
         status: newStatus,
@@ -435,6 +445,7 @@ router.post('/subscriptions', auth, async (req, res) => {
   try {
     const result = await db.insertInto('subscriptions')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         contact_id,
         plan_name: plan_name.trim(),
@@ -484,6 +495,7 @@ router.put('/subscriptions/:id', auth, async (req, res) => {
 router.delete('/subscriptions/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('subscriptions')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('plan_name')
@@ -502,6 +514,7 @@ router.delete('/subscriptions/:id', auth, async (req, res) => {
 router.get('/vendors', auth, async (req, res) => {
   try {
     const rows = await db.selectFrom('vendors')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('user_id', '=', req.user.id)
       .orderBy('name', 'asc')
@@ -518,6 +531,7 @@ router.post('/vendors', auth, async (req, res) => {
   try {
     const result = await db.insertInto('vendors')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         name: name.trim(),
         email: email || null,
@@ -570,6 +584,7 @@ router.put('/vendors/:id', auth, async (req, res) => {
 router.delete('/vendors/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('vendors')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('name')
@@ -606,6 +621,7 @@ router.post('/expenses', auth, async (req, res) => {
   try {
     const result = await db.insertInto('expenses')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         vendor_id: vendor_id || null,
         category: category || null,
@@ -658,6 +674,7 @@ router.put('/expenses/:id', auth, async (req, res) => {
 router.delete('/expenses/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('expenses')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('description')
@@ -675,6 +692,7 @@ router.delete('/expenses/:id', auth, async (req, res) => {
 router.get('/expense-categories', auth, async (req, res) => {
   try {
     const rows = await db.selectFrom('expense_categories')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('user_id', '=', req.user.id)
       .orderBy('name', 'asc')
@@ -691,6 +709,7 @@ router.post('/expense-categories', auth, async (req, res) => {
   try {
     const result = await db.insertInto('expense_categories')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         name: name.trim(),
         color: color || '#6B7280',
@@ -707,6 +726,7 @@ router.post('/expense-categories', auth, async (req, res) => {
 router.delete('/expense-categories/:id', auth, async (req, res) => {
   try {
     await db.deleteFrom('expense_categories')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .execute();
@@ -721,6 +741,7 @@ router.delete('/expense-categories/:id', auth, async (req, res) => {
 router.get('/products/all', auth, async (req, res) => {
   try {
     const rows = await db.selectFrom('products')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('user_id', '=', req.user.id)
       .orderBy('name', 'asc')
@@ -737,6 +758,7 @@ router.post('/products', auth, async (req, res) => {
   try {
     const result = await db.insertInto('products')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         name: name.trim(),
         description: description || null,
@@ -775,6 +797,7 @@ router.put('/products/:id', auth, async (req, res) => {
 router.delete('/products/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('products')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('name')
@@ -795,7 +818,7 @@ router.get('/:id/payments', auth, async (req, res) => {
       .where('invoice_id', '=', req.params.id)
       .orderBy('payment_date', 'desc')
       .orderBy('created_at', 'desc')
-      .execute();
+      .execute(); // invoice_payments is a junction table — no orgWhere needed
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -808,6 +831,7 @@ router.post('/:id/payments', auth, async (req, res) => {
   try {
     // Verify invoice exists and belongs to user
     const invRes = await db.selectFrom('invoices')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -839,6 +863,7 @@ router.post('/:id/payments', auth, async (req, res) => {
     const paid = Number(payRes.rows[0].paid);
     if (paid >= total && invRes.status !== 'paid') {
       await db.updateTable('invoices')
+        .$call(orgWhere(req.orgId))
         .set({ status: 'paid', paid_at: sql`NOW()` })
         .where('id', '=', req.params.id)
         .execute();
@@ -899,12 +924,14 @@ router.post('/templates', auth, async (req, res) => {
   try {
     if (is_default) {
       await db.updateTable('invoice_templates')
+        .$call(orgWhere(req.orgId))
         .set({ is_default: false })
         .where('user_id', '=', req.user.id)
         .execute();
     }
     const result = await db.insertInto('invoice_templates')
       .values({
+        organization_id: req.orgId,
         name: name.trim(),
         html_template,
         css: css || null,
@@ -925,6 +952,7 @@ router.put('/templates/:id', auth, async (req, res) => {
   try {
     if (is_default) {
       await db.updateTable('invoice_templates')
+        .$call(orgWhere(req.orgId))
         .set({ is_default: false })
         .where('user_id', '=', req.user.id)
         .execute();
@@ -948,6 +976,7 @@ router.put('/templates/:id', auth, async (req, res) => {
 router.delete('/templates/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('invoice_templates')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('id')
@@ -964,6 +993,7 @@ router.patch('/:id/reminders', auth, async (req, res) => {
   const { enabled } = req.body;
   try {
     const result = await db.updateTable('invoices')
+      .$call(orgWhere(req.orgId))
       .set({ reminders_enabled: !!enabled, updated_at: sql`NOW()` })
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -980,7 +1010,9 @@ router.patch('/:id/reminders', auth, async (req, res) => {
 // Get reminder history for an invoice
 router.get('/:id/reminders', auth, async (req, res) => {
   try {
-    const invoice = await db.selectFrom('invoices').select(['id'])
+    const invoice = await db.selectFrom('invoices')
+      .$call(orgWhere(req.orgId))
+      .select(['id'])
       .where('id', '=', req.params.id).where('user_id', '=', req.user.id)
       .executeTakeFirst();
     if (!invoice) return res.status(404).json({ error: 'Not found' });
