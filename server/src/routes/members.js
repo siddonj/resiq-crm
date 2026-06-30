@@ -72,7 +72,7 @@ router.post('/invite', async (req, res) => {
     // Wire to the existing nodemailer/sendgrid service in server/src/services/email.js
     // when ready. The database row is already created and will work once the email is sent.
 
-    res.sendSuccess({ message: 'Invite sent', token });
+    res.sendSuccess({ message: 'Invite sent' });
   } catch (err) {
     res.sendError(err.message, 'SERVER_ERROR', 500);
   }

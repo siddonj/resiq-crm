@@ -1,9 +1,7 @@
 // server/src/routes/orgs.js
 const express = require('express');
-const crypto = require('crypto');
 const { db } = require('../db');
 const auth = require('../middleware/auth');
-const { requireOrg } = require('../middleware/requireOrg');
 
 const router = express.Router();
 
@@ -12,7 +10,7 @@ function slugify(name) {
 }
 
 function requireSuperAdmin(req, res, next) {
-  if (!req.user.is_super_admin) {
+  if (!req.user?.is_super_admin) {
     return res.sendError('Super-admin access required', 'FORBIDDEN', 403);
   }
   next();
@@ -28,7 +26,7 @@ router.get('/', auth, requireSuperAdmin, async (req, res) => {
         'o.name',
         'o.slug',
         'o.created_at',
-        db.fn.count('om.id').as('member_count'),
+        db.fn.count('om.id').castTo('integer').as('member_count'),
       ])
       .groupBy(['o.id', 'o.name', 'o.slug', 'o.created_at'])
       .orderBy('o.created_at', 'asc')
@@ -93,15 +91,9 @@ router.post('/', auth, requireSuperAdmin, async (req, res) => {
   const { name, slug: rawSlug } = req.body;
   if (!name) return res.sendError('name is required', 'VALIDATION_ERROR', 400);
 
-  const slug = rawSlug ? rawSlug.toLowerCase().replace(/[^a-z0-9-]/g, '-') : slugify(name);
+  const slug = rawSlug ? slugify(rawSlug) : slugify(name);
 
   try {
-    const existing = await db.selectFrom('organizations')
-      .where('slug', '=', slug)
-      .select('id')
-      .executeTakeFirst();
-    if (existing) return res.sendError('Slug already taken', 'SLUG_CONFLICT', 409);
-
     const org = await db.transaction().execute(async (trx) => {
       const [created] = await trx.insertInto('organizations')
         .values({ name, slug })
@@ -117,7 +109,10 @@ router.post('/', auth, requireSuperAdmin, async (req, res) => {
 
     res.sendSuccess(org);
   } catch (err) {
-    res.sendError(err.message, 'SERVER_ERROR', 500);
+    if (err.code === '23505') {
+      return res.sendError('Slug already taken', 'SLUG_CONFLICT', 409);
+    }
+    next(err);
   }
 });
 
