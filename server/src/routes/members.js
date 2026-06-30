@@ -80,6 +80,10 @@ router.post('/invite', async (req, res) => {
 
 // PATCH /api/org/:orgSlug/members/:userId — update role
 router.patch('/:userId', async (req, res) => {
+  if (!req.user?.is_super_admin && !['owner', 'admin'].includes(req.orgRole)) {
+    return res.sendError('Insufficient permissions', 'ORG_FORBIDDEN', 403);
+  }
+
   const { role } = req.body;
   if (!['owner', 'admin', 'member', 'viewer'].includes(role)) {
     return res.sendError('Invalid role', 'VALIDATION_ERROR', 400);
@@ -102,6 +106,10 @@ router.patch('/:userId', async (req, res) => {
 
 // DELETE /api/org/:orgSlug/members/:userId — remove member
 router.delete('/:userId', async (req, res) => {
+  if (!req.user?.is_super_admin && !['owner', 'admin'].includes(req.orgRole)) {
+    return res.sendError('Insufficient permissions', 'ORG_FORBIDDEN', 403);
+  }
+
   try {
     const deleted = await db.deleteFrom('organization_members')
       .where('organization_id', '=', req.orgId)

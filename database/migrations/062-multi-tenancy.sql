@@ -83,6 +83,8 @@ ALTER TABLE outbound_message_drafts ADD COLUMN IF NOT EXISTS organization_id UUI
 ALTER TABLE sequence_steps          ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
 ALTER TABLE engagement_tracking     ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
 ALTER TABLE unified_leads           ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE stage_automation_rules  ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
+ALTER TABLE tags                    ADD COLUMN IF NOT EXISTS organization_id UUID REFERENCES organizations(id);
 
 -- ── Default org + backfill ───────────────────────────────────────────────────
 
@@ -120,6 +122,8 @@ BEGIN
   UPDATE sequence_steps          SET organization_id = default_org_id WHERE organization_id IS NULL;
   UPDATE engagement_tracking     SET organization_id = default_org_id WHERE organization_id IS NULL;
   UPDATE unified_leads           SET organization_id = default_org_id WHERE organization_id IS NULL;
+  UPDATE stage_automation_rules  SET organization_id = default_org_id WHERE organization_id IS NULL;
+  UPDATE tags                    SET organization_id = default_org_id WHERE organization_id IS NULL;
 
   -- Mark super-admins
   UPDATE users SET is_super_admin = TRUE WHERE email = 'siddonj@gmail.com';
@@ -165,6 +169,8 @@ ALTER TABLE outbound_message_drafts ALTER COLUMN organization_id SET NOT NULL;
 ALTER TABLE sequence_steps          ALTER COLUMN organization_id SET NOT NULL;
 ALTER TABLE engagement_tracking     ALTER COLUMN organization_id SET NOT NULL;
 ALTER TABLE unified_leads           ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE stage_automation_rules  ALTER COLUMN organization_id SET NOT NULL;
+ALTER TABLE tags                    ALTER COLUMN organization_id SET NOT NULL;
 
 -- ── Performance indexes ──────────────────────────────────────────────────────
 

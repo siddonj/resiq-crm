@@ -105,7 +105,7 @@ export default function DashboardLayout() {
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [navigate])
+  }, [navigate, prefix])
 
   const availableTabs = useMemo(
     () =>

@@ -19,7 +19,7 @@ router.get('/contacts/summary', auth, async (req, res) => {
         COUNT(DISTINCT CASE WHEN id IN (SELECT DISTINCT contact_id FROM emails WHERE contact_id IS NOT NULL) THEN id END) as with_email,
         COUNT(CASE WHEN created_at >= DATE_TRUNC('month', NOW()) THEN 1 END) as new_this_month
       FROM contacts
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
     `.execute(db);
 
     const summary = result.rows[0];
@@ -29,7 +29,7 @@ router.get('/contacts/summary', auth, async (req, res) => {
       SELECT t.name, COUNT(DISTINCT ct.contact_id) as count
       FROM tags t
       LEFT JOIN contact_tags ct ON t.id = ct.tag_id
-      WHERE t.user_id = ${req.user.id}
+      WHERE t.user_id = ${req.user.id} AND t.organization_id = ${req.orgId}
       GROUP BY t.id, t.name
       ORDER BY count DESC
       LIMIT 5
@@ -70,7 +70,7 @@ router.get('/deals/summary', auth, async (req, res) => {
         COALESCE(SUM(CASE WHEN stage = 'closed_won' THEN value ELSE 0 END), 0) as closed_won_value,
         COALESCE(AVG(CASE WHEN stage NOT IN ('closed_won', 'closed_lost') THEN value END), 0) as avg_active_value
       FROM deals
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
     `.execute(db);
 
     const summary = result.rows[0];
@@ -106,7 +106,7 @@ router.get('/deals/by-stage', auth, async (req, res) => {
         COALESCE(AVG(value), 0) as avg_value,
         MIN(created_at) as oldest_date
       FROM deals
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
       GROUP BY stage
       ORDER BY CASE stage
         WHEN 'lead' THEN 1 WHEN 'qualified' THEN 2 WHEN 'proposal' THEN 3
@@ -141,7 +141,7 @@ router.get('/emails/summary', auth, async (req, res) => {
         COUNT(CASE WHEN received_at >= NOW() - INTERVAL '7 days' THEN 1 END) as last_7_days,
         COUNT(DISTINCT contact_id) as contacts_emailed
       FROM emails
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
     `.execute(db);
 
     const summary = result.rows[0];
@@ -176,7 +176,7 @@ router.get('/emails/top-contacts', auth, async (req, res) => {
         MAX(e.received_at) as last_email_date
       FROM contacts c
       LEFT JOIN emails e ON c.id = e.contact_id AND e.user_id = ${req.user.id}
-      WHERE c.user_id = ${req.user.id}
+      WHERE c.user_id = ${req.user.id} AND c.organization_id = ${req.orgId}
       GROUP BY c.id, c.name
       HAVING COUNT(e.id) > 0
       ORDER BY email_count DESC
@@ -209,7 +209,7 @@ router.get('/workflows/summary', auth, async (req, res) => {
         COUNT(CASE WHEN enabled = true THEN 1 END) as enabled,
         COUNT(CASE WHEN enabled = false THEN 1 END) as disabled
       FROM workflows
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
     `.execute(db);
 
     // Get execution metrics for current month
@@ -221,7 +221,7 @@ router.get('/workflows/summary', auth, async (req, res) => {
         COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending
       FROM workflow_executions we
       JOIN workflows w ON w.id = we.workflow_id
-      WHERE w.user_id = ${req.user.id}
+      WHERE w.user_id = ${req.user.id} AND w.organization_id = ${req.orgId}
         AND executed_at >= DATE_TRUNC('month', NOW())
     `.execute(db);
 
@@ -272,7 +272,7 @@ router.get('/workflows/top', auth, async (req, res) => {
        FROM workflows w
        LEFT JOIN workflow_executions we
          ON we.workflow_id = w.id
-       WHERE w.user_id = ${req.user.id}
+       WHERE w.user_id = ${req.user.id} AND w.organization_id = ${req.orgId}
        GROUP BY w.id, w.name
        HAVING COUNT(we.id) > 0
        ORDER BY execution_count DESC
@@ -307,7 +307,7 @@ router.get('/engagement/summary', auth, async (req, res) => {
         COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) as total_opened,
         ROUND(100.0 * COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) / COUNT(*), 2) as open_rate
       FROM engagement_tracking
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
       GROUP BY asset_type
       ORDER BY total_tracked DESC
     `.execute(db);
@@ -320,7 +320,7 @@ router.get('/engagement/summary', auth, async (req, res) => {
         COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) as total_opened,
         COUNT(DISTINCT CASE WHEN opened_at IS NOT NULL THEN contact_id END) as contacts_opened
       FROM engagement_tracking
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
     `.execute(db);
 
     const overall = overallResult.rows[0];
@@ -365,7 +365,7 @@ router.get('/engagement/top-assets', auth, async (req, res) => {
         ROUND(100.0 * COUNT(CASE WHEN opened_at IS NOT NULL THEN 1 END) / COUNT(*), 2) as open_rate,
         MAX(opened_at) as last_opened
       FROM engagement_tracking
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
       GROUP BY asset_type, asset_id
       HAVING COUNT(*) > 0
       ORDER BY opened DESC
@@ -406,7 +406,7 @@ router.get('/deals/stage-probabilities', auth, async (req, res) => {
         COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
         COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost
       FROM deals
-      WHERE user_id = ${req.user.id} AND stage IN ('closed_won', 'closed_lost')
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId} AND stage IN ('closed_won', 'closed_lost')
     `.execute(db);
 
     const totalWon = parseInt(historicalResult.rows[0]?.won || 0);
@@ -502,7 +502,7 @@ router.get('/deals/forecast', auth, async (req, res) => {
       FROM deals d
       LEFT JOIN contacts c ON c.id = d.contact_id
       LEFT JOIN stage_probabilities sp ON sp.user_id = d.user_id AND sp.stage = d.stage::text
-      WHERE d.user_id = ${req.user.id} AND d.stage NOT IN ('closed_won', 'closed_lost')
+      WHERE d.user_id = ${req.user.id} AND d.organization_id = ${req.orgId} AND d.stage NOT IN ('closed_won', 'closed_lost')
       ORDER BY (COALESCE(d.value, 0) * COALESCE(d.probability,
         COALESCE(sp.probability, 10)) / 100) DESC
     `.execute(db);
@@ -514,7 +514,7 @@ router.get('/deals/forecast', auth, async (req, res) => {
         COALESCE(SUM(value), 0) as actual_revenue,
         COUNT(*) as deals_closed
       FROM deals
-      WHERE user_id = ${req.user.id} AND stage = 'closed_won'
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId} AND stage = 'closed_won'
         AND updated_at >= NOW() - INTERVAL '12 months'
       GROUP BY DATE_TRUNC('month', updated_at)
       ORDER BY month
@@ -538,7 +538,7 @@ router.get('/deals/forecast', auth, async (req, res) => {
         COUNT(*) as deal_count
       FROM deals d
       LEFT JOIN stage_probabilities sp ON sp.user_id = d.user_id AND sp.stage = d.stage::text
-      WHERE d.user_id = ${req.user.id}
+      WHERE d.user_id = ${req.user.id} AND d.organization_id = ${req.orgId}
         AND d.stage NOT IN ('closed_won', 'closed_lost')
         AND d.close_date IS NOT NULL
         AND d.close_date >= DATE_TRUNC('month', NOW())
@@ -604,7 +604,7 @@ router.get('/deals/win-loss', auth, async (req, res) => {
         COUNT(*) as count,
         COALESCE(SUM(value), 0) as total_value
       FROM deals
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
       GROUP BY stage
       ORDER BY CASE stage
         WHEN 'lead' THEN 1 WHEN 'qualified' THEN 2 WHEN 'proposal' THEN 3
@@ -620,7 +620,7 @@ router.get('/deals/win-loss', auth, async (req, res) => {
         COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
         COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost
       FROM deals
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
       GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
       ORDER BY total DESC
     `.execute(db);
@@ -632,7 +632,7 @@ router.get('/deals/win-loss', auth, async (req, res) => {
         COUNT(CASE WHEN stage = 'closed_won' THEN 1 END) as won,
         COUNT(CASE WHEN stage = 'closed_lost' THEN 1 END) as lost,
         COUNT(CASE WHEN stage NOT IN ('closed_won','closed_lost') THEN 1 END) as active
-      FROM deals WHERE user_id = ${req.user.id}
+      FROM deals WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
     `.execute(db);
 
     const o = overallResult.rows[0];
@@ -692,7 +692,7 @@ router.get('/deals/velocity', auth, async (req, res) => {
         ROUND(AVG(CASE WHEN stage IN ('closed_won','closed_lost')
           THEN EXTRACT(EPOCH FROM (COALESCE(close_date::timestamptz, updated_at, NOW()) - created_at)) / 86400
         END)::numeric, 1) as avg_sales_cycle
-      FROM deals WHERE user_id = ${req.user.id}
+      FROM deals WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
     `.execute(db);
 
     // Avg days by service line (won deals only)
@@ -706,7 +706,7 @@ router.get('/deals/velocity', auth, async (req, res) => {
           WHEN stage = 'closed_won' AND close_date IS NULL
           THEN EXTRACT(EPOCH FROM (COALESCE(updated_at, NOW()) - created_at)) / 86400
         END)::numeric, 1) as avg_days_to_win
-      FROM deals WHERE user_id = ${req.user.id}
+      FROM deals WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
       GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
       ORDER BY avg_days_to_win ASC NULLS LAST
     `.execute(db);
@@ -722,7 +722,7 @@ router.get('/deals/velocity', auth, async (req, res) => {
           - changed_at
         )) / 86400)::numeric, 1) as avg_days_in_from_stage
       FROM deal_stage_history
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
       GROUP BY from_stage, to_stage
       ORDER BY from_stage
     `.execute(db).catch(err => { console.error('Error fetching stage velocity (table may not exist yet):', err.message); return { rows: [] }; }); // graceful fallback if table doesn't exist yet
@@ -761,7 +761,7 @@ router.get('/deals/mrr', auth, async (req, res) => {
         COUNT(*) as deals_closed,
         COALESCE(AVG(value), 0) as avg_deal_size
       FROM deals
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
         AND stage = 'closed_won'
         AND COALESCE(close_date::timestamptz, updated_at, created_at) >= NOW() - INTERVAL '24 months'
       GROUP BY DATE_TRUNC('month', COALESCE(close_date::timestamptz, updated_at, created_at))
@@ -774,7 +774,7 @@ router.get('/deals/mrr', auth, async (req, res) => {
         COALESCE(SUM(value), 0) as ytd_revenue,
         COUNT(*) as ytd_deals
       FROM deals
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
         AND stage = 'closed_won'
         AND COALESCE(close_date::timestamptz, updated_at, created_at) >= DATE_TRUNC('year', NOW())
     `.execute(db);
@@ -835,7 +835,7 @@ router.get('/deals/service-lines', auth, async (req, res) => {
           THEN EXTRACT(EPOCH FROM (COALESCE(updated_at, NOW()) - created_at)) / 86400
         END)::numeric, 1) as avg_days_to_win
       FROM deals
-      WHERE user_id = ${req.user.id}
+      WHERE user_id = ${req.user.id} AND organization_id = ${req.orgId}
       GROUP BY COALESCE(NULLIF(service_line, ''), 'unspecified')
       ORDER BY total_revenue DESC
     `.execute(db);
