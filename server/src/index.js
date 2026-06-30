@@ -66,6 +66,11 @@ const WorkflowEngine = require('./services/workflowEngine');
 const trackRoutes = require('./routes/track');
 const portfoliosRoutes = require('./routes/portfolios');
 const TicketWebSocketServer = require('./services/ticketWebSocket');
+const orgsRoutes = require('./routes/orgs');
+const membersRoutes = require('./routes/members');
+const { requireOrg } = require('./middleware/requireOrg');
+// authMiddleware = server/src/middleware/auth.js (JWT check) — runs before requireOrg on orgRouter
+const authMiddleware = require('./middleware/auth');
 
 const app = express();
 
@@ -202,6 +207,14 @@ app.use('/api/auth', authLimiter, clientAuthRoutes);
 app.use('/api/client', clientPortalRoutes);
 app.use('/api/clients', clientsRoutes);
 app.use('/api/stripe', stripeRoutes);
+
+// Global org management (not under :orgSlug)
+app.use('/api/orgs', authMiddleware, orgsRoutes);
+
+// Public unsubscribe link — no auth required
+app.use('/api/unsubscribe', unsubscribeRoutes);
+
+// ── Org-scoped routes (legacy flat paths — kept for backward compat) ──────────
 app.use('/api/contacts', contactsRoutes);
 app.use('/api/deals', dealsRoutes);
 app.use('/api/workflows', workflowsRoutes);
@@ -228,7 +241,6 @@ app.use('/api/multi-source-leads', multiSourceLeadsRoutes);
 app.use('/api/outbound', outboundLimiter, outboundAutomationRoutes);
 app.use('/api/app-settings', appSettingsRoutes);
 app.use('/api/compliance', complianceRoutes);
-app.use('/api/unsubscribe', unsubscribeRoutes);
 app.use('/api/deliverability', deliverabilityRoutes);
 app.use('/api/engagement', engagementRoutes);
 app.use('/api/tickets', ticketsRoutes);
@@ -236,6 +248,48 @@ app.use('/api/reddit-leads', redditLeadsRoutes);
 app.use('/api/track', trackRoutes);
 app.use('/api/portfolios', portfoliosRoutes);
 app.use('/api/automation', automationRoutes);
+
+// ── Org-scoped routes under /api/org/:orgSlug ────────────────────────────────
+const orgRouter = express.Router({ mergeParams: true });
+orgRouter.use(authMiddleware);  // server/src/middleware/auth.js — sets req.user
+orgRouter.use(requireOrg);      // sets req.orgId, req.org, req.orgRole
+
+orgRouter.use('/contacts',           contactsRoutes);
+orgRouter.use('/deals',              dealsRoutes);
+orgRouter.use('/workflows',          workflowsRoutes);
+orgRouter.use('/sequences',          sequencesRoutes);
+orgRouter.use('/integrations',       integrationsRoutes);
+orgRouter.use('/projects',           projectsRoutes);
+orgRouter.use('/analytics',          analyticsRoutes);
+orgRouter.use('/users',              usersRoutes);
+orgRouter.use('/teams',              teamsRoutes);
+orgRouter.use('/audit-logs',         auditLogsRoutes);
+orgRouter.use('/sharing',            sharingRoutes);
+orgRouter.use('/reminders',          remindersRoutes);
+orgRouter.use('/activities',         activitiesRoutes);
+orgRouter.use('/proposals',          proposalsRoutes);
+orgRouter.use('/invoices',           invoicesRoutes);
+orgRouter.use('/time-entries',       timeEntriesRoutes);
+orgRouter.use('/calendar',           calendarRoutes);
+orgRouter.use('/sms',                smsRoutes);
+orgRouter.use('/webhooks',           webhookRoutes);
+orgRouter.use('/agents',             agentsRoutes);
+orgRouter.use('/forms',              formsRoutes);
+orgRouter.use('/leads',              leadsRoutes);
+orgRouter.use('/multi-source-leads', multiSourceLeadsRoutes);
+orgRouter.use('/outbound',           outboundLimiter, outboundAutomationRoutes);
+orgRouter.use('/app-settings',       appSettingsRoutes);
+orgRouter.use('/compliance',         complianceRoutes);
+orgRouter.use('/deliverability',     deliverabilityRoutes);
+orgRouter.use('/engagement',         engagementRoutes);
+orgRouter.use('/tickets',            ticketsRoutes);
+orgRouter.use('/reddit-leads',       redditLeadsRoutes);
+orgRouter.use('/track',              trackRoutes);
+orgRouter.use('/portfolios',         portfoliosRoutes);
+orgRouter.use('/automation',         automationRoutes);
+orgRouter.use('/members',            membersRoutes);
+
+app.use('/api/org/:orgSlug', orgRouter);
 
 app.get('/api/health', async (req, res) => {
   const checks = {};

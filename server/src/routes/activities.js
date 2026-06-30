@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 
@@ -14,7 +14,7 @@ const VALID_TYPES = ['call', 'meeting', 'email', 'note', 'task'];
 router.get('/', auth, async (req, res) => {
   const { contact_id, deal_id } = req.query;
 
-  const conditions = [sql`a.user_id = ${req.user.id}`];
+  const conditions = [sql`a.organization_id = ${req.orgId}`, sql`a.user_id = ${req.user.id}`];
   if (contact_id) conditions.push(sql`a.contact_id = ${contact_id}`);
   if (deal_id) conditions.push(sql`a.deal_id = ${deal_id}`);
 
@@ -52,6 +52,7 @@ router.post('/', auth, async (req, res) => {
   try {
     const activity = await db.insertInto('activities')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         type,
         description: description.trim(),
@@ -79,6 +80,7 @@ router.post('/', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('activities')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('id')

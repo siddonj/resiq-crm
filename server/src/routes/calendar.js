@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql, ownershipWhere } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 
@@ -78,6 +78,7 @@ router.post('/events', auth, async (req, res) => {
   try {
     const event = await db.insertInto('calendar_events')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         title,
         description: description || null,
@@ -94,6 +95,7 @@ router.post('/events', auth, async (req, res) => {
     // Also create a reminder for the event start
     await db.insertInto('reminders')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         message: `Event: ${title}`,
         remind_at: start_at,
@@ -114,6 +116,7 @@ router.put('/events/:id', auth, async (req, res) => {
   const { title, description, start_at, end_at, contact_id, deal_id } = req.body;
   try {
     const result = await db.updateTable('calendar_events')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .set({
         title,
         description: description || null,
@@ -136,6 +139,7 @@ router.put('/events/:id', auth, async (req, res) => {
 router.delete('/events/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('calendar_events')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('title')

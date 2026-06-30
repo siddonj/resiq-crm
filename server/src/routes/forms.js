@@ -1,5 +1,5 @@
 const express = require('express');
-const { db } = require('../db');
+const { db, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -9,6 +9,7 @@ router.get('/', auth, async (req, res) => {
   try {
     const rows = await db
       .selectFrom('forms')
+      .$call(orgWhere(req.orgId))
       .where('user_id', '=', req.user.id)
       .selectAll()
       .orderBy('created_at', 'desc')
@@ -32,6 +33,7 @@ router.post('/', auth, async (req, res) => {
         title,
         redirect_url: redirect_url || null,
         fields: JSON.stringify(fields || []),
+        organization_id: req.orgId,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -47,6 +49,7 @@ router.put('/:id', auth, async (req, res) => {
   const { title, redirect_url, fields } = req.body;
   try {
     const form = await db.updateTable('forms')
+      .$call(orgWhere(req.orgId))
       .set({
         title,
         redirect_url: redirect_url || null,
@@ -69,6 +72,7 @@ router.put('/:id', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     await db.deleteFrom('forms')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .execute();

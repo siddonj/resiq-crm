@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { db, sql, pool } = require('../db');
+const { db, sql, pool, orgWhere, orgUserWhere } = require('../db');
 const requireAuth = require('../middleware/auth');
 
 // Apply auth middleware to all routes
@@ -33,6 +33,7 @@ router.post('/', async (req, res) => {
   try {
     const result = await db.insertInto('sequences')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         name,
         description,
@@ -50,6 +51,7 @@ router.post('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const sequence = await db.selectFrom('sequences')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -60,6 +62,7 @@ router.get('/:id', async (req, res) => {
     }
 
     const steps = await db.selectFrom('sequence_steps')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('sequence_id', '=', req.params.id)
       .orderBy('step_number', 'asc')
@@ -106,6 +109,7 @@ router.put('/:id/steps', async (req, res) => {
   try {
     // Verify ownership
     const seqCheck = await db.selectFrom('sequences')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('id', '=', sequenceId)
       .where('user_id', '=', req.user.id)
@@ -138,6 +142,7 @@ router.put('/:id/steps', async (req, res) => {
 
       // Update sequence modified timestamp
       await trx.updateTable('sequences')
+        .$call(orgWhere(req.orgId))
         .set({ updated_at: new Date() })
         .where('id', '=', sequenceId)
         .execute();
@@ -145,6 +150,7 @@ router.put('/:id/steps', async (req, res) => {
 
     // Fetch and return the updated steps
     const stepsRes = await db.selectFrom('sequence_steps')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('sequence_id', '=', sequenceId)
       .orderBy('step_number', 'asc')
@@ -164,6 +170,7 @@ router.post('/:id/enroll', async (req, res) => {
   try {
     // Verify sequence ownership
     const seqCheck = await db.selectFrom('sequences')
+      .$call(orgWhere(req.orgId))
       .select('id')
       .where('id', '=', sequenceId)
       .where('user_id', '=', req.user.id)

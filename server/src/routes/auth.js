@@ -95,7 +95,7 @@ router.post('/login', async (req, res) => {
 
     res.json({
       token,
-      user: { id: user.id, name: user.name, email: user.email, role: user.role },
+      user: { id: user.id, name: user.name, email: user.email, role: user.role, is_super_admin: user.is_super_admin ?? false },
     });
   } catch (err) {
     console.error(err);

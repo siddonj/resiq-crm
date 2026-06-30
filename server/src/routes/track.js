@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
-const { db, sql } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const requireAuth = require('../middleware/auth');
 
 // Helper to generate tracking ID
@@ -132,6 +132,7 @@ router.post('/create', requireAuth, async (req, res) => {
     const tracking = await db
       .insertInto('engagement_tracking')
       .values({
+        organization_id: req.orgId,
         user_id: userId,
         contact_id: contactId || null,
         tracking_id: trackingId,
@@ -158,6 +159,7 @@ router.get('/contact/:contactId', requireAuth, async (req, res) => {
     
     const rows = await db
       .selectFrom('engagement_tracking')
+      .$call(orgWhere(req.orgId))
       .where('contact_id', '=', contactId)
       .where('user_id', '=', req.user.id)
       .selectAll()
@@ -178,6 +180,7 @@ router.get('/asset/:assetType/:assetId', requireAuth, async (req, res) => {
     
     const rows = await db
       .selectFrom('engagement_tracking')
+      .$call(orgWhere(req.orgId))
       .where('asset_type', '=', assetType)
       .where('asset_id', '=', assetId)
       .where('user_id', '=', req.user.id)

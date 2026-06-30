@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -13,6 +13,7 @@ router.get('/', auth, async (req, res) => {
 
   try {
     let query = db.selectFrom('reminders as r')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .leftJoin('contacts as c', 'c.id', 'r.contact_id')
       .leftJoin('deals as d', 'd.id', 'r.deal_id')
       .select([
@@ -48,6 +49,7 @@ router.post('/', auth, async (req, res) => {
   try {
     const result = await db.insertInto('reminders')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         message: message.trim(),
         remind_at,
@@ -71,6 +73,7 @@ router.patch('/:id/complete', auth, async (req, res) => {
   const { completed = true } = req.body;
   try {
     const result = await db.updateTable('reminders')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .set({ completed })
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -90,6 +93,7 @@ router.patch('/:id/complete', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('reminders')
+      .$call(orgUserWhere(req.orgId, req.user.id))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('id')

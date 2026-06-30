@@ -3,7 +3,7 @@ const multer = require('multer');
 const mammoth = require('mammoth');
 const { randomUUID } = require('crypto');
 const OpenAI = require('openai');
-const { db, sql } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 const trackingService = require('../services/trackingService');
@@ -144,6 +144,7 @@ router.get('/', auth, async (req, res) => {
 
   try {
     let query = db.selectFrom('proposals as p')
+      .$call(orgWhere(req.orgId))
       .leftJoin('deals as d', 'd.id', 'p.deal_id')
       .leftJoin('contacts as c', 'c.id', 'd.contact_id')
       .select([
@@ -174,6 +175,7 @@ router.get('/', auth, async (req, res) => {
 router.get('/templates', auth, async (req, res) => {
   try {
     const result = await db.selectFrom('proposal_templates')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('user_id', '=', req.user.id)
       .orderBy('created_at', 'desc')
@@ -191,6 +193,7 @@ router.post('/templates', auth, async (req, res) => {
   try {
     const result = await db.insertInto('proposal_templates')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         name,
         sections: JSON.stringify(sections || []),
@@ -207,6 +210,7 @@ router.post('/templates', auth, async (req, res) => {
 router.delete('/templates/:id', auth, async (req, res) => {
   try {
     await db.deleteFrom('proposal_templates')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .execute();
@@ -220,6 +224,7 @@ router.delete('/templates/:id', auth, async (req, res) => {
 router.get('/:id', auth, async (req, res) => {
   try {
     const result = await db.selectFrom('proposals as p')
+      .$call(orgWhere(req.orgId))
       .leftJoin('deals as d', 'd.id', 'p.deal_id')
       .leftJoin('contacts as c', 'c.id', 'd.contact_id')
       .select([
@@ -243,6 +248,7 @@ router.get('/:id/render', auth, async (req, res) => {
   const { tracked } = req.query;
   try {
     const result = await db.selectFrom('proposals as p')
+      .$call(orgWhere(req.orgId))
       .leftJoin('deals as d', 'd.id', 'p.deal_id')
       .leftJoin('contacts as c', 'c.id', 'd.contact_id')
       .select([
@@ -288,6 +294,7 @@ router.post('/', auth, async (req, res) => {
   try {
     const result = await db.insertInto('proposals')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         deal_id: deal_id || null,
         title,
@@ -310,6 +317,7 @@ router.put('/:id', auth, async (req, res) => {
   const { title, deal_id, sections, line_items } = req.body;
   try {
     const result = await db.updateTable('proposals')
+      .$call(orgWhere(req.orgId))
       .set({
         title,
         deal_id: deal_id || null,
@@ -347,6 +355,7 @@ router.patch('/:id/status', auth, async (req, res) => {
     if (status === 'signed') setValues.signed_at = sql`NOW()`;
 
     const result = await db.updateTable('proposals')
+      .$call(orgWhere(req.orgId))
       .set(setValues)
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
@@ -367,6 +376,7 @@ router.post('/:id/sign', auth, async (req, res) => {
   if (!name?.trim()) return res.status(400).json({ error: 'Signature name is required' });
   try {
     const result = await db.updateTable('proposals')
+      .$call(orgWhere(req.orgId))
       .set({
         status: 'signed',
         signature_name: name,
@@ -391,6 +401,7 @@ router.post('/:id/sign', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const result = await db.deleteFrom('proposals')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .where('user_id', '=', req.user.id)
       .returning('title')
@@ -408,6 +419,7 @@ router.post('/:id/convert-to-invoice', auth, async (req, res) => {
   try {
     // Fetch proposal + deal (to get contact_id)
     const proposal = await db.selectFrom('proposals as p')
+      .$call(orgWhere(req.orgId))
       .leftJoin('deals as d', 'd.id', 'p.deal_id')
       .select([
         'p.id',
@@ -425,6 +437,7 @@ router.post('/:id/convert-to-invoice', auth, async (req, res) => {
 
     // Check if already converted — look for an invoice with proposal_id = this proposal's id
     const existing = await db.selectFrom('invoices')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('proposal_id', '=', proposal.id)
       .where('user_id', '=', req.user.id)
@@ -450,6 +463,7 @@ router.post('/:id/convert-to-invoice', auth, async (req, res) => {
     // Insert invoice
     const invoice = await db.insertInto('invoices')
       .values({
+        organization_id: req.orgId,
         user_id: req.user.id,
         deal_id: proposal.deal_id || null,
         proposal_id: proposal.id,
