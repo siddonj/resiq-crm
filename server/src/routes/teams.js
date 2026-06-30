@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const requireRole = require('../middleware/requireRole');
 const { logAction } = require('../services/auditLogger');
@@ -38,7 +38,7 @@ router.post('/', auth, requireRole('admin'), async (req, res) => {
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   try {
     const team = await db.insertInto('teams')
-      .values({ name: name.trim(), description: description || null, created_by: req.user.id })
+      .values({ organization_id: req.orgId, name: name.trim(), description: description || null, created_by: req.user.id })
       .returningAll()
       .executeTakeFirstOrThrow();
     logAction(req.user.id, req.user.email, 'create', 'team', team.id, team.name);
@@ -63,6 +63,7 @@ router.get('/:id', auth, requireRole('admin', 'manager'), async (req, res) => {
         WHERE t.id = ${req.params.id}
       `.execute(db).then(r => r.rows[0]),
       db.selectFrom('team_members')
+        .$call(orgWhere(req.orgId))
         .innerJoin('users', 'users.id', 'team_members.user_id')
         .where('team_members.team_id', '=', req.params.id)
         .select([
@@ -93,6 +94,7 @@ router.put('/:id', auth, requireRole('admin'), async (req, res) => {
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   try {
     const team = await db.updateTable('teams')
+      .$call(orgWhere(req.orgId))
       .set({ name: name.trim(), description: description ?? null })
       .where('id', '=', req.params.id)
       .returningAll()
@@ -114,6 +116,7 @@ router.put('/:id', auth, requireRole('admin'), async (req, res) => {
 router.delete('/:id', auth, requireRole('admin'), async (req, res) => {
   try {
     const deleted = await db.deleteFrom('teams')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .returning(['id', 'name'])
       .executeTakeFirst();

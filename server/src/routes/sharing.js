@@ -1,5 +1,5 @@
 const express = require('express');
-const { db, sql } = require('../db');
+const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
@@ -30,6 +30,7 @@ router.get('/:resourceType/:resourceId', auth, async (req, res) => {
 
   try {
     const result = await db.selectFrom('shared_resources as sr')
+      .$call(orgWhere(req.orgId))
       .leftJoin('users as u', 'u.id', 'sr.shared_with_user_id')
       .leftJoin('teams as t', 't.id', 'sr.shared_with_team_id')
       .select([
@@ -74,6 +75,7 @@ router.post('/', auth, async (req, res) => {
   try {
     const result = await db.insertInto('shared_resources')
       .values({
+        organization_id: req.orgId,
         resource_type,
         resource_id,
         shared_by: req.user.id,
@@ -98,6 +100,7 @@ router.post('/', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const share = await db.selectFrom('shared_resources')
+      .$call(orgWhere(req.orgId))
       .selectAll()
       .where('id', '=', req.params.id)
       .executeTakeFirst();
@@ -107,6 +110,7 @@ router.delete('/:id', auth, async (req, res) => {
     if (!isOwner) return res.status(403).json({ error: 'Not authorized' });
 
     await db.deleteFrom('shared_resources')
+      .$call(orgWhere(req.orgId))
       .where('id', '=', req.params.id)
       .execute();
     res.json({ message: 'Share removed' });
