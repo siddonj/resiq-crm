@@ -71,6 +71,7 @@ const membersRoutes = require('./routes/members');
 const { requireOrg } = require('./middleware/requireOrg');
 // authMiddleware = server/src/middleware/auth.js (JWT check) — runs before requireOrg on orgRouter
 const authMiddleware = require('./middleware/auth');
+const { resolveOrg } = require('./middleware/resolveOrg');
 
 const app = express();
 
@@ -215,39 +216,58 @@ app.use('/api/orgs', authMiddleware, orgsRoutes);
 app.use('/api/unsubscribe', unsubscribeRoutes);
 
 // ── Org-scoped routes (legacy flat paths — kept for backward compat) ──────────
-app.use('/api/contacts', contactsRoutes);
-app.use('/api/deals', dealsRoutes);
-app.use('/api/workflows', workflowsRoutes);
-app.use('/api/sequences', sequencesRoutes);
+// authMiddleware + resolveOrg derive req.orgId from the caller's organization_members
+// row (see server/src/middleware/resolveOrg.js). Excluded per docs/superpowers/plans/org-inventory.md:
+// /api/auth, /api/client, /api/clients, /api/stripe, /api/orgs, /api/unsubscribe, /api/webhooks.
+app.use('/api/contacts', authMiddleware, resolveOrg, contactsRoutes);
+app.use('/api/deals', authMiddleware, resolveOrg, dealsRoutes);
+app.use('/api/workflows', authMiddleware, resolveOrg, workflowsRoutes);
+app.use('/api/sequences', authMiddleware, resolveOrg, sequencesRoutes);
+// integrations.js has public OAuth callback routes (/gmail/callback, /gcal/callback) and
+// does not read req.orgId in any handler — mount-level auth/resolveOrg would break the
+// callback flow, so it is intentionally left unwired (per-route `auth` still applies).
 app.use('/api/integrations', integrationsRoutes);
-app.use('/api/projects', projectsRoutes);
-app.use('/api/analytics', analyticsRoutes);
+app.use('/api/projects', authMiddleware, resolveOrg, projectsRoutes);
+app.use('/api/analytics', authMiddleware, resolveOrg, analyticsRoutes);
+// users.js does not read req.orgId (users table is org-infra, not tenant data), and
+// /api/users/me is called on every app load to hydrate the session before any org exists
+// (client/src/context/AuthContext.jsx logs the user out on 4xx) — resolveOrg would force-
+// logout every user without a membership, so this mount is intentionally left unwired.
+// (users.js already applies `auth` per-route internally.)
 app.use('/api/users', usersRoutes);
-app.use('/api/teams', teamsRoutes);
-app.use('/api/audit-logs', auditLogsRoutes);
-app.use('/api/sharing', sharingRoutes);
-app.use('/api/reminders', remindersRoutes);
-app.use('/api/activities', activitiesRoutes);
-app.use('/api/proposals', proposalsRoutes);
-app.use('/api/invoices', invoicesRoutes);
-app.use('/api/time-entries', timeEntriesRoutes);
+app.use('/api/teams', authMiddleware, resolveOrg, teamsRoutes);
+app.use('/api/audit-logs', authMiddleware, resolveOrg, auditLogsRoutes);
+app.use('/api/sharing', authMiddleware, resolveOrg, sharingRoutes);
+app.use('/api/reminders', authMiddleware, resolveOrg, remindersRoutes);
+app.use('/api/activities', authMiddleware, resolveOrg, activitiesRoutes);
+app.use('/api/proposals', authMiddleware, resolveOrg, proposalsRoutes);
+app.use('/api/invoices', authMiddleware, resolveOrg, invoicesRoutes);
+app.use('/api/time-entries', authMiddleware, resolveOrg, timeEntriesRoutes);
+// calendar.js has public booking routes (/book/:slug) alongside authed routes that DO read
+// req.orgId — mount-level auth/resolveOrg would break public booking. See report: this is a
+// flagged gap (authed sub-routes need per-route resolveOrg, out of scope for mount wiring).
 app.use('/api/calendar', calendarRoutes);
-app.use('/api/sms', smsRoutes);
+app.use('/api/sms', authMiddleware, resolveOrg, smsRoutes);
 app.use('/api/webhooks', webhookRoutes);
-app.use('/api/agents', agentsRoutes);
-app.use('/api/forms', formsRoutes);
+app.use('/api/agents', authMiddleware, resolveOrg, agentsRoutes);
+app.use('/api/forms', authMiddleware, resolveOrg, formsRoutes);
+// leads.js is a public form-submission endpoint (no auth) that resolves org via the
+// formId, not req.orgId — mount-level auth/resolveOrg would break external form submits.
 app.use('/api/leads', leadsRoutes);
-app.use('/api/multi-source-leads', multiSourceLeadsRoutes);
-app.use('/api/outbound', outboundLimiter, outboundAutomationRoutes);
-app.use('/api/app-settings', appSettingsRoutes);
-app.use('/api/compliance', complianceRoutes);
-app.use('/api/deliverability', deliverabilityRoutes);
-app.use('/api/engagement', engagementRoutes);
-app.use('/api/tickets', ticketsRoutes);
-app.use('/api/reddit-leads', redditLeadsRoutes);
+app.use('/api/multi-source-leads', authMiddleware, resolveOrg, multiSourceLeadsRoutes);
+app.use('/api/outbound', outboundLimiter, authMiddleware, resolveOrg, outboundAutomationRoutes);
+app.use('/api/app-settings', authMiddleware, resolveOrg, appSettingsRoutes);
+app.use('/api/compliance', authMiddleware, resolveOrg, complianceRoutes);
+app.use('/api/deliverability', authMiddleware, resolveOrg, deliverabilityRoutes);
+app.use('/api/engagement', authMiddleware, resolveOrg, engagementRoutes);
+app.use('/api/tickets', authMiddleware, resolveOrg, ticketsRoutes);
+app.use('/api/reddit-leads', authMiddleware, resolveOrg, redditLeadsRoutes);
+// track.js has public tracking-pixel/link routes alongside authed routes (/create,
+// /contact/:contactId, /asset/...) that DO read req.orgId — same flagged gap as calendar.js
+// (mount-level auth/resolveOrg would break public pixel tracking used in sent emails).
 app.use('/api/track', trackRoutes);
-app.use('/api/portfolios', portfoliosRoutes);
-app.use('/api/automation', automationRoutes);
+app.use('/api/portfolios', authMiddleware, resolveOrg, portfoliosRoutes);
+app.use('/api/automation', authMiddleware, resolveOrg, automationRoutes);
 
 // ── Org-scoped routes under /api/org/:orgSlug ────────────────────────────────
 const orgRouter = express.Router({ mergeParams: true });
