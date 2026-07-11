@@ -70,13 +70,34 @@ the original build's ledger which flagged the raw-SQL files as a known gap:
   does NOT stamp organization_id on any of them — flagged as a separate, likely
   systemic gap for the plan owner; out of scope for this module-scoped task (only
   auditLogs.js's own queries were in scope).
-- `deliverability` — verify tables
+- `deliverability` — CONFIRMED intentionally per-user-scoped, not a gap (Task 6). Traced
+  routes/deliverability.js → services/outbound/deliverabilityService.js (its only caller,
+  whole-repo grep confirmed no other route/service requires this module or queries
+  `outbound_mailboxes` / `outbound_mailbox_daily_stats` directly). Both tables (migration 061)
+  key on `user_id` (FK to `users`, NOT NULL), not `organization_id`; neither table is in
+  ORG_TABLES nor appears in 062/063. Every query (7 pool.query call sites: list/get/create/
+  update/delete mailbox, refreshMailboxAuth, recentStatsByMailbox, todaySentByMailbox,
+  recordMailboxEvent) filters or inserts on `req.user.id`, which is server-derived from a
+  verified JWT + DB lookup in `middleware/auth.js` (never client-supplied). Because a user's
+  `id` is 1:1 with their authenticated identity regardless of which org they're acting in,
+  filtering by `user_id` is strictly tighter than org-level isolation — a user in Org A can
+  never see Org B's mailboxes without also compromising their own session, since the rows are
+  owned by the specific `user_id` that created them, not shared across org teammates. This
+  differs from `appSettings` (global across ALL users/orgs by design) — `deliverability` is
+  global across orgs but private per-user, which is a stronger isolation guarantee, not a
+  weaker one. Client page (`client/src/pages/Deliverability.jsx`) has no team/org-sharing UI,
+  consistent with "personal sending identity" as the intended model. No code change, no
+  migration, no isolation test added (would be a no-op — there is no org-level filter to
+  prove). KNOWN LIMITATION (not a bug, YAGNI): if resiq-crm later wants org-wide shared
+  sending mailboxes (teammates rotating through a shared pool), `outbound_mailboxes` will need
+  an `organization_id` column and a product decision on visibility — not needed today.
 - `integrations` — verify whether integration tokens are org-scoped
 
 **Reclassify to intentionally-global if their tables are NOT in ORG_TABLES** (record reason here
-during Task 6): candidates are `integrations`, `deliverability`. (`agents` ruled out — see entry
-above; it does touch ORG_TABLES via a shared service. `appSettings` CONFIRMED intentionally-global
-— see entry above.)
+during Task 6): candidates are `integrations`. (`agents` ruled out — see entry above; it does
+touch ORG_TABLES via a shared service. `appSettings` CONFIRMED intentionally-global — see entry
+above. `deliverability` CONFIRMED intentionally per-user-scoped (stronger than org-level
+isolation) — see entry above.)
 
 **Confirmed global (no change):** auth, clientAuth, stripe, webhooks, unsubscribe, orgs,
 clientPortal (client-scoped via req.client.id).
