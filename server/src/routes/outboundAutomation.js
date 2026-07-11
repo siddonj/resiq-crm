@@ -1249,7 +1249,7 @@ router.post('/leads/import/csv', upload.single('file'), validateBody(ImportCsvSc
         duplicateRows,
         failedRows,
       }
-    );
+    , req.orgId);
 
     return res.status(201).json({
       jobId,
@@ -1566,7 +1566,7 @@ INSERT INTO multifamily_objects
   const inserted = insertedRes.rows[0];
   logAction(req.user.id, req.user.email, 'multifamily_object_created', 'multifamily_object', inserted.id, inserted.name, {
     objectType: inserted.object_type,
-  });
+  }, req.orgId);
 
   return res.status(201).json(
     outboundUtils.mapMultifamilyObjectRow({
@@ -1620,7 +1620,7 @@ UPDATE multifamily_objects
   const updated = updatedRes.rows[0];
   logAction(req.user.id, req.user.email, 'multifamily_object_updated', 'multifamily_object', updated.id, updated.name, {
     objectType: updated.object_type,
-  });
+  }, req.orgId);
 
   return res.json(
     outboundUtils.mapMultifamilyObjectRow({
@@ -1651,7 +1651,7 @@ DELETE FROM multifamily_objects
   const deleted = deletedRes.rows[0];
   logAction(req.user.id, req.user.email, 'multifamily_object_deleted', 'multifamily_object', deleted.id, deleted.name, {
     objectType: deleted.object_type,
-  });
+  }, req.orgId);
   return res.status(204).send();
 });
 
@@ -1801,7 +1801,7 @@ INSERT INTO multifamily_object_associations
       entityId: association.entity_id,
       companyName: association.company_name,
     }
-  );
+  , req.orgId);
 
   return res.status(201).json(
     outboundUtils.mapMultifamilyAssociationRow({
@@ -1881,7 +1881,7 @@ INSERT INTO multifamily_object_associations
       objectType: object.object_type,
       entityType,
       upsertedCount: associations.length,
-    });
+    }, req.orgId);
 
     return res.status(201).json({
       objectId: object.id,
@@ -1940,7 +1940,7 @@ INSERT INTO multifamily_object_associations
     entityType,
     upsertedCount: associations.length,
     missingCount: missingIds.length,
-  });
+  }, req.orgId);
 
   return res.status(201).json({
     objectId: object.id,
@@ -1981,7 +1981,7 @@ DELETE FROM multifamily_object_associations
       entityId: deleted.entity_id,
       companyName: deleted.company_name,
     }
-  );
+  , req.orgId);
 
   return res.status(204).send();
 });
@@ -2130,7 +2130,7 @@ DELETE FROM outbound_leads
   logAction(req.user.id, req.user.email, 'outbound_lead_deleted', 'outbound_lead', deleted.id, deleted.name, {
     email: deleted.email,
     company: deleted.company,
-  });
+  }, req.orgId);
   return res.status(204).send();
 });
 
@@ -2206,7 +2206,7 @@ router.post('/saved-views', async (req, res) => {
     logAction(req.user.id, req.user.email, 'outbound_saved_view_created', 'outbound_saved_view', insertedRes.rows[0].id, name, {
       scope,
       isDefault,
-    });
+    }, req.orgId);
 
     return res.status(201).json(outboundUtils.mapSavedViewRow(insertedRes.rows[0]));
   } catch (err) {
@@ -2285,7 +2285,7 @@ SELECT *
 
     logAction(req.user.id, req.user.email, 'outbound_saved_view_updated', 'outbound_saved_view', req.params.id, nextName, {
       isDefault: nextIsDefault,
-    });
+    }, req.orgId);
 
     return res.json(outboundUtils.mapSavedViewRow(updatedRes.rows[0]));
   } catch (err) {
@@ -2321,7 +2321,7 @@ DELETE FROM outbound_saved_views
   const deleted = deletedRes.rows[0];
   logAction(req.user.id, req.user.email, 'outbound_saved_view_deleted', 'outbound_saved_view', deleted.id, deleted.name, {
     scope: deleted.scope,
-  });
+  }, req.orgId);
 
   return res.status(204).send();
 });
@@ -2488,7 +2488,7 @@ DELETE FROM outbound_leads
     requestedCount: leadIds.length,
     updatedCount: updatedLeadIds.length,
     missingCount: missingLeadIds.length,
-  });
+  }, req.orgId);
 
   return res.json({
     actionType,
@@ -3051,7 +3051,7 @@ SELECT id, issue_type, status, details, lead_id
       issueId: issue.id,
       mergedLeadIds: duplicateLeadIds,
       mergeOperationId: mergeOperation.id,
-    });
+    }, req.orgId);
 
     return res.json({
       mergeOperation: outboundUtils.mapDataQualityMergeOperationRow(mergeOperation),
@@ -3097,7 +3097,7 @@ UPDATE data_quality_issues
 
   logAction(req.user.id, req.user.email, 'outbound_data_quality_issue_status_updated', 'data_quality_issue', req.params.id, null, {
     status,
-  });
+  }, req.orgId);
 
   const issueRow = updatedRes.rows[0];
   const leadRes = issueRow.lead_id
@@ -3146,6 +3146,7 @@ router.post('/sequences/:id/enroll', validateBody(EnrollSequenceSchema), async (
   try {
     const enrollment = await sequenceService.enrollLead({
       userId: req.user.id,
+      orgId: req.orgId,
       sequenceId: req.params.id,
       leadId: req.validatedBody.leadId,
       logLeadEventFn: logLeadEvent,
@@ -3180,6 +3181,7 @@ router.patch('/sequences/enrollments/:id/state', validateBody(ChangeSequenceStat
   try {
     const updated = await sequenceService.changeEnrollmentState({
       userId: req.user.id,
+      orgId: req.orgId,
       enrollmentId: req.params.id,
       nextState: req.validatedBody.state,
       reason: req.validatedBody.reason,
@@ -3249,7 +3251,7 @@ INSERT INTO workflow_rules
     triggerEvent: rule.trigger_event,
     priority: rule.priority,
     enabled: rule.enabled,
-  });
+  }, req.orgId);
 
   return res.status(201).json(rule);
 });
@@ -3318,7 +3320,7 @@ UPDATE workflow_rules
     triggerEvent: updated.trigger_event,
     priority: updated.priority,
     enabled: updated.enabled,
-  });
+  }, req.orgId);
 
   return res.json(updated);
 });
@@ -3410,7 +3412,7 @@ UPDATE workflow_rules
     triggerEvent,
     applyActions,
     status: summary.status,
-  });
+  }, req.orgId);
 
   return res.json({
     applyActions,
@@ -3428,6 +3430,7 @@ router.post('/campaigns', validateBody(CreateCampaignSchema), async (req, res) =
   try {
     const campaign = await campaignService.createCampaign({
       userId: req.user.id,
+      orgId: req.orgId,
       name: req.validatedBody.name,
       channels: req.validatedBody.channels,
       audienceFilter: req.body.audienceFilter,
@@ -3474,6 +3477,7 @@ router.post('/campaigns/:id/members/add', async (req, res) => {
   try {
     const result = await campaignService.addMembers({
       userId: req.user.id,
+      orgId: req.orgId,
       campaignId: req.params.id,
       leadIds: req.body.leadIds,
     });
@@ -3492,6 +3496,7 @@ router.patch('/campaigns/:id/status', validateBody(UpdateCampaignStatusSchema), 
   try {
     const campaign = await campaignService.updateCampaignStatus({
       userId: req.user.id,
+      orgId: req.orgId,
       campaignId: req.params.id,
       nextStatus: req.validatedBody.status,
     });
@@ -3673,7 +3678,7 @@ UPDATE outbound_leads
     updatedLead.id,
     updatedLead.name,
     { reason: suppressed ? reason : null }
-  );
+  , req.orgId);
 
   return res.json({
     ...updatedLead,
@@ -3746,7 +3751,7 @@ UPDATE outbound_leads
     outcome,
     note,
     autoStoppedEnrollments: autoStoppedEnrollmentIds.length,
-  });
+  }, req.orgId);
 
   return res.json({
     lead: updatedLead,
@@ -3762,6 +3767,7 @@ router.post('/drafts/generate', validateBody(CreateDraftSchema), async (req, res
   try {
     const result = await draftService.generateDraft({
       userId: req.user.id,
+      orgId: req.orgId,
       leadId: req.validatedBody.leadId,
       channel: req.validatedBody.channel,
       logLeadEventFn: logLeadEvent,
@@ -3945,7 +3951,7 @@ UPDATE linkedin_outreach_tasks
   logAction(req.user.id, req.user.email, 'outbound_linkedin_workload_rebalanced', 'linkedin_task', null, null, {
     rebalancedCount: updatedTaskIds.length,
     dailyCapacity,
-  });
+  }, req.orgId);
 
   const windowDays = Math.ceil(openTasks.length / dailyCapacity);
   return res.json({
@@ -3968,6 +3974,7 @@ router.patch('/drafts/:id/approve', async (req, res) => {
   try {
     const draft = await draftService.approveDraft({
       userId: req.user.id,
+      orgId: req.orgId,
       draftId: req.params.id,
       logLeadEventFn: logLeadEvent,
     });
@@ -3986,6 +3993,7 @@ router.post('/drafts/:id/send', async (req, res) => {
   try {
     const result = await draftService.sendDraft({
       userId: req.user.id,
+      orgId: req.orgId,
       draftId: req.params.id,
       logLeadEventFn: logLeadEvent,
     });
@@ -4087,7 +4095,7 @@ UPDATE outbound_leads
   logAction(req.user.id, req.user.email, 'outbound_linkedin_completed', 'linkedin_task', task.id, 'linkedin', {
     leadId: task.lead_id,
     draftId: task.draft_id,
-  });
+  }, req.orgId);
 
   return res.json({
     ...task,
@@ -4146,7 +4154,7 @@ router.get('/events/export', async (req, res) => {
     days,
     limit,
     count: result.rows.length,
-  });
+  }, req.orgId);
 
   if (format === 'csv') {
     const headers = [
@@ -4213,7 +4221,7 @@ SELECT id, created_at, action, resource_type, resource_id, resource_name, metada
     days,
     limit,
     count: result.rows.length,
-  });
+  }, req.orgId);
 
   if (format === 'csv') {
     const headers = ['id', 'created_at', 'action', 'resource_type', 'resource_id', 'resource_name', 'metadata'];
@@ -4280,7 +4288,7 @@ INSERT INTO sales_goals
       targetOpportunities,
       targetRevenue: outboundUtils.round2(targetRevenue),
     }
-  );
+  , req.orgId);
 
   const summary = await buildOutboundForecastSummary(req.user.id, periodType);
   return res.json({

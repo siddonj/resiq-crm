@@ -41,7 +41,7 @@ router.post('/', auth, requireRole('admin'), async (req, res) => {
       .values({ organization_id: req.orgId, name: name.trim(), description: description || null, created_by: req.user.id })
       .returningAll()
       .executeTakeFirstOrThrow();
-    logAction(req.user.id, req.user.email, 'create', 'team', team.id, team.name);
+    logAction(req.user.id, req.user.email, 'create', 'team', team.id, team.name, {}, req.orgId);
     res.status(201).json(team);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'A team with that name already exists' });
@@ -100,7 +100,7 @@ router.put('/:id', auth, requireRole('admin'), async (req, res) => {
       .returningAll()
       .executeTakeFirst();
     if (!team) return res.status(404).json({ error: 'Team not found' });
-    logAction(req.user.id, req.user.email, 'update', 'team', team.id, team.name);
+    logAction(req.user.id, req.user.email, 'update', 'team', team.id, team.name, {}, req.orgId);
     res.json(team);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'A team with that name already exists' });
@@ -121,7 +121,7 @@ router.delete('/:id', auth, requireRole('admin'), async (req, res) => {
       .returning(['id', 'name'])
       .executeTakeFirst();
     if (!deleted) return res.status(404).json({ error: 'Team not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'team', deleted.id, deleted.name);
+    logAction(req.user.id, req.user.email, 'delete', 'team', deleted.id, deleted.name, {}, req.orgId);
     res.json({ message: 'Team deleted' });
   } catch (err) {
     console.error('Error deleting team:', err);
@@ -144,7 +144,7 @@ router.post('/:id/members', auth, requireRole('admin'), async (req, res) => {
       ON CONFLICT (team_id, user_id) DO UPDATE SET role = EXCLUDED.role
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'add_member', 'team', req.params.id, null, { user_id, role });
+    logAction(req.user.id, req.user.email, 'add_member', 'team', req.params.id, null, { user_id, role }, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23503') return res.status(404).json({ error: 'Team or user not found' });
@@ -187,7 +187,7 @@ router.delete('/:id/members/:userId', auth, requireRole('admin'), async (req, re
       .returningAll()
       .executeTakeFirst();
     if (!member) return res.status(404).json({ error: 'Member not found in team' });
-    logAction(req.user.id, req.user.email, 'remove_member', 'team', req.params.id, null, { user_id: req.params.userId });
+    logAction(req.user.id, req.user.email, 'remove_member', 'team', req.params.id, null, { user_id: req.params.userId }, req.orgId);
     res.json({ message: 'Member removed' });
   } catch (err) {
     console.error('Error removing team member:', err);

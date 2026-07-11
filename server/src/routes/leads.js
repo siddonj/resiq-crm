@@ -67,7 +67,7 @@ router.post('/:formId', async (req, res) => {
     }).catch(e => console.error('Failed to queue enrichment:', e));
 
     // 4. Log the activity 
-    logAction(userId, 'System (Web Form)', 'create', 'contact', newContact.id, `Lead captured via form: ${form.title}`);
+    logAction(userId, 'System (Web Form)', 'create', 'contact', newContact.id, `Lead captured via form: ${form.title}`, {}, orgId);
 
     // If it was a standard HTML form POST, redirect back to their site if a redirect URL is set.
     // Otherwise, return JSON.

@@ -129,7 +129,7 @@ router.post('/invite', auth, requireRole('admin'), async (req, res) => {
       })
       .returning(['id', 'name', 'email', 'role', 'is_active', 'created_at'])
       .executeTakeFirstOrThrow();
-    logAction(req.user.id, req.user.email, 'invite', 'user', user.id, user.email, { role });
+    logAction(req.user.id, req.user.email, 'invite', 'user', user.id, user.email, { role }, req.orgId);
     res.status(201).json({ user, tempPassword });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Email already in use' });
@@ -194,7 +194,7 @@ router.put('/:id/role', auth, requireRole('admin'), async (req, res) => {
       .returning(['id', 'name', 'email', 'role', 'is_active'])
       .executeTakeFirst();
     if (!user) return res.status(404).json({ error: 'User not found' });
-    logAction(req.user.id, req.user.email, 'role_change', 'user', req.params.id, user.email, { new_role: role });
+    logAction(req.user.id, req.user.email, 'role_change', 'user', req.params.id, user.email, { new_role: role }, req.orgId);
     res.json(user);
   } catch (err) {
     console.error('Error updating role:', err);
@@ -217,7 +217,7 @@ router.put('/:id/deactivate', auth, requireRole('admin'), async (req, res) => {
       .returning(['id', 'name', 'email', 'role', 'is_active'])
       .executeTakeFirst();
     if (!user) return res.status(404).json({ error: 'User not found' });
-    logAction(req.user.id, req.user.email, 'deactivate', 'user', req.params.id, user.email);
+    logAction(req.user.id, req.user.email, 'deactivate', 'user', req.params.id, user.email, {}, req.orgId);
     res.json(user);
   } catch (err) {
     console.error('Error deactivating user:', err);
@@ -237,7 +237,7 @@ router.put('/:id/activate', auth, requireRole('admin'), async (req, res) => {
       .returning(['id', 'name', 'email', 'role', 'is_active'])
       .executeTakeFirst();
     if (!user) return res.status(404).json({ error: 'User not found' });
-    logAction(req.user.id, req.user.email, 'activate', 'user', req.params.id, user.email);
+    logAction(req.user.id, req.user.email, 'activate', 'user', req.params.id, user.email, {}, req.orgId);
     res.json(user);
   } catch (err) {
     console.error('Error activating user:', err);

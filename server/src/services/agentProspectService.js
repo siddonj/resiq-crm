@@ -59,7 +59,7 @@ async function importProspects({ userId, orgId, auditActor = 'Agent', prompt = '
       ]
     );
 
-    logAction(userId, auditActor, 'create', 'contact', newContact.id, newContact.name);
+    logAction(userId, auditActor, 'create', 'contact', newContact.id, newContact.name, {}, orgId);
     createdContacts.push(newContact);
   }
 

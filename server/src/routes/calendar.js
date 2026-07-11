@@ -90,7 +90,7 @@ router.post('/events', auth, async (req, res) => {
       })
       .returningAll()
       .executeTakeFirstOrThrow();
-    logAction(req.user.id, req.user.email, 'create', 'calendar_event', event.id, title);
+    logAction(req.user.id, req.user.email, 'create', 'calendar_event', event.id, title, {}, req.orgId);
 
     // Also create a reminder for the event start
     await db.insertInto('reminders')
@@ -145,7 +145,7 @@ router.delete('/events/:id', auth, async (req, res) => {
       .returning('title')
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'calendar_event', req.params.id, result.title);
+    logAction(req.user.id, req.user.email, 'delete', 'calendar_event', req.params.id, result.title, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });

@@ -55,7 +55,7 @@ router.post('/', auth, async (req, res) => {
       return rows;
     });
 
-    logAction(req.user.id, req.user.email, 'create', 'portfolio', portfolio.id, portfolio.name);
+    logAction(req.user.id, req.user.email, 'create', 'portfolio', portfolio.id, portfolio.name, {}, req.orgId);
     res.status(201).json(portfolio);
   } catch (err) {
     console.error('Error creating portfolio:', err);
@@ -102,7 +102,7 @@ router.put('/:id', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Portfolio not found' });
-    logAction(req.user.id, req.user.email, 'update', 'portfolio', result.id, result.name);
+    logAction(req.user.id, req.user.email, 'update', 'portfolio', result.id, result.name, {}, req.orgId);
     res.json(result);
   } catch (err) {
     console.error('Error updating portfolio:', err);
@@ -119,7 +119,7 @@ router.delete('/:id', auth, async (req, res) => {
       .returning(['id', 'name'])
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Portfolio not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'portfolio', result.id, result.name);
+    logAction(req.user.id, req.user.email, 'delete', 'portfolio', result.id, result.name, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting portfolio:', err);

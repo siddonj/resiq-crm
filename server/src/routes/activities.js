@@ -66,7 +66,7 @@ router.post('/', auth, async (req, res) => {
     logAction(
       req.user.id, req.user.email, 'create', 'activity',
       activity.id, `${type}: ${description.substring(0, 50)}`
-    );
+    , {}, req.orgId);
     res.status(201).json(activity);
   } catch (err) {
     console.error('Error creating activity:', err);

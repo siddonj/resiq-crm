@@ -272,7 +272,7 @@ Ensure JSON is well-formed. Return null for unknown fields.`;
     }
 
     try {
-      logAction(userId, 'AI System (Auto-Enrichment)', 'update', 'contact', contact.id, `Contact enriched for ${contact.company || contact.email}.`);
+      logAction(userId, 'AI System (Auto-Enrichment)', 'update', 'contact', contact.id, `Contact enriched for ${contact.company || contact.email}.`, {}, contact.organization_id);
     } catch(e) {}
 
     console.log(`Enrichment complete for ${contact.id}`);

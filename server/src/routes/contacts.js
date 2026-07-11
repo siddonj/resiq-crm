@@ -166,7 +166,7 @@ router.post('/import', auth, upload.single('file'), async (req, res) => {
           .returningAll()
           .executeTakeFirstOrThrow();
         created.push(contact);
-        logAction(req.user.id, req.user.email, 'create', 'contact', contact.id, contact.name);
+        logAction(req.user.id, req.user.email, 'create', 'contact', contact.id, contact.name, {}, req.orgId);
 
         if (enrich) {
           const { enrichmentQueue } = require('../workers/enrichmentWorker');
@@ -213,7 +213,7 @@ router.post('/', auth, async (req, res) => {
       })
       .returningAll()
       .executeTakeFirstOrThrow();
-    logAction(req.user.id, req.user.email, 'create', 'contact', newContact.id, newContact.name);
+    logAction(req.user.id, req.user.email, 'create', 'contact', newContact.id, newContact.name, {}, req.orgId);
 
     if (workflowEngine) {
       const tags = await db.selectFrom('tags')
@@ -259,7 +259,7 @@ router.put('/:id', auth, async (req, res) => {
       RETURNING *
     `.execute(db);
     if (rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'update', 'contact', req.params.id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'update', 'contact', req.params.id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -311,7 +311,7 @@ router.delete('/:id', auth, async (req, res) => {
       .where('user_id', '=', req.user.id)
       .returning('name')
       .executeTakeFirst();
-    logAction(req.user.id, req.user.email, 'delete', 'contact', req.params.id, result?.name);
+    logAction(req.user.id, req.user.email, 'delete', 'contact', req.params.id, result?.name, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -576,7 +576,7 @@ router.post('/from-lead', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    logAction(req.user.id, req.user.email, 'convert_lead_to_contact', 'contact', newContact.id, newContact.name);
+    logAction(req.user.id, req.user.email, 'convert_lead_to_contact', 'contact', newContact.id, newContact.name, {}, req.orgId);
 
     // Remove any workflow triggers that use 'contact.created'
     if (workflowEngine) {

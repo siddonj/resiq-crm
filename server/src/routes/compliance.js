@@ -57,7 +57,7 @@ router.put('/config', async (req, res) => {
     logAction(req.user.id, req.user.email, 'update', 'compliance_config', null, 'outbound', {
       region: region || null,
       footerEnabled,
-    });
+    }, req.orgId);
     res.json({ config: res2.rows[0] });
   } catch (err) {
     console.error('Error updating compliance config:', err);

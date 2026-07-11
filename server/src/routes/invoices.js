@@ -114,7 +114,7 @@ router.post('/', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    logAction(req.user.id, req.user.email, 'create', 'invoice', invoice.id, invoice.title);
+    logAction(req.user.id, req.user.email, 'create', 'invoice', invoice.id, invoice.title, {}, req.orgId);
     res.status(201).json(invoice);
   } catch (err) {
     console.error(err);
@@ -145,7 +145,7 @@ router.put('/:id', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found or not editable' });
-    logAction(req.user.id, req.user.email, 'update', 'invoice', req.params.id, result.title);
+    logAction(req.user.id, req.user.email, 'update', 'invoice', req.params.id, result.title, {}, req.orgId);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -171,7 +171,7 @@ router.patch('/:id/status', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'status_change', 'invoice', req.params.id, result.title, { status });
+    logAction(req.user.id, req.user.email, 'status_change', 'invoice', req.params.id, result.title, { status }, req.orgId);
 
     // Auto-create overdue reminder when sent
     if (status === 'sent' && result.due_date) {
@@ -226,7 +226,7 @@ router.delete('/:id', auth, async (req, res) => {
       .returning('title')
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'invoice', req.params.id, result.title);
+    logAction(req.user.id, req.user.email, 'delete', 'invoice', req.params.id, result.title, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -300,7 +300,7 @@ router.post('/recurring', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    logAction(req.user.id, req.user.email, 'create', 'recurring_invoice', result.id, result.title);
+    logAction(req.user.id, req.user.email, 'create', 'recurring_invoice', result.id, result.title, {}, req.orgId);
     res.status(201).json(result);
   } catch (err) {
     console.error('Error creating recurring invoice:', err);
@@ -329,7 +329,7 @@ router.put('/recurring/:id', auth, async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'update', 'recurring_invoice', rows[0].id, rows[0].title);
+    logAction(req.user.id, req.user.email, 'update', 'recurring_invoice', rows[0].id, rows[0].title, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error updating recurring invoice:', err);
@@ -346,7 +346,7 @@ router.delete('/recurring/:id', auth, async (req, res) => {
       .returning('title')
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'recurring_invoice', req.params.id, result.title);
+    logAction(req.user.id, req.user.email, 'delete', 'recurring_invoice', req.params.id, result.title, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting recurring invoice:', err);
@@ -408,7 +408,7 @@ router.post('/recurring/:id/generate', auth, async (req, res) => {
       .where('id', '=', ri.id)
       .execute();
 
-    logAction(req.user.id, req.user.email, 'generate', 'invoice_from_recurring', invoice.id, ri.title);
+    logAction(req.user.id, req.user.email, 'generate', 'invoice_from_recurring', invoice.id, ri.title, {}, req.orgId);
     res.status(201).json(invoice);
   } catch (err) {
     console.error('Error generating invoice:', err);
@@ -459,7 +459,7 @@ router.post('/subscriptions', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    logAction(req.user.id, req.user.email, 'create', 'subscription', result.id, result.plan_name);
+    logAction(req.user.id, req.user.email, 'create', 'subscription', result.id, result.plan_name, {}, req.orgId);
     res.status(201).json(result);
   } catch (err) {
     console.error('Error creating subscription:', err);
@@ -484,7 +484,7 @@ router.put('/subscriptions/:id', auth, async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'update', 'subscription', rows[0].id, rows[0].plan_name);
+    logAction(req.user.id, req.user.email, 'update', 'subscription', rows[0].id, rows[0].plan_name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error updating subscription:', err);
@@ -501,7 +501,7 @@ router.delete('/subscriptions/:id', auth, async (req, res) => {
       .returning('plan_name')
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'subscription', req.params.id, result.plan_name);
+    logAction(req.user.id, req.user.email, 'delete', 'subscription', req.params.id, result.plan_name, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting subscription:', err);
@@ -547,7 +547,7 @@ router.post('/vendors', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    logAction(req.user.id, req.user.email, 'create', 'vendor', result.id, result.name);
+    logAction(req.user.id, req.user.email, 'create', 'vendor', result.id, result.name, {}, req.orgId);
     res.status(201).json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -574,7 +574,7 @@ router.put('/vendors/:id', auth, async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'update', 'vendor', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'update', 'vendor', rows[0].id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -590,7 +590,7 @@ router.delete('/vendors/:id', auth, async (req, res) => {
       .returning('name')
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'vendor', req.params.id, result.name);
+    logAction(req.user.id, req.user.email, 'delete', 'vendor', req.params.id, result.name, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -637,7 +637,7 @@ router.post('/expenses', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    logAction(req.user.id, req.user.email, 'create', 'expense', result.id, result.description);
+    logAction(req.user.id, req.user.email, 'create', 'expense', result.id, result.description, {}, req.orgId);
     res.status(201).json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -664,7 +664,7 @@ router.put('/expenses/:id', auth, async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'update', 'expense', rows[0].id, rows[0].description);
+    logAction(req.user.id, req.user.email, 'update', 'expense', rows[0].id, rows[0].description, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -680,7 +680,7 @@ router.delete('/expenses/:id', auth, async (req, res) => {
       .returning('description')
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'expense', req.params.id, result.description);
+    logAction(req.user.id, req.user.email, 'delete', 'expense', req.params.id, result.description, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -1179,7 +1179,7 @@ router.post('/:id/pull-time-entries', auth, async (req, res) => {
       WHERE i.id = ${req.params.id}
     `.execute(db).then(r => r.rows);
 
-    logAction(req.user.id, req.user.email, 'pull_time_entries', 'invoice', req.params.id, invoice.title, { count: entries.length });
+    logAction(req.user.id, req.user.email, 'pull_time_entries', 'invoice', req.params.id, invoice.title, { count: entries.length }, req.orgId);
     res.json(updated);
   } catch (err) {
     await client.query('ROLLBACK');

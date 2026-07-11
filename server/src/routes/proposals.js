@@ -304,7 +304,7 @@ router.post('/', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirstOrThrow();
     const proposal = result;
-    logAction(req.user.id, req.user.email, 'create', 'proposal', proposal.id, proposal.title);
+    logAction(req.user.id, req.user.email, 'create', 'proposal', proposal.id, proposal.title, {}, req.orgId);
     res.status(201).json(proposal);
   } catch (err) {
     console.error(err);
@@ -331,7 +331,7 @@ router.put('/:id', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found or not editable' });
-    logAction(req.user.id, req.user.email, 'update', 'proposal', req.params.id, result.title);
+    logAction(req.user.id, req.user.email, 'update', 'proposal', req.params.id, result.title, {}, req.orgId);
     res.json(result);
   } catch (err) {
     console.error(err);
@@ -362,7 +362,7 @@ router.patch('/:id/status', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'status_change', 'proposal', req.params.id, result.title, { status });
+    logAction(req.user.id, req.user.email, 'status_change', 'proposal', req.params.id, result.title, { status }, req.orgId);
     res.json(result);
   } catch (err) {
     console.error(err);
@@ -390,7 +390,7 @@ router.post('/:id/sign', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found or cannot sign in current status' });
-    logAction(req.user.id, req.user.email, 'sign', 'proposal', req.params.id, result.title, { signature_name: name });
+    logAction(req.user.id, req.user.email, 'sign', 'proposal', req.params.id, result.title, { signature_name: name }, req.orgId);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -407,7 +407,7 @@ router.delete('/:id', auth, async (req, res) => {
       .returning('title')
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'proposal', req.params.id, result.title);
+    logAction(req.user.id, req.user.email, 'delete', 'proposal', req.params.id, result.title, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -476,7 +476,7 @@ router.post('/:id/convert-to-invoice', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    logAction(req.user.id, req.user.email, 'convert_to_invoice', 'proposal', proposal.id, proposal.title, { invoice_id: invoice.id });
+    logAction(req.user.id, req.user.email, 'convert_to_invoice', 'proposal', proposal.id, proposal.title, { invoice_id: invoice.id }, req.orgId);
     res.status(201).json({ invoice });
   } catch (err) {
     console.error(err);

@@ -7,7 +7,7 @@ const compliance = require('./complianceService');
 /**
  * Generate an email or LinkedIn draft for a lead.
  */
-async function generateDraft({ userId, leadId, channel, logLeadEventFn }) {
+async function generateDraft({ userId, orgId, leadId, channel, logLeadEventFn }) {
   const leadRes = await pool.query(
     `SELECT * FROM outbound_leads WHERE id = $1 AND user_id = $2`,
     [leadId, userId]
@@ -59,7 +59,7 @@ async function generateDraft({ userId, leadId, channel, logLeadEventFn }) {
     metadata: { draftId: draft.id },
   });
 
-  logAction(userId, null, 'outbound_draft_generated', 'outbound_draft', draft.id, channel, { leadId, channel });
+  logAction(userId, null, 'outbound_draft_generated', 'outbound_draft', draft.id, channel, { leadId, channel }, orgId);
 
   return {
     ...draft,
@@ -136,7 +136,7 @@ async function getDraftInbox({ userId, status, channel, leadId, limit = 100 }) {
 /**
  * Approve a draft by ID.
  */
-async function approveDraft({ userId, draftId, logLeadEventFn }) {
+async function approveDraft({ userId, orgId, draftId, logLeadEventFn }) {
   const draftRes = await pool.query(
     `UPDATE outbound_message_drafts
      SET status = 'approved',
@@ -174,7 +174,7 @@ async function approveDraft({ userId, draftId, logLeadEventFn }) {
   logAction(userId, null, 'outbound_draft_approved', 'outbound_draft', draft.id, draft.channel, {
     channel: draft.channel,
     leadId: draft.lead_id,
-  });
+  }, orgId);
 
   return draft;
 }
@@ -182,7 +182,7 @@ async function approveDraft({ userId, draftId, logLeadEventFn }) {
 /**
  * Mark an email draft as sent.
  */
-async function sendDraft({ userId, draftId, logLeadEventFn }) {
+async function sendDraft({ userId, orgId, draftId, logLeadEventFn }) {
   const draftRes = await pool.query(
     `SELECT * FROM outbound_message_drafts WHERE id = $1 AND user_id = $2`,
     [draftId, userId]
@@ -261,7 +261,7 @@ async function sendDraft({ userId, draftId, logLeadEventFn }) {
 
   logAction(userId, null, 'outbound_email_sent', 'outbound_draft', updatedDraft.id, 'email', {
     leadId: updatedDraft.lead_id,
-  });
+  }, orgId);
 
   return {
     draft: updatedDraft,

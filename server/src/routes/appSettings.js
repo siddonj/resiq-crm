@@ -45,7 +45,7 @@ router.put('/', async (req, res) => {
       null,
       'system_settings',
       { updated_keys: Object.keys(settings) }
-    );
+    , req.orgId);
 
     res.json({ settings: refreshed });
   } catch (err) {

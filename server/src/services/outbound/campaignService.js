@@ -3,7 +3,7 @@ const outboundUtils = require('../../utils/outboundUtils');
 const { logAction } = require('../auditLogger');
 const { autoStopOpenSequenceEnrollments } = require('./sequenceService');
 
-async function createCampaign({ userId, name, channels, audienceFilter, notes, leadIds, logLeadEventFn }) {
+async function createCampaign({ userId, orgId, name, channels, audienceFilter, notes, leadIds, logLeadEventFn }) {
   const campaignRes = await pool.query(
     `INSERT INTO outbound_campaigns (user_id, name, channels, audience_filter, notes, status)
      VALUES ($1, $2, $3::text[], $4::jsonb, $5, 'draft')
@@ -45,7 +45,7 @@ async function createCampaign({ userId, name, channels, audienceFilter, notes, l
   logAction(userId, null, 'outbound_campaign_created', 'outbound_campaign', campaign.id, name, {
     channels,
     addedMembers,
-  });
+  }, orgId);
 
   return {
     ...campaign,
@@ -130,7 +130,7 @@ async function getCampaign(userId, campaignId) {
   };
 }
 
-async function addMembers({ userId, campaignId, leadIds }) {
+async function addMembers({ userId, orgId, campaignId, leadIds }) {
   const safeLeadIds = outboundUtils.sanitizeUuidList(leadIds);
   if (safeLeadIds.length === 0) {
     throw new Error('leadIds array is required.');
@@ -162,7 +162,7 @@ async function addMembers({ userId, campaignId, leadIds }) {
     [campaignId, userId]
   );
 
-  logAction(userId, null, 'outbound_campaign_members_added', 'outbound_campaign', campaignId, campaignCheck.rows[0].name, { addedMembers: membersRes.rowCount });
+  logAction(userId, null, 'outbound_campaign_members_added', 'outbound_campaign', campaignId, campaignCheck.rows[0].name, { addedMembers: membersRes.rowCount }, orgId);
 
   return {
     campaignId,
@@ -170,7 +170,7 @@ async function addMembers({ userId, campaignId, leadIds }) {
   };
 }
 
-async function updateCampaignStatus({ userId, campaignId, nextStatus }) {
+async function updateCampaignStatus({ userId, orgId, campaignId, nextStatus }) {
   const existingRes = await pool.query(
     `SELECT id, name, status FROM outbound_campaigns WHERE id = $1 AND user_id = $2`,
     [campaignId, userId]
@@ -194,7 +194,7 @@ async function updateCampaignStatus({ userId, campaignId, nextStatus }) {
   logAction(userId, null, 'outbound_campaign_status_updated', 'outbound_campaign', campaign.id, campaign.name, {
     from: existingRes.rows[0].status,
     to: campaign.status,
-  });
+  }, orgId);
 
   return campaign;
 }

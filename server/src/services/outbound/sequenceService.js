@@ -190,7 +190,7 @@ async function listEnrollments(userId, status, limit) {
   };
 }
 
-async function enrollLead({ userId, sequenceId, leadId, logLeadEventFn }) {
+async function enrollLead({ userId, orgId, sequenceId, leadId, logLeadEventFn }) {
   const sequenceRes = await pool.query(
     `SELECT id, name
      FROM sequences
@@ -337,7 +337,7 @@ async function enrollLead({ userId, sequenceId, leadId, logLeadEventFn }) {
       });
     }
 
-    logAction(userId, null, 'outbound_sequence_enrolled', 'outbound_sequence_enrollment', enrollmentId, sequenceRes.rows[0].name, { leadId });
+    logAction(userId, null, 'outbound_sequence_enrolled', 'outbound_sequence_enrollment', enrollmentId, sequenceRes.rows[0].name, { leadId }, orgId);
 
     const enrollment = await getEnrollmentRecord(userId, enrollmentId);
     return enrollment;
@@ -349,7 +349,7 @@ async function enrollLead({ userId, sequenceId, leadId, logLeadEventFn }) {
   }
 }
 
-async function changeEnrollmentState({ userId, enrollmentId, nextState, reason, logLeadEventFn }) {
+async function changeEnrollmentState({ userId, orgId, enrollmentId, nextState, reason, logLeadEventFn }) {
   const existing = await getEnrollmentRecord(userId, enrollmentId);
   if (!existing) {
     throw new Error('Sequence enrollment not found.');
@@ -426,7 +426,7 @@ async function changeEnrollmentState({ userId, enrollmentId, nextState, reason, 
     fromState: currentState,
     toState: nextState,
     reason: finalReason,
-  });
+  }, orgId);
 
   const updated = await getEnrollmentRecord(userId, enrollmentId);
   return updated;

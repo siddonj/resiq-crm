@@ -130,7 +130,7 @@ router.post('/', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirstOrThrow();
 
-    logAction(req.user.id, req.user.email, 'create', 'deal', newDeal.id, newDeal.title);
+    logAction(req.user.id, req.user.email, 'create', 'deal', newDeal.id, newDeal.title, {}, req.orgId);
 
     if (workflowEngine) {
       workflowEngine.dispatchTrigger('deal.created', {
@@ -168,7 +168,7 @@ router.patch('/:id/stage', auth, async (req, res) => {
       .executeTakeFirstOrThrow();
 
     if (oldDeal.stage !== newDeal.stage) {
-      logAction(req.user.id, req.user.email, 'stage_change', 'deal', newDeal.id, newDeal.title, { from: oldDeal.stage, to: newDeal.stage });
+      logAction(req.user.id, req.user.email, 'stage_change', 'deal', newDeal.id, newDeal.title, { from: oldDeal.stage, to: newDeal.stage }, req.orgId);
       db.insertInto('deal_stage_history')
         .values({
           deal_id: newDeal.id,
@@ -251,7 +251,7 @@ router.put('/:id', auth, async (req, res) => {
     `.execute(db);
 
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'update', 'deal', req.params.id, result.rows[0].title);
+    logAction(req.user.id, req.user.email, 'update', 'deal', req.params.id, result.rows[0].title, {}, req.orgId);
     res.json(result.rows[0]);
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -402,7 +402,7 @@ router.post('/:id/followup-tasks/:taskId/send', auth, async (req, res) => {
       WHERE id = ${req.params.id}
     `.execute(db);
 
-    logAction(req.user.id, req.user.email, 'send', 'deal_followup', task.id, deal.title);
+    logAction(req.user.id, req.user.email, 'send', 'deal_followup', task.id, deal.title, {}, req.orgId);
 
     res.json({ success: true, sent_to: toEmail });
   } catch (err) {
@@ -463,7 +463,7 @@ router.delete('/:id', auth, async (req, res) => {
       .returning('title')
       .executeTakeFirst();
 
-    logAction(req.user.id, req.user.email, 'delete', 'deal', req.params.id, result?.title);
+    logAction(req.user.id, req.user.email, 'delete', 'deal', req.params.id, result?.title, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });

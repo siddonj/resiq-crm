@@ -483,7 +483,7 @@ async function cloneProjectFromTemplate(templateId, user, { name, description, i
 
     return newProject;
   }).then((newProject) => {
-    logAction(user.id, user.email, 'clone', 'project', newProject.id, newProject.name);
+    logAction(user.id, user.email, 'clone', 'project', newProject.id, newProject.name, {}, req.orgId);
     return newProject;
   });
 }
@@ -558,7 +558,7 @@ router.post('/', async (req, res) => {
       console.error('Default columns/views creation skipped (tables may not exist):', colErr.message);
     }
 
-    logAction(req.user.id, req.user.email, 'create', 'project', project.id, project.name);
+    logAction(req.user.id, req.user.email, 'create', 'project', project.id, project.name, {}, req.orgId);
 
     res.status(201).json(project);
   } catch (err) {
@@ -610,7 +610,7 @@ router.put('/:id', async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Project not found' });
-    logAction(req.user.id, req.user.email, 'update', 'project', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'update', 'project', rows[0].id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error updating project:', err);
@@ -625,7 +625,7 @@ router.delete('/:id', async (req, res) => {
       UPDATE projects SET status = 'deleted', updated_at = NOW() WHERE id = ${req.params.id} RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Project not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'delete', 'project', rows[0].id, rows[0].name, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting project:', err);
@@ -662,7 +662,7 @@ router.post('/:id/columns', async (req, res) => {
       RETURNING *
     `.execute(db);
 
-    logAction(req.user.id, req.user.email, 'create', 'project_column', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'create', 'project_column', rows[0].id, rows[0].name, {}, req.orgId);
 
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -687,7 +687,7 @@ router.put('/:id/columns/:colId', async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Column not found' });
-    logAction(req.user.id, req.user.email, 'update', 'project_column', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'update', 'project_column', rows[0].id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error updating column:', err);
@@ -703,7 +703,7 @@ router.delete('/:id/columns/:colId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Column not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_column', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'project_column', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting column:', err);
@@ -748,7 +748,7 @@ router.post('/:id/tasks', async (req, res) => {
       RETURNING *
     `.execute(db);
 
-    logAction(req.user.id, req.user.email, 'create', 'project_task', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'create', 'project_task', rows[0].id, rows[0].name, {}, req.orgId);
 
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -781,7 +781,7 @@ router.put('/:id/tasks/:taskId', async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Task not found' });
-    logAction(req.user.id, req.user.email, 'update', 'project_task', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'update', 'project_task', rows[0].id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error updating task:', err);
@@ -797,7 +797,7 @@ router.delete('/:id/tasks/:taskId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Task not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_task', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'project_task', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting task:', err);
@@ -838,7 +838,7 @@ router.post('/:id/tasks/:taskId/comments', async (req, res) => {
       .where('ptc.id', '=', rows[0].id)
       .select(['ptc.*', 'u.email', 'u.name as user_name'])
       .executeTakeFirst();
-    logAction(req.user.id, req.user.email, 'create', 'task_comment', rows[0].id, content.slice(0, 80));
+    logAction(req.user.id, req.user.email, 'create', 'task_comment', rows[0].id, content.slice(0, 80), {}, req.orgId);
     res.status(201).json(result);
   } catch (err) {
     console.error('Error adding comment:', err);
@@ -854,7 +854,7 @@ router.delete('/:id/tasks/:taskId/comments/:commentId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Comment not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'task_comment', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'task_comment', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting comment:', err);
@@ -889,7 +889,7 @@ router.post('/:id/tasks/:taskId/attachments', upload.single('file'), async (req,
       VALUES (${req.params.taskId}, ${req.user.id}, ${req.file.originalname}, ${fileUrl}, ${req.file.size}, ${req.file.mimetype || null})
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'create', 'task_attachment', rows[0].id, rows[0].file_name);
+    logAction(req.user.id, req.user.email, 'create', 'task_attachment', rows[0].id, rows[0].file_name, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error uploading attachment:', err);
@@ -910,7 +910,7 @@ router.delete('/:id/tasks/:taskId/attachments/:attId', async (req, res) => {
     const filePath = path.join(__dirname, '..', '..', row.file_url);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-    logAction(req.user.id, req.user.email, 'delete', 'task_attachment', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'task_attachment', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting attachment:', err);
@@ -946,7 +946,7 @@ router.post('/:id/tasks/:taskId/assignees', async (req, res) => {
       ON CONFLICT (task_id, user_id) DO UPDATE SET role = ${role || 'responsible'}
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'assign', 'task_assignee', rows[0].id, `user ${user_id}`);
+    logAction(req.user.id, req.user.email, 'assign', 'task_assignee', rows[0].id, `user ${user_id}`, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error adding assignee:', err);
@@ -962,7 +962,7 @@ router.delete('/:id/tasks/:taskId/assignees/:assigneeId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Assignee not found' });
-    logAction(req.user.id, req.user.email, 'remove', 'task_assignee', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'remove', 'task_assignee', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing assignee:', err);
@@ -998,7 +998,7 @@ router.post('/:id/tasks/:taskId/dependencies', async (req, res) => {
       ON CONFLICT (task_id, depends_on_task_id) DO UPDATE SET type = ${type || 'finish_to_start'}
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'create', 'task_dependency', rows[0].id, `${req.params.taskId}->${depends_on_task_id}`);
+    logAction(req.user.id, req.user.email, 'create', 'task_dependency', rows[0].id, `${req.params.taskId}->${depends_on_task_id}`, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error adding dependency:', err);
@@ -1014,7 +1014,7 @@ router.delete('/:id/tasks/:taskId/dependencies/:depId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Dependency not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'task_dependency', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'task_dependency', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing dependency:', err);
@@ -1092,7 +1092,7 @@ router.post('/:id/tasks/:taskId/relations', async (req, res) => {
       ON CONFLICT (from_task_id, to_task_id, relation_type) DO UPDATE SET delay_days = ${delay_days || 0}
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'create', 'task_relation', rows[0].id, `${relation_type} ${fromTaskId}→${to_task_id}`);
+    logAction(req.user.id, req.user.email, 'create', 'task_relation', rows[0].id, `${relation_type} ${fromTaskId}→${to_task_id}`, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error adding relation:', err);
@@ -1108,7 +1108,7 @@ router.delete('/:id/tasks/:taskId/relations/:relId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Relation not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'task_relation', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'task_relation', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing relation:', err);
@@ -1163,7 +1163,7 @@ router.post('/:id/tasks/:taskId/indent', async (req, res) => {
       UPDATE project_tasks SET parent_id = ${newParentId}, updated_at = NOW()
       WHERE id = ${taskId} AND project_id = ${projectId} RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'indent', 'project_task', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'indent', 'project_task', rows[0].id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error indenting task:', err);
@@ -1197,7 +1197,7 @@ router.post('/:id/tasks/:taskId/outdent', async (req, res) => {
       UPDATE project_tasks SET parent_id = ${newParentId}, updated_at = NOW()
       WHERE id = ${taskId} AND project_id = ${projectId} RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'outdent', 'project_task', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'outdent', 'project_task', rows[0].id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error outdenting task:', err);
@@ -1245,7 +1245,7 @@ router.post('/:id/views', async (req, res) => {
       VALUES (${req.params.id}, ${name.trim()}, ${type}, ${config || {}}, ${req.user.id}, COALESCE(${is_default}, FALSE))
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'create', 'project_view', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'create', 'project_view', rows[0].id, rows[0].name, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error saving view:', err);
@@ -1278,7 +1278,7 @@ router.put('/:id/views/:viewId', async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'View not found' });
-    logAction(req.user.id, req.user.email, 'update', 'project_view', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'update', 'project_view', rows[0].id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error updating view:', err);
@@ -1294,7 +1294,7 @@ router.delete('/:id/views/:viewId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'View not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_view', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'project_view', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting view:', err);
@@ -1335,7 +1335,7 @@ router.post('/:id/members', async (req, res) => {
       RETURNING *
     `.execute(db);
     logAction(req.user.id, req.user.email, 'add', 'project_member', rows[0].id,
-      user_id ? `user ${user_id}` : `team ${team_id}`);
+      user_id ? `user ${user_id}` : `team ${team_id}`, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error adding member:', err);
@@ -1355,7 +1355,7 @@ router.put('/:id/members/:memberId', async (req, res) => {
       UPDATE project_members SET role = ${role} WHERE id = ${req.params.memberId} AND project_id = ${req.params.id} RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Member not found' });
-    logAction(req.user.id, req.user.email, 'update', 'project_member', rows[0].id, `role -> ${role}`);
+    logAction(req.user.id, req.user.email, 'update', 'project_member', rows[0].id, `role -> ${role}`, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error updating member:', err);
@@ -1374,7 +1374,7 @@ router.delete('/:id/members/:memberId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Member not found' });
-    logAction(req.user.id, req.user.email, 'remove', 'project_member', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'remove', 'project_member', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing member:', err);
@@ -1403,7 +1403,7 @@ router.post('/:id/types', async (req, res) => {
       VALUES (${req.params.id}, ${name.trim()}, ${color || '#3B82F6'}, ${icon || 'task'}, COALESCE(${position}, 0))
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'create', 'project_task_type', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'create', 'project_task_type', rows[0].id, rows[0].name, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'A type with that name already exists' });
@@ -1425,7 +1425,7 @@ router.put('/:id/types/:typeId', async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Type not found' });
-    logAction(req.user.id, req.user.email, 'update', 'project_task_type', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'update', 'project_task_type', rows[0].id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error updating type:', err);
@@ -1441,7 +1441,7 @@ router.delete('/:id/types/:typeId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Type not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_task_type', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'project_task_type', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting type:', err);
@@ -1470,7 +1470,7 @@ router.post('/:id/workflows', async (req, res) => {
       VALUES (${req.params.id}, ${from_status}, ${to_status}, ${role_required || null}, ${required_fields || null})
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'create', 'project_workflow', rows[0].id, `${from_status} → ${to_status}`);
+    logAction(req.user.id, req.user.email, 'create', 'project_workflow', rows[0].id, `${from_status} → ${to_status}`, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'That transition already exists' });
@@ -1487,7 +1487,7 @@ router.delete('/:id/workflows/:workflowId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Workflow not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_workflow', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'project_workflow', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting workflow:', err);
@@ -1507,7 +1507,7 @@ router.post('/:id/tasks/bulk-delete', async (req, res) => {
     const { rows } = await sql`
       DELETE FROM project_tasks WHERE id = ANY(${task_ids}::uuid[]) AND project_id = ${req.params.id} RETURNING id
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'bulk_delete', 'project_task', null, `${rows.length} tasks`);
+    logAction(req.user.id, req.user.email, 'bulk_delete', 'project_task', null, `${rows.length} tasks`, {}, req.orgId);
     res.json({ deleted: rows.length, ids: rows.map((r) => r.id) });
   } catch (err) {
     console.error('Error bulk deleting tasks:', err);
@@ -1549,7 +1549,7 @@ router.post('/:id/tasks/bulk-update', async (req, res) => {
       WHERE id = ANY(${task_ids}::uuid[]) AND project_id = ${req.params.id}
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'bulk_update', 'project_task', null, `${rows.length} tasks`);
+    logAction(req.user.id, req.user.email, 'bulk_update', 'project_task', null, `${rows.length} tasks`, {}, req.orgId);
     res.json({ updated: rows.length, tasks: rows });
   } catch (err) {
     console.error('Error bulk updating tasks:', err);
@@ -1587,7 +1587,7 @@ router.post('/:id/tasks/:taskId/time-entries', async (req, res) => {
       VALUES (${req.params.taskId}, ${req.user.id}, ${Number(hours)}, ${description || null}, ${billable !== false}, ${hourly_rate || 0}, COALESCE(${logged_at || null}, CURRENT_DATE))
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'create', 'time_entry', rows[0].id, `${hours}h`);
+    logAction(req.user.id, req.user.email, 'create', 'time_entry', rows[0].id, `${hours}h`, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error creating time entry:', err);
@@ -1603,7 +1603,7 @@ router.delete('/:id/tasks/:taskId/time-entries/:entryId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Time entry not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'time_entry', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'time_entry', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting time entry:', err);
@@ -1630,7 +1630,7 @@ router.post('/:id/save-as-template', async (req, res) => {
       UPDATE projects SET is_template = TRUE, updated_at = NOW() WHERE id = ${req.params.id} RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Project not found' });
-    logAction(req.user.id, req.user.email, 'save_as_template', 'project', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'save_as_template', 'project', rows[0].id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error saving as template:', err);
@@ -1665,7 +1665,7 @@ router.post('/:id/sprints', async (req, res) => {
       VALUES (${req.params.id}, ${name.trim()}, ${goal || null}, ${start_date || null}, ${end_date || null})
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'create', 'sprint', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'create', 'sprint', rows[0].id, rows[0].name, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error creating sprint:', err);
@@ -1688,7 +1688,7 @@ router.put('/:id/sprints/:sprintId', async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Sprint not found' });
-    logAction(req.user.id, req.user.email, 'update', 'sprint', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'update', 'sprint', rows[0].id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error updating sprint:', err);
@@ -1704,7 +1704,7 @@ router.delete('/:id/sprints/:sprintId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Sprint not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'sprint', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'sprint', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting sprint:', err);
@@ -1740,7 +1740,7 @@ router.post('/:id/sprints/:sprintId/tasks', async (req, res) => {
       ON CONFLICT (sprint_id, task_id) DO UPDATE SET story_points = ${story_points}, position = COALESCE(${position}, sprint_tasks.position)
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'add', 'sprint_task', rows[0].id, `task ${task_id} -> sprint ${req.params.sprintId}`);
+    logAction(req.user.id, req.user.email, 'add', 'sprint_task', rows[0].id, `task ${task_id} -> sprint ${req.params.sprintId}`, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error adding sprint task:', err);
@@ -1756,7 +1756,7 @@ router.delete('/:id/sprints/:sprintId/tasks/:taskId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Task not found in sprint' });
-    logAction(req.user.id, req.user.email, 'remove', 'sprint_task', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'remove', 'sprint_task', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error removing sprint task:', err);
@@ -2017,7 +2017,7 @@ router.post('/:id/baselines', async (req, res) => {
       RETURNING id, name, created_at
     `.execute(db);
 
-    logAction(req.user.id, req.user.email, 'create', 'project_baseline', baselineRows[0].id, baselineRows[0].name);
+    logAction(req.user.id, req.user.email, 'create', 'project_baseline', baselineRows[0].id, baselineRows[0].name, {}, req.orgId);
     res.status(201).json(baselineRows[0]);
   } catch (err) {
     console.error('Error saving baseline:', err);
@@ -2046,7 +2046,7 @@ router.delete('/:id/baselines/:baselineId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Baseline not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_baseline', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'project_baseline', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting baseline:', err);
@@ -2146,7 +2146,7 @@ router.post('/:id/phases', async (req, res) => {
       VALUES (${req.params.id}, ${name.trim()}, COALESCE(${position}, 0), COALESCE(${JSON.stringify(deliverables || [])}::jsonb, '[]'::jsonb))
       RETURNING *
     `.execute(db);
-    logAction(req.user.id, req.user.email, 'create', 'project_phase', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'create', 'project_phase', rows[0].id, rows[0].name, {}, req.orgId);
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error creating phase:', err);
@@ -2170,7 +2170,7 @@ router.put('/:id/phases/:phaseId', async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Phase not found' });
-    logAction(req.user.id, req.user.email, 'update', 'project_phase', rows[0].id, rows[0].name);
+    logAction(req.user.id, req.user.email, 'update', 'project_phase', rows[0].id, rows[0].name, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error updating phase:', err);
@@ -2186,7 +2186,7 @@ router.delete('/:id/phases/:phaseId', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Phase not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_phase', row.id, row.id);
+    logAction(req.user.id, req.user.email, 'delete', 'project_phase', row.id, row.id, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting phase:', err);
@@ -2221,7 +2221,7 @@ router.post('/:id/phases/:phaseId/gate', async (req, res) => {
       `.execute(db);
       result = rows[0];
     }
-    logAction(req.user.id, req.user.email, 'approve', 'phase_gate', result.id, `phase ${req.params.phaseId}`);
+    logAction(req.user.id, req.user.email, 'approve', 'phase_gate', result.id, `phase ${req.params.phaseId}`, {}, req.orgId);
     res.json(result);
   } catch (err) {
     console.error('Error approving gate:', err);
@@ -2236,7 +2236,7 @@ router.delete('/:id/phases/:phaseId/gate', async (req, res) => {
       .returning('id')
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Gate not found' });
-    logAction(req.user.id, req.user.email, 'revoke', 'phase_gate', row.id, `phase ${req.params.phaseId}`);
+    logAction(req.user.id, req.user.email, 'revoke', 'phase_gate', row.id, `phase ${req.params.phaseId}`, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error revoking gate:', err);
@@ -2283,7 +2283,7 @@ router.post('/:id/meetings', async (req, res) => {
       `.execute(db);
     }
 
-    logAction(req.user.id, req.user.email, 'create', 'project_meeting', meeting.id, meeting.title);
+    logAction(req.user.id, req.user.email, 'create', 'project_meeting', meeting.id, meeting.title, {}, req.orgId);
     res.status(201).json(meeting);
   } catch (err) {
     console.error('Error creating meeting:', err);
@@ -2306,7 +2306,7 @@ router.put('/:id/meetings/:meetingId', async (req, res) => {
       RETURNING *
     `.execute(db);
     if (!rows[0]) return res.status(404).json({ error: 'Meeting not found' });
-    logAction(req.user.id, req.user.email, 'update', 'project_meeting', rows[0].id, rows[0].title);
+    logAction(req.user.id, req.user.email, 'update', 'project_meeting', rows[0].id, rows[0].title, {}, req.orgId);
     res.json(rows[0]);
   } catch (err) {
     console.error('Error updating meeting:', err);
@@ -2322,7 +2322,7 @@ router.delete('/:id/meetings/:meetingId', async (req, res) => {
       .returning(['id', 'title'])
       .executeTakeFirst();
     if (!row) return res.status(404).json({ error: 'Meeting not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'project_meeting', row.id, row.title);
+    logAction(req.user.id, req.user.email, 'delete', 'project_meeting', row.id, row.title, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     console.error('Error deleting meeting:', err);

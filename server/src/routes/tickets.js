@@ -147,7 +147,7 @@ router.post('/', auth, async (req, res) => {
       })
       .execute();
 
-    logAction(req.user.id, req.user.email, 'create', 'ticket', ticket.id, subject);
+    logAction(req.user.id, req.user.email, 'create', 'ticket', ticket.id, subject, {}, req.orgId);
 
     // Broadcast new ticket to all connected Help Desk users via WebSocket
     const ticketWS = req.app.locals.ticketWS;
@@ -260,7 +260,7 @@ router.patch('/:ticketId', auth, async (req, res) => {
       }
     }
 
-    logAction(req.user.id, req.user.email, 'update', 'ticket', ticketId, ticket.subject);
+    logAction(req.user.id, req.user.email, 'update', 'ticket', ticketId, ticket.subject, {}, req.orgId);
 
     // Broadcast ticket update to all connected Help Desk users via WebSocket
     const ticketWS = req.app.locals.ticketWS;
@@ -542,7 +542,7 @@ router.delete('/:ticketId', auth, async (req, res) => {
       .where('user_id', '=', req.user.id)
       .execute();
 
-    logAction(req.user.id, req.user.email, 'delete', 'ticket', ticketId, subject);
+    logAction(req.user.id, req.user.email, 'delete', 'ticket', ticketId, subject, {}, req.orgId);
 
     res.json({ success: true });
   } catch (error) {

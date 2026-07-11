@@ -6,7 +6,7 @@ const { logAction } = require('../auditLogger');
 /**
  * Import leads from CSV rows within a transaction.
  */
-async function importLeads({ userId, file, importConfig }) {
+async function importLeads({ userId, orgId, file, importConfig }) {
   const MAX_CSV_ROWS = 10000;
   const { sourceType, sourceReference, sourceConfidence } = importConfig;
 
@@ -114,7 +114,7 @@ async function importLeads({ userId, file, importConfig }) {
     );
 
     logAction(userId, null, 'outbound_import_csv', 'outbound_leads', null,
-      file.originalname || 'upload.csv', { jobId, totalRows: rows.length, importedRows, duplicateRows, failedRows });
+      file.originalname || 'upload.csv', { jobId, totalRows: rows.length, importedRows, duplicateRows, failedRows }, orgId);
 
     return { jobId, status: 'completed', totalRows: rows.length, importedRows, duplicateRows, failedRows, errorSample };
   } catch (err) {

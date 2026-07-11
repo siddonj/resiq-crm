@@ -99,7 +99,7 @@ router.post('/', auth, async (req, res) => {
       .returningAll()
       .executeTakeFirstOrThrow();
     const entry = result;
-    logAction(req.user.id, req.user.email, 'create', 'time_entry', entry.id, description || `${minutes}m`);
+    logAction(req.user.id, req.user.email, 'create', 'time_entry', entry.id, description || `${minutes}m`, {}, req.orgId);
     res.status(201).json(entry);
   } catch (err) {
     console.error(err);
@@ -228,7 +228,7 @@ router.delete('/:id', auth, async (req, res) => {
       .returning('description')
       .executeTakeFirst();
     if (!result) return res.status(404).json({ error: 'Not found' });
-    logAction(req.user.id, req.user.email, 'delete', 'time_entry', req.params.id, result.description);
+    logAction(req.user.id, req.user.email, 'delete', 'time_entry', req.params.id, result.description, {}, req.orgId);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });

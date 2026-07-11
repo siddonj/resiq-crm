@@ -91,7 +91,7 @@ router.post('/login', async (req, res) => {
     logAction(user.id, user.email, 'user_login', 'user', user.id, user.name, {
       ip: req.ip,
       user_agent: req.headers['user-agent'] || null,
-    });
+    }, req.orgId);
 
     res.json({
       token,
