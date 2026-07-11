@@ -54,6 +54,14 @@ the original build's ledger which flagged the raw-SQL files as a known gap:
   `outbound_daily_email_send_limit`) that apply app-wide by design, not per-tenant. No filtering
   added, no isolation test added (would be a no-op). `/api/app-settings` mount's
   `authMiddleware, resolveOrg` (Task 3) is left as-is — harmless, out of scope to remove.
+  Read-side consumers beyond the two files traced: `routes/multiSourceLeads.js`,
+  `services/multiSourceLeadService.js` (read `allow_synthetic_leads`), and
+  `routes/outboundAutomation.js:getDailySendUsage` (reads the two `outbound_daily_*_limit`
+  keys, enforced per-`user_id` app-wide). KNOWN LIMITATION, not a bug: if resiq-crm later needs
+  per-org daily send limits (a plausible real SaaS requirement — different orgs may want
+  different sending caps by plan/reputation), `app_settings` will need an `organization_id`
+  column or a per-org override table at that point. Not added now per YAGNI — no current
+  product requirement — but flagged here so it isn't rediscovered as a surprise later.
 - `auditLogs` (audit_logs) — org-scoped; verify read path
 - `deliverability` — verify tables
 - `integrations` — verify whether integration tokens are org-scoped
