@@ -91,6 +91,14 @@ the original build's ledger which flagged the raw-SQL files as a known gap:
   prove). KNOWN LIMITATION (not a bug, YAGNI): if resiq-crm later wants org-wide shared
   sending mailboxes (teammates rotating through a shared pool), `outbound_mailboxes` will need
   an `organization_id` column and a product decision on visibility — not needed today.
+  ADDENDUM (review follow-up): `deliverabilityRoutes` is mounted TWICE — flat at
+  `/api/deliverability` (checked above) AND under the org router at
+  `/api/org/:orgSlug/deliverability` (`index.js` orgRouter, behind `requireOrg`, which sets
+  `req.orgId`/`req.org`). The service never reads `req.orgId` on either mount, so this is not a
+  leak, but it means the `:orgSlug` segment on the org-scoped path is currently decorative — a
+  user who belongs to two orgs gets identical mailbox data from both org-slug URLs. Functional
+  quirk, not a security gap; note for whoever eventually builds org-wide mailbox visibility,
+  since that feature would naturally start by making this existing path respect `req.orgId`.
 - `integrations` — verify whether integration tokens are org-scoped
 
 **Reclassify to intentionally-global if their tables are NOT in ORG_TABLES** (record reason here
