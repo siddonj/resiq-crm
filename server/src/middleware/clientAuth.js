@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const Client = require('../models/client');
+const pool = require('../models/db');
 
 /**
  * Middleware to authenticate client requests
@@ -18,7 +19,11 @@ module.exports = async (req, res, next) => {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
       if (decoded.clientId) {
-        const client = await Client.findById(decoded.clientId);
+        // Client authenticating as themselves via their own JWT (no organization_id
+        // claim in the token) — not an operator lookup, so bypassing the org-scoped
+        // Client.findById is intentional and safe. Mirrors verifyPassword in client.js.
+        const result = await pool.query('SELECT * FROM clients WHERE id = $1', [decoded.clientId]);
+        const client = result.rows[0] || null;
         if (!client || !client.is_active) {
           return res.status(403).json({ error: 'Client account inactive or not found' });
         }
