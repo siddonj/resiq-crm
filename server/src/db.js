@@ -45,14 +45,27 @@ const db = new Kysely({
  * @param {string} resourceType - Resource type identifier (e.g., 'contact', 'deal')
  * @param {string} userId     - Current user's ID
  * @param {string} role       - User role: 'admin' | 'manager' | 'user' | 'viewer'
+ * @param {string} orgId      - Current user's organization ID (required; throws if nullish)
  * @returns {sql} Kysely sql template for use in .where()
  *
- * Admin:     sees everything    (WHERE 1 = 1)
- * Manager:   own + team + shared
- * User/Viewer: own + shared
+ * Every predicate is scoped to `<alias>.organization_id = orgId`.
+ * Admin:     sees everything within the org (org-bound, NOT cross-org)
+ * Manager:   own + team + shared, within the org
+ * User/Viewer: own + shared, within the org
  */
-function ownershipWhere(alias, resourceType, userId, role) {
-  if (role === 'admin') return sql`1 = 1`;
+function ownershipWhere(alias, resourceType, userId, role, orgId) {
+  if (orgId === null || orgId === undefined) {
+    throw new Error(
+      `ownershipWhere: orgId is required (organization scoping) for ${resourceType}`
+    );
+  }
+
+  const orgScope = sql`${sql.ref(alias + '.organization_id')} = ${orgId}`;
+
+  if (role === 'admin') {
+    // Org-wide within the tenant — NOT cross-org.
+    return orgScope;
+  }
 
   const sharedCheck = sql`EXISTS (
     SELECT 1 FROM shared_resources sr
@@ -63,7 +76,7 @@ function ownershipWhere(alias, resourceType, userId, role) {
   )`;
 
   if (role === 'manager') {
-    return sql`(
+    return sql`(${orgScope} AND (
       ${sql.ref(alias + '.user_id')} = ${userId}
       OR ${sharedCheck}
       OR ${sql.ref(alias + '.user_id')} IN (
@@ -72,11 +85,11 @@ function ownershipWhere(alias, resourceType, userId, role) {
           SELECT tm1.team_id FROM team_members tm1 WHERE tm1.user_id = ${userId}
         )
       )
-    )`;
+    ))`;
   }
 
   // user or viewer
-  return sql`(${sql.ref(alias + '.user_id')} = ${userId} OR ${sharedCheck})`;
+  return sql`(${orgScope} AND (${sql.ref(alias + '.user_id')} = ${userId} OR ${sharedCheck}))`;
 }
 
 /**

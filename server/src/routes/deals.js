@@ -11,7 +11,7 @@ let workflowEngine;
 router.get('/', auth, async (req, res) => {
   const { search, stage, service_line } = req.query;
 
-  const conditions = [ownershipWhere('d', 'deal', req.user.id, req.user.role)];
+  const conditions = [ownershipWhere('d', 'deal', req.user.id, req.user.role, req.orgId)];
   if (search) conditions.push(sql`d.title ILIKE ${'%' + search + '%'}`);
   if (stage) conditions.push(sql`d.stage::text = ${stage}`);
   if (service_line) conditions.push(sql`d.service_line = ${service_line}`);

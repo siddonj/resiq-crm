@@ -49,7 +49,7 @@ router.get('/', auth, async (req, res) => {
   const { search, type, service_line, tag, filter, sort } = req.query;
   const userId = req.user.id;
   const today = new Date().toISOString().slice(0, 10);
-  const conditions = [ownershipWhere('c', 'contact', userId, req.user.role)];
+  const conditions = [ownershipWhere('c', 'contact', userId, req.user.role, req.orgId)];
 
   if (filter === 'overdue_actions') {
     conditions.push(sql`c.next_action_date IS NOT NULL AND c.next_action_date < ${today}::date`);
