@@ -44,14 +44,24 @@ the original build's ledger which flagged the raw-SQL files as a known gap:
   delegates to agentProspectService.importProspects, which raw-inserts into `contacts` and
   `deals` (both ORG_TABLES). Confirmed NOT intentionally-global — organization_id now
   stamped on both inserts. See org-isolation-progress.md Task 6 (agents) entry.
-- `appSettings` — likely global config; verify
+- `appSettings` — CONFIRMED intentionally-global (Task 6). Its only table, `app_settings`
+  (migration 023: `setting_key` PK, `setting_value`, `updated_by`, `updated_at`), has no
+  `organization_id` and is not in ORG_TABLES. Route (`routes/appSettings.js`) and its sole
+  service (`services/appSettings.js`) query only this table via `pool.query`, gated behind
+  `requireRole('admin')`; no delegation to any service touching ORG_TABLES (traced the way
+  `agents` was, to avoid repeating that module's mistake — genuinely no tenant-data path here).
+  Rows are admin-managed runtime feature flags / rate limits (e.g. `allow_synthetic_leads`,
+  `outbound_daily_email_send_limit`) that apply app-wide by design, not per-tenant. No filtering
+  added, no isolation test added (would be a no-op). `/api/app-settings` mount's
+  `authMiddleware, resolveOrg` (Task 3) is left as-is — harmless, out of scope to remove.
 - `auditLogs` (audit_logs) — org-scoped; verify read path
 - `deliverability` — verify tables
 - `integrations` — verify whether integration tokens are org-scoped
 
 **Reclassify to intentionally-global if their tables are NOT in ORG_TABLES** (record reason here
-during Task 6): candidates are `appSettings`, `integrations`, `deliverability`. (`agents` ruled
-out — see entry above; it does touch ORG_TABLES via a shared service.)
+during Task 6): candidates are `integrations`, `deliverability`. (`agents` ruled out — see entry
+above; it does touch ORG_TABLES via a shared service. `appSettings` CONFIRMED intentionally-global
+— see entry above.)
 
 **Confirmed global (no change):** auth, clientAuth, stripe, webhooks, unsubscribe, orgs,
 clientPortal (client-scoped via req.client.id).
