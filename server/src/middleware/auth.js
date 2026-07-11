@@ -10,7 +10,7 @@ module.exports = async (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
 
     // Always hydrate role/email/is_active from DB to avoid stale token-role state.
     const result = await pool.query(

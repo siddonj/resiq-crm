@@ -20,7 +20,7 @@ function getTokenFromRequest(req) {
 
 function verifyWebSocketToken(token) {
   try {
-    return jwt.verify(token, process.env.JWT_SECRET);
+    return jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
   } catch (err) {
     return null;
   }

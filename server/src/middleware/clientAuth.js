@@ -16,7 +16,7 @@ module.exports = async (req, res, next) => {
 
     // Try JWT first (for logged-in clients)
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
       if (decoded.clientId) {
         const client = await Client.findById(decoded.clientId);
         if (!client || !client.is_active) {
