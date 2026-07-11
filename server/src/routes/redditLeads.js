@@ -37,10 +37,10 @@ router.post('/search', authMiddleware, async (req, res) => {
       try {
         const result = await db.query(
           `INSERT INTO reddit_leads (
-            reddit_id, author, post_title, post_url, subreddit, 
-            post_content, relevance_score, lead_keywords, contact_email, 
-            contact_name, discovered_at, status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            reddit_id, author, post_title, post_url, subreddit,
+            post_content, relevance_score, lead_keywords, contact_email,
+            contact_name, discovered_at, status, organization_id
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
           ON CONFLICT (reddit_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
           RETURNING *`,
           [
@@ -56,6 +56,7 @@ router.post('/search', authMiddleware, async (req, res) => {
             lead.contact_name || lead.author,
             new Date(lead.discovered_at),
             'new',
+            req.orgId,
           ]
         );
         storedLeads.push(result.rows[0]);
@@ -81,8 +82,8 @@ router.get('/', authMiddleware, async (req, res) => {
   try {
     const { status = 'new', subreddit, minRelevance = 0, limit = 50, offset = 0 } = req.query;
 
-    let query = 'SELECT * FROM reddit_leads WHERE 1=1';
-    const params = [];
+    let query = 'SELECT * FROM reddit_leads WHERE organization_id = $1';
+    const params = [req.orgId];
 
     if (status && status !== 'all') {
       query += ` AND status = $${params.length + 1}`;
@@ -106,8 +107,8 @@ router.get('/', authMiddleware, async (req, res) => {
     const result = await db.query(query, params);
 
     // Get total count
-    let countQuery = 'SELECT COUNT(*) FROM reddit_leads WHERE 1=1';
-    const countParams = [];
+    let countQuery = 'SELECT COUNT(*) FROM reddit_leads WHERE organization_id = $1';
+    const countParams = [req.orgId];
 
     if (status && status !== 'all') {
       countQuery += ` AND status = $${countParams.length + 1}`;
@@ -137,7 +138,10 @@ router.get('/', authMiddleware, async (req, res) => {
 // Get single lead
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM reddit_leads WHERE id = $1', [req.params.id]);
+    const result = await db.query(
+      'SELECT * FROM reddit_leads WHERE id = $1 AND organization_id = $2',
+      [req.params.id, req.orgId]
+    );
 
     if (!result.rows.length) {
       return res.status(404).json({ error: 'Lead not found' });
@@ -159,14 +163,14 @@ router.patch('/:id', authMiddleware, async (req, res) => {
     }
 
     const result = await db.query(
-      `UPDATE reddit_leads 
-       SET status = $1, notes = COALESCE($2, notes), 
+      `UPDATE reddit_leads
+       SET status = $1, notes = COALESCE($2, notes),
            contact_email = COALESCE($3, contact_email),
            contact_name = COALESCE($4, contact_name),
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = $5
+       WHERE id = $5 AND organization_id = $6
        RETURNING *`,
-      [status, notes || null, contact_email || null, contact_name || null, req.params.id]
+      [status, notes || null, contact_email || null, contact_name || null, req.params.id, req.orgId]
     );
 
     if (!result.rows.length) {
@@ -183,8 +187,8 @@ router.patch('/:id', authMiddleware, async (req, res) => {
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     const result = await db.query(
-      'UPDATE reddit_leads SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING *',
-      ['rejected', req.params.id]
+      'UPDATE reddit_leads SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND organization_id = $3 RETURNING *',
+      ['rejected', req.params.id, req.orgId]
     );
 
     if (!result.rows.length) {
@@ -245,8 +249,9 @@ router.patch('/configs/:id', authMiddleware, async (req, res) => {
 // Get lead statistics
 router.get('/stats/summary', authMiddleware, async (req, res) => {
   try {
-    const result = await db.query(`
-      SELECT 
+    const result = await db.query(
+      `
+      SELECT
         COUNT(*) as total_leads,
         COUNT(CASE WHEN status = 'new' THEN 1 END) as new_leads,
         COUNT(CASE WHEN status = 'contacted' THEN 1 END) as contacted_leads,
@@ -254,7 +259,10 @@ router.get('/stats/summary', authMiddleware, async (req, res) => {
         AVG(relevance_score) as avg_relevance,
         MAX(discovered_at) as latest_discovery
       FROM reddit_leads
-    `);
+      WHERE organization_id = $1
+    `,
+      [req.orgId]
+    );
 
     res.json(result.rows[0]);
   } catch (error) {
@@ -265,16 +273,20 @@ router.get('/stats/summary', authMiddleware, async (req, res) => {
 // Get leads by subreddit
 router.get('/stats/by-subreddit', authMiddleware, async (req, res) => {
   try {
-    const result = await db.query(`
-      SELECT 
+    const result = await db.query(
+      `
+      SELECT
         subreddit,
         COUNT(*) as total,
         COUNT(CASE WHEN status = 'new' THEN 1 END) as new_count,
         AVG(relevance_score) as avg_relevance
       FROM reddit_leads
+      WHERE organization_id = $1
       GROUP BY subreddit
       ORDER BY total DESC
-    `);
+    `,
+      [req.orgId]
+    );
 
     res.json(result.rows);
   } catch (error) {

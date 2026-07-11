@@ -35,7 +35,14 @@ From grep on current branch (no `req.orgId` / `orgWhere` / `ownershipWhere`), cr
 the original build's ledger which flagged the raw-SQL files as a known gap:
 
 **Confirmed org-data, unfiltered — Task 6 audit set:**
-- `redditLeads` (reddit_leads) — raw `pool.query`, known gap
+- `redditLeads` (reddit_leads) — DONE (Task 6): confirmed real gap, not intentionally-global.
+  `reddit_leads` IS in ORG_TABLES (migration 062, organization_id NOT NULL). Delegated service
+  (`services/redditMCPService.js`) makes zero DB queries (Anthropic API only, same shape as
+  multiSourceLeadService); all 8 org-table `db.query` sites live directly in
+  `routes/redditLeads.js` and are now organization_id-filtered/stamped. `reddit_search_configs`
+  and `reddit_search_results` (also queried by this route file) are NOT in ORG_TABLES — no
+  organization_id column since 062 — and were correctly left unfiltered. No background
+  worker/cron found for Reddit sync. See org-isolation-progress.md Task 6 (redditLeads) entry.
 - `multiSourceLeads` — DONE (Task 6): confirmed real gap, not intentionally-global.
   `unified_leads` IS in ORG_TABLES (migration 062, organization_id NOT NULL). Delegated
   service (`services/multiSourceLeadService.js`) makes zero DB queries (Anthropic API only);
