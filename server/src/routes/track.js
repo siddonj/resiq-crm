@@ -3,16 +3,93 @@ const { v4: uuidv4 } = require('uuid');
 const router = express.Router();
 const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const requireAuth = require('../middleware/auth');
+const { resolveOrg } = require('../middleware/resolveOrg');
+const { resolveOrgIdForUser } = require('../services/auditLogger');
 
 // Helper to generate tracking ID
 function generateTrackingId() {
   return uuidv4();
 }
 
+// Legacy pixel.png endpoint for backward compatibility.
+// PRE-EXISTING ROUTING BUG (fixed here, unrelated to org isolation but required for the
+// org-attribution fix below to be reachable at all): this route must be registered
+// BEFORE '/:trackingId.png' — Express/path-to-regexp treats ':trackingId.png' as "any
+// segment ending in .png", so a literal GET /pixel.png request matched that catch-all
+// first (with trackingId='pixel') and this handler was permanently unreachable. No
+// security impact (the catch-all just no-ops on an unmatched tracking_id), but the
+// entire query-string-based email-open-tracking feature has never fired since inception.
+router.get('/pixel.png', async (req, res) => {
+  try {
+    if (req.query.d) {
+      const data = JSON.parse(Buffer.from(req.query.d, 'base64').toString('utf8'));
+      if (data.contactId && data.userId) {
+        // organization_id comes from resolving the embedded sender (userId)'s org
+        // server-side — never from any request-derived value. Anonymous recipient
+        // supplies only the base64 payload the CRM itself generated at send time.
+        const orgId = await resolveOrgIdForUser(data.userId);
+        if (orgId) {
+          await db
+            .insertInto('activities')
+            .values({
+              organization_id: orgId,
+              user_id: data.userId,
+              contact_id: data.contactId,
+              type: 'email_opened',
+              description: data.subject ? `Opened email: ${data.subject}` : 'Opened tracked email',
+            })
+            .execute();
+        }
+      }
+    }
+  } catch(e) {
+    console.error('Pixel tracking error:', e);
+  }
+
+  const pixel = Buffer.from('R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=', 'base64');
+  res.writeHead(200, {
+    'Content-Type': 'image/gif',
+    'Content-Length': pixel.length,
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private'
+  });
+  res.end(pixel);
+});
+
+router.get('/link', async (req, res) => {
+  let targetUrl = '/';
+  try {
+    if (req.query.d) {
+      const data = JSON.parse(Buffer.from(req.query.d, 'base64').toString('utf8'));
+      if (data.url) targetUrl = data.url;
+
+      if (data.contactId && data.userId) {
+        // Same resolution as /pixel.png — organization_id comes from the embedded
+        // sender (userId), resolved server-side, never from the request.
+        const orgId = await resolveOrgIdForUser(data.userId);
+        if (orgId) {
+          await db
+            .insertInto('activities')
+            .values({
+              organization_id: orgId,
+              user_id: data.userId,
+              contact_id: data.contactId,
+              type: 'link_clicked',
+              description: data.url ? `Clicked tracked link to ${data.url}` : 'Clicked tracked link',
+            })
+            .execute();
+        }
+      }
+    }
+  } catch(e) {
+    console.error('Link tracking error:', e);
+  }
+  res.redirect(targetUrl);
+});
+
 // Pixel tracking endpoint with improved engagement tracking
 router.get('/:trackingId.png', async (req, res) => {
   const { trackingId } = req.params;
-  
+
   try {
     // Get tracking record
     const tracking = await db
@@ -36,11 +113,14 @@ router.get('/:trackingId.png', async (req, res) => {
         .where('tracking_id', '=', trackingId)
         .execute();
 
-      // Log to activities
+      // Log to activities. organization_id comes from the tracking record itself
+      // (stamped server-side when it was created in POST /create) — the anonymous
+      // pixel-loading recipient supplies nothing but the trackingId.
       const assetLabel = tracking.asset_type.charAt(0).toUpperCase() + tracking.asset_type.slice(1);
       await db
         .insertInto('activities')
         .values({
+          organization_id: tracking.organization_id,
           user_id: tracking.user_id,
           contact_id: tracking.contact_id,
           type: `${tracking.asset_type}_opened`,
@@ -51,7 +131,7 @@ router.get('/:trackingId.png', async (req, res) => {
   } catch(e) {
     console.error('Pixel tracking error:', e);
   }
-  
+
   // Return 1x1 transparent GIF
   const pixel = Buffer.from('R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=', 'base64');
   res.writeHead(200, {
@@ -62,63 +142,12 @@ router.get('/:trackingId.png', async (req, res) => {
   res.end(pixel);
 });
 
-// Legacy pixel.png endpoint for backward compatibility
-router.get('/pixel.png', async (req, res) => {
-  try {
-    if (req.query.d) {
-      const data = JSON.parse(Buffer.from(req.query.d, 'base64').toString('utf8'));
-      if (data.contactId && data.userId) {
-        await db
-          .insertInto('activities')
-          .values({
-            user_id: data.userId,
-            contact_id: data.contactId,
-            type: 'email_opened',
-            description: data.subject ? `Opened email: ${data.subject}` : 'Opened tracked email',
-          })
-          .execute();
-      }
-    }
-  } catch(e) {
-    console.error('Pixel tracking error:', e);
-  }
-  
-  const pixel = Buffer.from('R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=', 'base64');
-  res.writeHead(200, {
-    'Content-Type': 'image/gif',
-    'Content-Length': pixel.length,
-    'Cache-Control': 'no-store, no-cache, must-revalidate, private'
-  });
-  res.end(pixel);
-});
-
-router.get('/link', async (req, res) => {
-  let targetUrl = '/';
-  try {
-    if (req.query.d) {
-      const data = JSON.parse(Buffer.from(req.query.d, 'base64').toString('utf8'));
-      if (data.url) targetUrl = data.url;
-      
-      if (data.contactId && data.userId) {
-        await db
-          .insertInto('activities')
-          .values({
-            user_id: data.userId,
-            contact_id: data.contactId,
-            type: 'link_clicked',
-            description: data.url ? `Clicked tracked link to ${data.url}` : 'Clicked tracked link',
-          })
-          .execute();
-      }
-    }
-  } catch(e) {
-    console.error('Link tracking error:', e);
-  }
-  res.redirect(targetUrl);
-});
-
 // API: Create tracking record for an asset (proposal, invoice, etc)
-router.post('/create', requireAuth, async (req, res) => {
+// resolveOrg is required here (not at mount level — see index.js comment on the
+// /api/track flat mount): it mixes public pixel/link routes with these authed ones.
+// On the /api/org/:orgSlug mount, requireOrg has already set req.orgId; resolveOrg
+// no-ops harmlessly there (defers to req.params.orgSlug).
+router.post('/create', requireAuth, resolveOrg, async (req, res) => {
   try {
     const { contactId, assetType, assetId } = req.body;
     const userId = req.user.id;
@@ -128,7 +157,7 @@ router.post('/create', requireAuth, async (req, res) => {
     }
 
     const trackingId = generateTrackingId();
-    
+
     const tracking = await db
       .insertInto('engagement_tracking')
       .values({
@@ -153,10 +182,10 @@ router.post('/create', requireAuth, async (req, res) => {
 });
 
 // API: Get engagement history for a contact
-router.get('/contact/:contactId', requireAuth, async (req, res) => {
+router.get('/contact/:contactId', requireAuth, resolveOrg, async (req, res) => {
   try {
     const { contactId } = req.params;
-    
+
     const rows = await db
       .selectFrom('engagement_tracking')
       .$call(orgWhere(req.orgId))
@@ -174,10 +203,10 @@ router.get('/contact/:contactId', requireAuth, async (req, res) => {
 });
 
 // API: Get engagement stats for an asset
-router.get('/asset/:assetType/:assetId', requireAuth, async (req, res) => {
+router.get('/asset/:assetType/:assetId', requireAuth, resolveOrg, async (req, res) => {
   try {
     const { assetType, assetId } = req.params;
-    
+
     const rows = await db
       .selectFrom('engagement_tracking')
       .$call(orgWhere(req.orgId))
