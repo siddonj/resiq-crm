@@ -85,15 +85,23 @@ function verifyUnsubscribeToken(token) {
 /**
  * Resolve a user's organization_id when the caller didn't already have
  * req.orgId (e.g. the public unsubscribe route, or send-flow callers that
- * only carry userId). Mirrors the single-membership assumption used by
- * middleware/resolveOrg.js. Callers inside compliance.js's own routes pass
- * req.orgId explicitly and skip this lookup entirely.
+ * only carry userId). Fails closed like middleware/resolveOrg.js: fetches
+ * ALL memberships and throws if the user belongs to more than one, rather
+ * than silently picking one via LIMIT 1. Callers (recordOptOut via
+ * unsubscribe.js, assertSendAllowed/appendComplianceFooter via
+ * draftService.js) already propagate thrown errors as failed
+ * requests/500s, so a throw here safely blocks the operation instead of
+ * guessing an org. Callers inside compliance.js's own routes pass req.orgId
+ * explicitly and skip this lookup entirely.
  */
 async function resolveOrgIdForUser(userId) {
   const res = await pool.query(
-    `SELECT organization_id FROM organization_members WHERE user_id = $1 LIMIT 1`,
+    `SELECT organization_id FROM organization_members WHERE user_id = $1`,
     [userId]
   );
+  if (res.rows.length > 1) {
+    throw new Error(`User ${userId} has multiple organization memberships; org id is ambiguous.`);
+  }
   return res.rows[0]?.organization_id || null;
 }
 
@@ -149,6 +157,9 @@ async function addSuppression(userId, { email, reason = '', source = 'manual', m
   const domain = domainOf(normalized);
   const resolvedOrgId = await ensureOrgId(userId, orgId);
 
+  // Convention: organization_id is set on insert only and never reassigned
+  // on conflict (see PUT /api/compliance/config for the same rule) — org
+  // identity comes from server-side membership and must not silently move.
   const res = await pool.query(
     `INSERT INTO outbound_suppression_entries (user_id, organization_id, email, email_domain, match_type, reason, source, metadata)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -225,8 +236,8 @@ async function recordOptOut({ userId, email, leadId = null, channel = 'email', s
      SET status = 'suppressed',
          suppression_reason = COALESCE(NULLIF(suppression_reason, ''), 'opt_out'),
          updated_at = NOW()
-     WHERE user_id = $1 AND lower(email) = $2 AND status <> 'suppressed'`,
-    [userId, normalized]
+     WHERE user_id = $1 AND lower(email) = $2 AND status <> 'suppressed' AND organization_id = $3`,
+    [userId, normalized, resolvedOrgId]
   );
 
   await logComplianceEvent({ userId, orgId: resolvedOrgId, leadId, email: normalized, eventType: 'opt_out_received', channel, details: { source } });

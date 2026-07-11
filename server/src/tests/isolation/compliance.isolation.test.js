@@ -77,7 +77,16 @@ describe('compliance — cross-org isolation', () => {
       .get('/api/org/org-a/suppression')
       .set('x-test-user', JSON.stringify(userA));
 
-    const orgScoped = capturedQueries.some(
+    // Tighten to the target table first, then assert the org filter on that
+    // subset — a route may fire multiple queries (e.g. Task 6 templates),
+    // and asserting against "any captured query" would pass even if the
+    // target query itself were unfiltered as long as some other query
+    // happened to mention organization_id.
+    const suppressionQueries = capturedQueries.filter((q) =>
+      /outbound_suppression_entries/.test(q.text)
+    );
+    expect(suppressionQueries.length).toBeGreaterThan(0);
+    const orgScoped = suppressionQueries.some(
       (q) => /organization_id/.test(q.text) && q.params.includes(orgA.id)
     );
     expect(orgScoped).toBe(true);

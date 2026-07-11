@@ -40,11 +40,13 @@ router.put('/config', async (req, res) => {
   }
 
   try {
+    // Convention: organization_id is set on insert only and never reassigned
+    // on conflict. Org identity comes from server-side membership (req.orgId)
+    // and must not silently move a row to a different org on a later write.
     const res2 = await pool.query(
       `INSERT INTO outbound_workspace_config (user_id, organization_id, physical_mailing_address, compliance_region, unsubscribe_footer_enabled, updated_at)
        VALUES ($1, $2, $3, COALESCE($4, 'US'), COALESCE($5, TRUE), NOW())
        ON CONFLICT (user_id) DO UPDATE SET
-         organization_id = EXCLUDED.organization_id,
          physical_mailing_address = EXCLUDED.physical_mailing_address,
          compliance_region = COALESCE($4, outbound_workspace_config.compliance_region),
          unsubscribe_footer_enabled = COALESCE($5, outbound_workspace_config.unsubscribe_footer_enabled),
