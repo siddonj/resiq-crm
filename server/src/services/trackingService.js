@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../models/db');
+const { sign } = require('../lib/trackingSignature');
 
 class TrackingService {
   constructor() {
@@ -9,13 +10,17 @@ class TrackingService {
   getPixelUrl(userId, contactId, subject = null) {
     const data = { userId, contactId, type: 'email_opened', subject };
     const dataString = Buffer.from(JSON.stringify(data)).toString('base64');
-    return `${this.baseUrl}/api/track/pixel.png?d=${dataString}`;
+    // HMAC-signed so track.js can reject a tampered userId/contactId before
+    // ever resolving an org from it (see lib/trackingSignature.js).
+    const sig = sign(dataString);
+    return `${this.baseUrl}/api/track/pixel.png?d=${dataString}.${sig}`;
   }
 
   getTrackedLink(url, userId, contactId) {
     const data = { userId, contactId, url, type: 'link_clicked' };
     const dataString = Buffer.from(JSON.stringify(data)).toString('base64');
-    return `${this.baseUrl}/api/track/link?d=${dataString}`;
+    const sig = sign(dataString);
+    return `${this.baseUrl}/api/track/link?d=${dataString}.${sig}`;
   }
 
   injectTrackingIntoHtml(html, userId, contactId, subject = null) {

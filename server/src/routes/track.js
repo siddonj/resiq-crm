@@ -5,10 +5,36 @@ const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const requireAuth = require('../middleware/auth');
 const { resolveOrg } = require('../middleware/resolveOrg');
 const { resolveOrgIdForUser } = require('../services/auditLogger');
+const { verify } = require('../lib/trackingSignature');
 
 // Helper to generate tracking ID
 function generateTrackingId() {
   return uuidv4();
+}
+
+// Parses and verifies the `d` query param produced by trackingService's
+// getPixelUrl/getTrackedLink: `${base64(JSON)}.${hmacHex}`. Returns the
+// decoded payload only if the signature is valid — an unsigned, forged, or
+// tampered payload (e.g. a userId/contactId swapped in from a different
+// org's pixel) returns null and must NOT be used to resolve an org or write
+// an activity. Base64 and hex never contain '.', so splitting on the last
+// '.' unambiguously separates data from signature.
+function parseSignedTrackingPayload(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+
+  const sepIndex = raw.lastIndexOf('.');
+  if (sepIndex === -1) return null;
+
+  const dataString = raw.slice(0, sepIndex);
+  const signature = raw.slice(sepIndex + 1);
+
+  if (!verify(dataString, signature)) return null;
+
+  try {
+    return JSON.parse(Buffer.from(dataString, 'base64').toString('utf8'));
+  } catch {
+    return null;
+  }
 }
 
 // Legacy pixel.png endpoint for backward compatibility.
@@ -22,8 +48,14 @@ function generateTrackingId() {
 router.get('/pixel.png', async (req, res) => {
   try {
     if (req.query.d) {
-      const data = JSON.parse(Buffer.from(req.query.d, 'base64').toString('utf8'));
-      if (data.contactId && data.userId) {
+      // Signature is verified BEFORE data.userId/data.contactId are trusted for
+      // anything (including org resolution). An invalid/forged/tampered `d`
+      // no-ops identically to today's "can't resolve org" case — same response,
+      // no DB write, failure only logged server-side.
+      const data = parseSignedTrackingPayload(req.query.d);
+      if (!data) {
+        console.error('Pixel tracking: signature verification failed');
+      } else if (data.contactId && data.userId) {
         // organization_id comes from resolving the embedded sender (userId)'s org
         // server-side — never from any request-derived value. Anonymous recipient
         // supplies only the base64 payload the CRM itself generated at send time.
@@ -59,24 +91,31 @@ router.get('/link', async (req, res) => {
   let targetUrl = '/';
   try {
     if (req.query.d) {
-      const data = JSON.parse(Buffer.from(req.query.d, 'base64').toString('utf8'));
-      if (data.url) targetUrl = data.url;
+      // Signature verified before any field of `data` — including the redirect
+      // target and userId/contactId — is trusted. A tampered `d` falls back to
+      // the default '/' redirect and writes nothing, same as an unparseable one.
+      const data = parseSignedTrackingPayload(req.query.d);
+      if (!data) {
+        console.error('Link tracking: signature verification failed');
+      } else {
+        if (data.url) targetUrl = data.url;
 
-      if (data.contactId && data.userId) {
-        // Same resolution as /pixel.png — organization_id comes from the embedded
-        // sender (userId), resolved server-side, never from the request.
-        const orgId = await resolveOrgIdForUser(data.userId);
-        if (orgId) {
-          await db
-            .insertInto('activities')
-            .values({
-              organization_id: orgId,
-              user_id: data.userId,
-              contact_id: data.contactId,
-              type: 'link_clicked',
-              description: data.url ? `Clicked tracked link to ${data.url}` : 'Clicked tracked link',
-            })
-            .execute();
+        if (data.contactId && data.userId) {
+          // Same resolution as /pixel.png — organization_id comes from the embedded
+          // sender (userId), resolved server-side, never from the request.
+          const orgId = await resolveOrgIdForUser(data.userId);
+          if (orgId) {
+            await db
+              .insertInto('activities')
+              .values({
+                organization_id: orgId,
+                user_id: data.userId,
+                contact_id: data.contactId,
+                type: 'link_clicked',
+                description: data.url ? `Clicked tracked link to ${data.url}` : 'Clicked tracked link',
+              })
+              .execute();
+          }
         }
       }
     }

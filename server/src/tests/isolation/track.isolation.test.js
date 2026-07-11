@@ -14,9 +14,12 @@
 // - GET /pixel.png and GET /link resolve it from the embedded sender (data.userId) via
 //   resolveOrgIdForUser — never from any request-supplied org value.
 
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-for-track-isolation';
+
 const express = require('express');
 const request = require('supertest');
 const { makeOrg, makeUser, makeSuperAdmin, buildIsolationApp } = require('../helpers/orgTestHelpers');
+const { sign } = require('../../lib/trackingSignature');
 
 const insertValues = { activities: [], engagement_tracking: [] };
 const updateCalls = [];
@@ -206,14 +209,33 @@ describe('track — public pixel (GET /:trackingId.png) stamps org from the trac
   });
 });
 
+// Mirrors trackingService's getPixelUrl/getTrackedLink envelope:
+// base64(JSON).hmacHex — a correctly-signed `d` a legitimate send would produce.
+function encode(payload) {
+  const dataString = Buffer.from(JSON.stringify(payload)).toString('base64');
+  return `${dataString}.${sign(dataString)}`;
+}
+
+// Same base64 JSON payload, but with no signature — simulates a recipient
+// decoding someone else's pixel, editing the JSON, and re-encoding it
+// without knowing the server's HMAC secret.
+function encodeUnsigned(payload) {
+  return Buffer.from(JSON.stringify(payload)).toString('base64');
+}
+
+// Same as a legitimately-signed payload, but userId/contactId are swapped
+// AFTER signing — i.e. the original signature is reused with tampered data.
+function encodeTamperedKeepingOldSignature(originalPayload, tamperedPayload) {
+  const originalDataString = Buffer.from(JSON.stringify(originalPayload)).toString('base64');
+  const originalSig = sign(originalDataString);
+  const tamperedDataString = Buffer.from(JSON.stringify(tamperedPayload)).toString('base64');
+  return `${tamperedDataString}.${originalSig}`;
+}
+
 describe('track — legacy public routes resolve org from the embedded sender, not the request', () => {
   beforeEach(() => {
     insertValues.activities = [];
   });
-
-  function encode(payload) {
-    return Buffer.from(JSON.stringify(payload)).toString('base64');
-  }
 
   it('GET /pixel.png stamps organization_id resolved from data.userId', async () => {
     const app = express();
@@ -248,5 +270,79 @@ describe('track — legacy public routes resolve org from the embedded sender, n
 
     expect(res.status).toBe(200);
     expect(insertValues.activities.length).toBe(0);
+  });
+});
+
+describe('track — forged/tampered `d` payloads are rejected (HMAC signature verification)', () => {
+  beforeEach(() => {
+    insertValues.activities = [];
+  });
+
+  it('GET /pixel.png rejects an unsigned payload — no activity is written', async () => {
+    const app = express();
+    app.use('/api/track', routerFactory());
+
+    const d = encodeUnsigned({ contactId: 'contact-1', userId: senderUserId, subject: 'Hi' });
+    const res = await request(app).get(`/api/track/pixel.png?d=${d}`);
+
+    // Pixel image still returns (no UX break for the recipient) — the pixel is
+    // a 1x1 gif regardless of whether tracking succeeded server-side.
+    expect(res.status).toBe(200);
+    expect(insertValues.activities.length).toBe(0);
+  });
+
+  it('GET /pixel.png rejects a payload whose userId was swapped after signing — no activity is written, and it does NOT fall back to resolving the swapped userId', async () => {
+    const app = express();
+    app.use('/api/track', routerFactory());
+
+    // Attacker decodes a real pixel addressed to senderUserId/org A, then edits
+    // userId to point at a different org's user while keeping the original
+    // (now-invalid) signature.
+    const d = encodeTamperedKeepingOldSignature(
+      { contactId: 'contact-1', userId: senderUserId, subject: 'Hi' },
+      { contactId: 'contact-1', userId: senderUserId, subject: 'Hi — forged for another org' }
+    );
+    const res = await request(app).get(`/api/track/pixel.png?d=${d}`);
+
+    expect(res.status).toBe(200);
+    expect(insertValues.activities.length).toBe(0);
+  });
+
+  it('GET /link rejects an unsigned payload — no activity is written and redirects to the default target, not the forged URL', async () => {
+    const app = express();
+    app.use('/api/track', routerFactory());
+
+    const d = encodeUnsigned({ contactId: 'contact-1', userId: senderUserId, url: 'https://evil.example.com' });
+    const res = await request(app).get(`/api/track/link?d=${d}`);
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/');
+    expect(insertValues.activities.length).toBe(0);
+  });
+
+  it('GET /link rejects a tampered payload (contactId swapped, old signature kept) — no activity is written', async () => {
+    const app = express();
+    app.use('/api/track', routerFactory());
+
+    const d = encodeTamperedKeepingOldSignature(
+      { contactId: 'contact-1', userId: senderUserId, url: 'https://example.com' },
+      { contactId: 'contact-forged', userId: senderUserId, url: 'https://example.com' }
+    );
+    const res = await request(app).get(`/api/track/link?d=${d}`);
+
+    expect(res.status).toBe(302);
+    expect(insertValues.activities.length).toBe(0);
+  });
+
+  it('a correctly-signed payload still passes and records the correct organization_id (control case)', async () => {
+    const app = express();
+    app.use('/api/track', routerFactory());
+
+    const d = encode({ contactId: 'contact-1', userId: senderUserId, subject: 'Hi' });
+    const res = await request(app).get(`/api/track/pixel.png?d=${d}`);
+
+    expect(res.status).toBe(200);
+    expect(insertValues.activities.length).toBe(1);
+    expect(insertValues.activities[0].organization_id).toBe(senderOrgId);
   });
 });
