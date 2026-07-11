@@ -62,7 +62,14 @@ the original build's ledger which flagged the raw-SQL files as a known gap:
   different sending caps by plan/reputation), `app_settings` will need an `organization_id`
   column or a per-org override table at that point. Not added now per YAGNI — no current
   product requirement — but flagged here so it isn't rediscovered as a surprise later.
-- `auditLogs` (audit_logs) — org-scoped; verify read path
+- `auditLogs` (audit_logs) — Task 6: complete. GET /api/audit-logs read path was
+  unfiltered (real gap, not just "verify"); now filters both the SELECT and COUNT
+  queries by `organization_id = req.orgId` unconditionally (server-derived, not a
+  query param). Write side (`services/auditLogger.js`'s `logAction`, INSERT INTO
+  audit_logs) is called from ~20 other route/service files across the codebase and
+  does NOT stamp organization_id on any of them — flagged as a separate, likely
+  systemic gap for the plan owner; out of scope for this module-scoped task (only
+  auditLogs.js's own queries were in scope).
 - `deliverability` — verify tables
 - `integrations` — verify whether integration tokens are org-scoped
 

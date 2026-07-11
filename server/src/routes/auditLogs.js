@@ -15,15 +15,15 @@ router.get('/', auth, requireRole('admin', 'manager'), async (req, res) => {
   const pg = Math.max(1, parseInt(page));
   const lim = parseInt(limit);
 
-  const conditions = [];
+  // organization_id is server-derived (req.orgId, set by resolveOrg) — never
+  // taken from query params — so a caller cannot widen the filter to another org.
+  const conditions = [sql`organization_id = ${req.orgId}`];
   if (resource_type) conditions.push(sql`resource_type = ${resource_type}`);
   if (user_id) conditions.push(sql`user_id = ${user_id}`);
   if (from) conditions.push(sql`created_at >= ${from}`);
   if (to) conditions.push(sql`created_at <= ${to}`);
 
-  const whereClause = conditions.length > 0
-    ? sql`WHERE ${sql.join(conditions, sql` AND `)}`
-    : sql``;
+  const whereClause = sql`WHERE ${sql.join(conditions, sql` AND `)}`;
 
   try {
     const [rows, countResult] = await Promise.all([
