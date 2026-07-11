@@ -15,7 +15,7 @@ const VALID_REGIONS = ['US', 'EU', 'UK', 'CA', 'OTHER'];
  */
 router.get('/config', async (req, res) => {
   try {
-    const config = await compliance.getComplianceConfig(req.user.id);
+    const config = await compliance.getComplianceConfig(req.user.id, req.orgId);
     res.json({ config });
   } catch (err) {
     console.error('Error loading compliance config:', err);
@@ -41,15 +41,16 @@ router.put('/config', async (req, res) => {
 
   try {
     const res2 = await pool.query(
-      `INSERT INTO outbound_workspace_config (user_id, physical_mailing_address, compliance_region, unsubscribe_footer_enabled, updated_at)
-       VALUES ($1, $2, COALESCE($3, 'US'), COALESCE($4, TRUE), NOW())
+      `INSERT INTO outbound_workspace_config (user_id, organization_id, physical_mailing_address, compliance_region, unsubscribe_footer_enabled, updated_at)
+       VALUES ($1, $2, $3, COALESCE($4, 'US'), COALESCE($5, TRUE), NOW())
        ON CONFLICT (user_id) DO UPDATE SET
+         organization_id = EXCLUDED.organization_id,
          physical_mailing_address = EXCLUDED.physical_mailing_address,
-         compliance_region = COALESCE($3, outbound_workspace_config.compliance_region),
-         unsubscribe_footer_enabled = COALESCE($4, outbound_workspace_config.unsubscribe_footer_enabled),
+         compliance_region = COALESCE($4, outbound_workspace_config.compliance_region),
+         unsubscribe_footer_enabled = COALESCE($5, outbound_workspace_config.unsubscribe_footer_enabled),
          updated_at = NOW()
        RETURNING physical_mailing_address, compliance_region, unsubscribe_footer_enabled`,
-      [req.user.id, address, region || null, footerEnabled === undefined ? null : footerEnabled]
+      [req.user.id, req.orgId, address, region || null, footerEnabled === undefined ? null : footerEnabled]
     );
     logAction(req.user.id, req.user.email, 'update', 'compliance_config', null, 'outbound', {
       region: region || null,
@@ -70,6 +71,7 @@ router.get('/suppression', async (req, res) => {
     const entries = await compliance.listSuppression(req.user.id, {
       search: req.query.search || '',
       limit: req.query.limit || 200,
+      orgId: req.orgId,
     });
     res.json({ entries });
   } catch (err) {
@@ -91,6 +93,7 @@ router.post('/suppression', async (req, res) => {
       reason: reason || 'Manually suppressed',
       source: 'manual',
       matchType: matchType === 'domain' ? 'domain' : 'email',
+      orgId: req.orgId,
     });
     res.status(201).json({ entry });
   } catch (err) {
@@ -113,7 +116,7 @@ router.post('/suppression/import', async (req, res) => {
     return res.status(400).json({ error: 'Maximum 5000 emails per import' });
   }
   try {
-    const result = await compliance.importSuppression(req.user.id, emails);
+    const result = await compliance.importSuppression(req.user.id, emails, { orgId: req.orgId });
     res.json(result);
   } catch (err) {
     console.error('Error importing suppression:', err);
@@ -129,7 +132,7 @@ router.delete('/suppression', async (req, res) => {
   const { email } = req.body || {};
   if (!email) return res.status(400).json({ error: 'email is required' });
   try {
-    const removed = await compliance.removeSuppression(req.user.id, email);
+    const removed = await compliance.removeSuppression(req.user.id, email, req.orgId);
     if (!removed) return res.status(404).json({ error: 'Entry not found' });
     res.json({ removed: true });
   } catch (err) {
@@ -148,10 +151,10 @@ router.get('/events', async (req, res) => {
     const result = await pool.query(
       `SELECT id, lead_id, email, event_type, channel, details, created_at
        FROM outbound_compliance_events
-       WHERE user_id = $1
+       WHERE user_id = $1 AND organization_id = $2
        ORDER BY created_at DESC
-       LIMIT $2`,
-      [req.user.id, limit]
+       LIMIT $3`,
+      [req.user.id, req.orgId, limit]
     );
     res.json({ events: result.rows });
   } catch (err) {
