@@ -27,7 +27,7 @@ function hasInvalidDelay(actions = []) {
  */
 router.get('/', auth, async (req, res) => {
   try {
-    const workflows = await Workflow.findByUserId(req.user.id);
+    const workflows = await Workflow.findByUserId(req.user.id, req.orgId);
     res.json(workflows);
   } catch (err) {
     console.error('Error fetching workflows:', err);
@@ -41,7 +41,7 @@ router.get('/', auth, async (req, res) => {
  */
 router.get('/:id', auth, async (req, res) => {
   try {
-    const workflow = await Workflow.findById(req.params.id);
+    const workflow = await Workflow.findById(req.params.id, req.orgId);
     if (!workflow) {
       return res.status(404).json({ error: 'Workflow not found' });
     }
@@ -83,13 +83,13 @@ router.post('/', auth, async (req, res) => {
     }
 
     // Check for duplicate workflow name
-    const existing = await Workflow.findByUserId(req.user.id);
+    const existing = await Workflow.findByUserId(req.user.id, req.orgId);
     if (existing.some((w) => w.name === name)) {
       return res.status(400).json({ error: 'Workflow name already exists' });
     }
 
     // Create workflow
-    const workflow = await Workflow.create(req.user.id, {
+    const workflow = await Workflow.create(req.user.id, req.orgId, {
       name,
       description,
       triggerType,
@@ -113,7 +113,7 @@ router.post('/', auth, async (req, res) => {
  */
 router.patch('/:id', auth, async (req, res) => {
   try {
-    const workflow = await Workflow.findById(req.params.id);
+    const workflow = await Workflow.findById(req.params.id, req.orgId);
     if (!workflow) {
       return res.status(404).json({ error: 'Workflow not found' });
     }
@@ -127,7 +127,7 @@ router.patch('/:id', auth, async (req, res) => {
 
     // Check for duplicate name if changing it
     if (name && name !== workflow.name) {
-      const existing = await Workflow.findByUserId(req.user.id);
+      const existing = await Workflow.findByUserId(req.user.id, req.orgId);
       if (existing.some((w) => w.name === name && w.id !== req.params.id)) {
         return res.status(400).json({ error: 'Workflow name already exists' });
       }
@@ -138,7 +138,7 @@ router.patch('/:id', auth, async (req, res) => {
     }
 
     // Update
-    const updated = await Workflow.update(req.params.id, {
+    const updated = await Workflow.update(req.params.id, req.orgId, {
       name,
       description,
       triggerConfig,
@@ -165,7 +165,7 @@ router.patch('/:id', auth, async (req, res) => {
  */
 router.delete('/:id', auth, async (req, res) => {
   try {
-    const workflow = await Workflow.findById(req.params.id);
+    const workflow = await Workflow.findById(req.params.id, req.orgId);
     if (!workflow) {
       return res.status(404).json({ error: 'Workflow not found' });
     }
@@ -175,7 +175,7 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    const deleted = await Workflow.delete(req.params.id);
+    const deleted = await Workflow.delete(req.params.id, req.orgId);
     if (!deleted) {
       return res.status(500).json({ error: 'Failed to delete workflow' });
     }
@@ -194,7 +194,7 @@ router.delete('/:id', auth, async (req, res) => {
  */
 router.get('/:id/executions', auth, async (req, res) => {
   try {
-    const workflow = await Workflow.findById(req.params.id);
+    const workflow = await Workflow.findById(req.params.id, req.orgId);
     if (!workflow) {
       return res.status(404).json({ error: 'Workflow not found' });
     }
@@ -230,7 +230,7 @@ router.get('/:id/executions', auth, async (req, res) => {
  */
 router.get('/:id/executions/:executionId', auth, async (req, res) => {
   try {
-    const workflow = await Workflow.findById(req.params.id);
+    const workflow = await Workflow.findById(req.params.id, req.orgId);
     if (!workflow) {
       return res.status(404).json({ error: 'Workflow not found' });
     }
@@ -259,7 +259,7 @@ router.get('/:id/executions/:executionId', auth, async (req, res) => {
  */
 router.post('/:id/test', auth, async (req, res) => {
   try {
-    const workflow = await Workflow.findById(req.params.id);
+    const workflow = await Workflow.findById(req.params.id, req.orgId);
     if (!workflow) {
       return res.status(404).json({ error: 'Workflow not found' });
     }
@@ -276,7 +276,7 @@ router.post('/:id/test', auth, async (req, res) => {
 
     // Dispatch trigger (assumes workflowEngine is available in req)
     const eventDataWithUser = { ...eventData, user_id: req.user.id };
-    await req.workflowEngine.dispatchTrigger(workflow.trigger_type, eventDataWithUser);
+    await req.workflowEngine.dispatchTrigger(workflow.trigger_type, req.orgId, eventDataWithUser);
 
     res.json({ message: 'Workflow triggered for testing', eventData: eventDataWithUser });
   } catch (err) {

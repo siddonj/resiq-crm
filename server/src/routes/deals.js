@@ -133,7 +133,7 @@ router.post('/', auth, async (req, res) => {
     logAction(req.user.id, req.user.email, 'create', 'deal', newDeal.id, newDeal.title, {}, req.orgId);
 
     if (workflowEngine) {
-      workflowEngine.dispatchTrigger('deal.created', {
+      workflowEngine.dispatchTrigger('deal.created', req.orgId, {
         deal_id: newDeal.id, contact_id: newDeal.contact_id, stage: newDeal.stage,
         user_id: req.user.id, deal_value: newDeal.value, deal_title: newDeal.title,
       }).catch(err => console.error('Error dispatching workflow trigger:', err));
@@ -181,7 +181,7 @@ router.patch('/:id/stage', auth, async (req, res) => {
     }
 
     if (workflowEngine && oldDeal.stage !== newDeal.stage) {
-      workflowEngine.dispatchTrigger('deal.stage_changed', {
+      workflowEngine.dispatchTrigger('deal.stage_changed', req.orgId, {
         deal_id: newDeal.id, contact_id: newDeal.contact_id,
         old_stage: oldDeal.stage, new_stage: newDeal.stage,
         user_id: req.user.id, deal_value: newDeal.value, deal_title: newDeal.title,

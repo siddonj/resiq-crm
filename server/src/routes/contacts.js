@@ -222,7 +222,7 @@ router.post('/', auth, async (req, res) => {
         .where('contact_tags.contact_id', '=', newContact.id)
         .select(['tags.id', 'tags.name'])
         .execute();
-      workflowEngine.dispatchTrigger('contact.created', {
+      workflowEngine.dispatchTrigger('contact.created', req.orgId, {
         contact: { id: newContact.id, name: newContact.name, email: newContact.email, company: newContact.company, type: newContact.type, tags: tags.map(t => t.name) },
         user_id: req.user.id,
       }).catch(err => console.error('Error dispatching workflow trigger:', err));
@@ -586,7 +586,7 @@ router.post('/from-lead', auth, async (req, res) => {
         .where('contact_tags.contact_id', '=', newContact.id)
         .select(['tags.id', 'tags.name'])
         .execute();
-      workflowEngine.dispatchTrigger('contact.created', {
+      workflowEngine.dispatchTrigger('contact.created', req.orgId, {
         contact: { id: newContact.id, name: newContact.name, email: newContact.email, company: newContact.company, type: newContact.type, tags: tags.map(t => t.name) },
         user_id: req.user.id,
       }).catch(err => console.error('Error dispatching workflow trigger:', err));

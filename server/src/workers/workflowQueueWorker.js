@@ -9,7 +9,7 @@ const workflowQueue = new Queue('workflow-execution', process.env.REDIS_URL || '
  * Process workflow actions (create_task, create_activity, etc.)
  */
 workflowQueue.process(2, async (job) => {
-  const { executionId, workflowId, action, eventData, actionIndex, totalActions } = job.data;
+  const { executionId, workflowId, organizationId, action, eventData, actionIndex, totalActions } = job.data;
 
   try {
     console.log(`[WorkflowWorker] Executing action for workflow ${workflowId}:`, action.type);
@@ -21,7 +21,7 @@ workflowQueue.process(2, async (job) => {
         break;
 
       case 'create_activity':
-        result = await executeCreateActivity(action, eventData);
+        result = await executeCreateActivity(action, eventData, organizationId);
         break;
 
       case 'delay':
@@ -117,14 +117,18 @@ async function executeCreateTask(action, eventData) {
 /**
  * Create an activity record based on action config
  */
-async function executeCreateActivity(action, eventData) {
+async function executeCreateActivity(action, eventData, organizationId) {
+  if (!organizationId) {
+    throw new Error('organizationId is required to create a workflow activity');
+  }
+
   const { description = 'Auto-created by workflow', type = 'workflow_action' } = action;
 
   const result = await pool.query(
-    `INSERT INTO activities (contact_id, deal_id, type, description, occurred_at)
-     VALUES ($1, $2, $3, $4, now())
-     RETURNING id, contact_id, deal_id, type, description, occurred_at`,
-    [eventData.contact_id || null, eventData.deal_id || null, type, description]
+    `INSERT INTO activities (contact_id, deal_id, type, description, occurred_at, organization_id)
+     VALUES ($1, $2, $3, $4, now(), $5)
+     RETURNING id, contact_id, deal_id, type, description, occurred_at, organization_id`,
+    [eventData.contact_id || null, eventData.deal_id || null, type, description, organizationId]
   );
 
   return result.rows[0];

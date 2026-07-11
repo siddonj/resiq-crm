@@ -17,14 +17,21 @@ class WorkflowEngine {
   /**
    * Dispatch a trigger event and execute matching workflows
    * @param {string} triggerType - e.g. 'deal.stage_changed', 'contact.created'
+   * @param {string} organizationId - org the triggering event occurred in; scopes which
+   *   workflows are eligible to fire (server-derived, never client-supplied)
    * @param {object} eventData - Event context, e.g. { deal_id, contact_id, old_stage, new_stage, user_id }
    */
-  async dispatchTrigger(triggerType, eventData) {
+  async dispatchTrigger(triggerType, organizationId, eventData) {
+    if (!organizationId) {
+      console.error(`[WorkflowEngine] Refusing to dispatch trigger ${triggerType}: organizationId is required`);
+      return;
+    }
+
     try {
       console.log(`[WorkflowEngine] Dispatching trigger: ${triggerType}`, eventData);
 
-      // Find all workflows matching this trigger type
-      const workflows = await Workflow.findByTrigger(triggerType);
+      // Find all workflows matching this trigger type, scoped to the triggering org
+      const workflows = await Workflow.findByTrigger(triggerType, organizationId);
       console.log(`[WorkflowEngine] Found ${workflows.length} enabled workflows for trigger: ${triggerType}`);
 
       if (workflows.length === 0) {
@@ -60,6 +67,7 @@ class WorkflowEngine {
               const jobData = {
                 executionId: execution.id,
                 workflowId: workflow.id,
+                organizationId,
                 action,
                 eventData,
                 actionIndex: index,

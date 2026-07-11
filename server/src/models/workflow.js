@@ -2,46 +2,59 @@ const pool = require('./db');
 
 class Workflow {
   // Create a new workflow
-  static async create(userId, { name, description, triggerType, triggerConfig, actions, conditions, createdBy }) {
+  static async create(userId, organizationId, { name, description, triggerType, triggerConfig, actions, conditions, createdBy }) {
+    if (!organizationId) throw new Error('organizationId is required');
+
     const triggerConfigJson = JSON.stringify(triggerConfig || {});
     const actionsJson = JSON.stringify(actions || []);
     const conditionsJson = conditions == null ? null : JSON.stringify(conditions);
 
     const result = await pool.query(
-      `INSERT INTO workflows (user_id, name, description, trigger_type, trigger_config, actions, conditions, created_by)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8)
+      `INSERT INTO workflows (user_id, organization_id, name, description, trigger_type, trigger_config, actions, conditions, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9)
        RETURNING *`,
-      [userId, name, description, triggerType, triggerConfigJson, actionsJson, conditionsJson, createdBy]
+      [userId, organizationId, name, description, triggerType, triggerConfigJson, actionsJson, conditionsJson, createdBy]
     );
     return result.rows[0];
   }
 
-  // Get all workflows for a user
-  static async findByUserId(userId) {
+  // Get all workflows for a user, scoped to their organization
+  static async findByUserId(userId, organizationId) {
+    if (!organizationId) throw new Error('organizationId is required');
+
     const result = await pool.query(
-      'SELECT * FROM workflows WHERE user_id = $1 ORDER BY created_at DESC',
-      [userId]
+      'SELECT * FROM workflows WHERE user_id = $1 AND organization_id = $2 ORDER BY created_at DESC',
+      [userId, organizationId]
     );
     return result.rows;
   }
 
-  // Get a single workflow by ID
-  static async findById(id) {
-    const result = await pool.query('SELECT * FROM workflows WHERE id = $1', [id]);
+  // Get a single workflow by ID, scoped to its organization
+  static async findById(id, organizationId) {
+    if (!organizationId) throw new Error('organizationId is required');
+
+    const result = await pool.query(
+      'SELECT * FROM workflows WHERE id = $1 AND organization_id = $2',
+      [id, organizationId]
+    );
     return result.rows[0];
   }
 
-  // Get all enabled workflows matching a trigger type
-  static async findByTrigger(triggerType) {
+  // Get all enabled workflows matching a trigger type, scoped to the triggering organization
+  static async findByTrigger(triggerType, organizationId) {
+    if (!organizationId) throw new Error('organizationId is required');
+
     const result = await pool.query(
-      'SELECT * FROM workflows WHERE trigger_type = $1 AND enabled = true',
-      [triggerType]
+      'SELECT * FROM workflows WHERE trigger_type = $1 AND enabled = true AND organization_id = $2',
+      [triggerType, organizationId]
     );
     return result.rows;
   }
 
-  // Update workflow
-  static async update(id, { name, description, triggerConfig, actions, conditions, enabled, updatedAt = new Date() }) {
+  // Update workflow, scoped to its organization
+  static async update(id, organizationId, { name, description, triggerConfig, actions, conditions, enabled, updatedAt = new Date() }) {
+    if (!organizationId) throw new Error('organizationId is required');
+
     const updates = [];
     const values = [];
     let paramIndex = 1;
@@ -74,26 +87,39 @@ class Workflow {
     updates.push(`updated_at = $${paramIndex++}`);
     values.push(updatedAt);
 
-    values.push(id);
-
     if (updates.length === 1) return null; // Only updated_at, no changes
 
+    values.push(id);
+    const idParam = paramIndex++;
+    values.push(organizationId);
+    const orgParam = paramIndex;
+
     const result = await pool.query(
-      `UPDATE workflows SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
+      `UPDATE workflows SET ${updates.join(', ')} WHERE id = $${idParam} AND organization_id = $${orgParam} RETURNING *`,
       values
     );
     return result.rows[0];
   }
 
-  // Delete workflow
-  static async delete(id) {
-    const result = await pool.query('DELETE FROM workflows WHERE id = $1', [id]);
+  // Delete workflow, scoped to its organization
+  static async delete(id, organizationId) {
+    if (!organizationId) throw new Error('organizationId is required');
+
+    const result = await pool.query(
+      'DELETE FROM workflows WHERE id = $1 AND organization_id = $2',
+      [id, organizationId]
+    );
     return result.rowCount > 0;
   }
 
-  // Count workflows for a user
-  static async countByUserId(userId) {
-    const result = await pool.query('SELECT COUNT(*) FROM workflows WHERE user_id = $1', [userId]);
+  // Count workflows for a user, scoped to their organization
+  static async countByUserId(userId, organizationId) {
+    if (!organizationId) throw new Error('organizationId is required');
+
+    const result = await pool.query(
+      'SELECT COUNT(*) FROM workflows WHERE user_id = $1 AND organization_id = $2',
+      [userId, organizationId]
+    );
     return parseInt(result.rows[0].count, 10);
   }
 }
