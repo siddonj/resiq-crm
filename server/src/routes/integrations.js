@@ -212,15 +212,21 @@ router.get('/gmail/debug', auth, async (req, res) => {
 /**
  * POST /api/integrations/gmail/sync
  * Manually trigger email sync (for testing)
+ *
+ * resolveOrg is required here (not at mount level — see index.js comment on the
+ * /api/integrations mount) because the queued job eventually writes to ORG_TABLES
+ * (contacts, activities) via emailSyncWorker.js/emailMatcher.js. On the
+ * /api/org/:orgSlug mount, requireOrg has already set req.orgId; resolveOrg no-ops
+ * in that case (it defers to req.params.orgSlug).
  */
-router.post('/gmail/sync', auth, async (req, res) => {
+router.post('/gmail/sync', auth, resolveOrg, async (req, res) => {
   try {
     const userId = req.user.id;
     const { labelIds } = req.body; // Optional: filter by specific Gmail labels (array)
 
     // Queue immediate sync job with label preferences
     const job = await emailSyncQueue.add(
-      { userId, labelIds }, // Pass labelIds array to the sync job
+      { userId, labelIds, orgId: req.orgId }, // Pass labelIds array + org context to the sync job
       {
         priority: 1, // High priority
         attempts: 3,

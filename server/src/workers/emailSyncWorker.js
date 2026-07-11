@@ -12,6 +12,28 @@ function extractPrimaryEmail(value) {
   return match ? match[1].toLowerCase() : String(value).trim().toLowerCase();
 }
 
+/**
+ * Fail-closed org resolution for jobs enqueued before orgId was threaded through
+ * the Bull payload (or any other caller lacking a direct orgId). Mirrors
+ * services/auditLogger.js's resolveOrgIdForUser (Task 5/6 pattern) — throws on
+ * ambiguous (>1) or zero memberships rather than proceeding with a null
+ * organization_id into a NOT NULL column.
+ */
+async function resolveOrgIdForUser(userId) {
+  const res = await pool.query(
+    `SELECT organization_id FROM organization_members WHERE user_id = $1`,
+    [userId]
+  );
+  if (res.rows.length > 1) {
+    throw new Error(`emailSyncWorker: user ${userId} has multiple organization memberships; org id is ambiguous.`);
+  }
+  const orgId = res.rows[0]?.organization_id || null;
+  if (!orgId) {
+    throw new Error(`emailSyncWorker: could not resolve organization_id for user ${userId}`);
+  }
+  return orgId;
+}
+
 function isInboundReplyFromMatchedContact(syncResult) {
   if (!syncResult?.success || !syncResult.email || !syncResult.contact) {
     return false;
@@ -33,7 +55,14 @@ function isInboundReplyFromMatchedContact(syncResult) {
   return true;
 }
 
-async function pauseActiveSequencesForInboundReplies(userId, syncResults = []) {
+async function pauseActiveSequencesForInboundReplies(userId, syncResults = [], orgId) {
+  if (!orgId) {
+    // activities.organization_id is NOT NULL with no DEFAULT (migration 062) — fail
+    // loudly here instead of letting Postgres raise a generic not-null-violation
+    // (which is what happened silently before this fix).
+    throw new Error('pauseActiveSequencesForInboundReplies: orgId is required');
+  }
+
   let pausedEnrollments = 0;
   const pausedContacts = new Set();
 
@@ -58,12 +87,13 @@ async function pauseActiveSequencesForInboundReplies(userId, syncResults = []) {
     pausedContacts.add(result.contact.id);
 
     await pool.query(
-      `INSERT INTO activities (user_id, contact_id, type, description, occurred_at)
-       VALUES ($1, $2, 'sequence_paused', $3, NOW())`,
+      `INSERT INTO activities (user_id, contact_id, type, description, occurred_at, organization_id)
+       VALUES ($1, $2, 'sequence_paused', $3, NOW(), $4)`,
       [
         userId,
         result.contact.id,
         `Auto-paused ${updateRes.rowCount} active sequence enrollment(s) after inbound email reply.`,
+        orgId,
       ]
     );
 
@@ -91,6 +121,14 @@ emailSyncQueue.process(2, async (job) => {
       : '';
     console.log(`Starting email sync for user ${userId}, page: ${pageToken || 'first'}${labelText}`);
 
+    // Resolve org context. Jobs queued after this fix carry orgId directly
+    // (routes/integrations.js's /gmail/sync stamps req.orgId). Jobs already
+    // in-flight when this fix deploys (or the recurring scheduler's jobs, which
+    // have no req in scope) fall back to a fail-closed membership lookup —
+    // contacts/activities.organization_id is NOT NULL with no DEFAULT, so we
+    // must never proceed into those inserts without a resolved orgId.
+    const orgId = job.data.orgId || await resolveOrgIdForUser(userId);
+
     // Check if user still has Gmail connected
     const userResult = await pool.query(
       'SELECT id, oauth_provider FROM users WHERE id = $1',
@@ -111,7 +149,7 @@ emailSyncQueue.process(2, async (job) => {
       maxResults: 20,
       pageToken,
       labelIds,
-    });
+    }, orgId);
 
     if (!result.success) {
       throw new Error(result.error || 'Failed to sync emails');
@@ -121,7 +159,7 @@ emailSyncQueue.process(2, async (job) => {
 
     // Auto-pause active sequences when a contact replies inbound.
     if (Array.isArray(result.results) && result.results.length > 0) {
-      const pauseSummary = await pauseActiveSequencesForInboundReplies(userId, result.results);
+      const pauseSummary = await pauseActiveSequencesForInboundReplies(userId, result.results, orgId);
       if (pauseSummary.pausedEnrollments > 0) {
         console.log(
           `[Auto-Pause] Total paused enrollments: ${pauseSummary.pausedEnrollments} across ${pauseSummary.pausedContacts} contact(s)`
@@ -132,7 +170,7 @@ emailSyncQueue.process(2, async (job) => {
     // If there's a next page, queue another job to continue pagination
     if (result.nextPageToken) {
       await emailSyncQueue.add(
-        { userId, pageToken: result.nextPageToken },
+        { userId, pageToken: result.nextPageToken, orgId },
         {
           attempts: 3,
           backoff: { type: 'exponential', delay: 2000 },
@@ -235,4 +273,5 @@ module.exports = {
   initEmailSyncWorker,
   pauseActiveSequencesForInboundReplies,
   isInboundReplyFromMatchedContact,
+  resolveOrgIdForUser,
 };

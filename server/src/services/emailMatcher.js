@@ -22,7 +22,7 @@ class EmailMatcher {
   }
 
   // Match email to contact, or create new contact if not found
-  async matchEmailToContact(user_id, fromEmail, toEmails) {
+  async matchEmailToContact(user_id, fromEmail, toEmails, orgId) {
     const sender = this.extractEmails(fromEmail)[0];
     const allRecipients = [sender, ...toEmails.flatMap((e) => this.extractEmails(e))];
 
@@ -40,14 +40,21 @@ class EmailMatcher {
     // No contact found - create new one from sender email
     if (sender) {
       try {
+        // contacts.organization_id is NOT NULL with no DEFAULT (migration 062) — the
+        // caller (emailSyncWorker.js) must resolve orgId before reaching this insert.
+        // Fail loudly here rather than let Postgres raise a not-null-violation that
+        // this try/catch would otherwise swallow silently, same as it did pre-fix.
+        if (!orgId) {
+          throw new Error('matchEmailToContact: orgId is required');
+        }
         // Create contact or return existing one with same email
         const contactName = sender.split('@')[0];
         const result = await pool.query(
-          `INSERT INTO contacts (user_id, name, email, type)
-           VALUES ($1,$2,$3,$4)
+          `INSERT INTO contacts (user_id, name, email, type, organization_id)
+           VALUES ($1,$2,$3,$4,$5)
            ON CONFLICT(user_id, email) DO UPDATE SET id=EXCLUDED.id
            RETURNING id, name, email`,
-          [user_id, contactName, sender, 'prospect']
+          [user_id, contactName, sender, 'prospect', orgId]
         );
         const newContact = result.rows[0];
         console.log(`[EmailMatcher] Contact: ${sender} (${newContact.id})`);
@@ -63,7 +70,7 @@ class EmailMatcher {
   }
 
   // Process a Gmail message and create email record
-  async processGmailMessage(user_id, gmailMessage) {
+  async processGmailMessage(user_id, gmailMessage, orgId) {
     const { id, threadId, from, to, cc, subject, date, body } = gmailMessage;
 
     console.log(`[EmailMatcher] Processing: from="${from}" | to="${to}" | subject="${subject}"`);
@@ -84,7 +91,7 @@ class EmailMatcher {
     const primaryRecipient = recipients[0] || ccRecipients[0] || null;
 
     // Match to contact
-    const contact = await this.matchEmailToContact(user_id, isOutbound ? to : from, [cc || '']);
+    const contact = await this.matchEmailToContact(user_id, isOutbound ? to : from, [cc || ''], orgId);
 
     // Parse date to timestamp
     const receivedAt = date ? new Date(date) : new Date();
@@ -121,7 +128,7 @@ class EmailMatcher {
   }
 
   // Sync emails for a user
-  async syncUserEmails(user_id, options = {}) {
+  async syncUserEmails(user_id, options = {}, orgId) {
     const { maxResults = 20, pageToken = null, labelIds = null } = options;
 
     const GmailService = require('./gmail');
@@ -140,7 +147,7 @@ class EmailMatcher {
 
       // Process each email
       const results = await Promise.all(
-        messages.map((msg) => this.processGmailMessage(user_id, msg))
+        messages.map((msg) => this.processGmailMessage(user_id, msg, orgId))
       );
 
       const successCount = results.filter((r) => r.success).length;
