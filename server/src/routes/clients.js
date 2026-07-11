@@ -86,7 +86,7 @@ router.get('/:clientId', auth, async (req, res) => {
   const { clientId } = req.params;
 
   try {
-    const client = await Client.findById(clientId);
+    const client = await Client.findById(clientId, req.orgId);
     if (!client) {
       return res.status(404).json({ error: 'Client not found' });
     }
@@ -174,7 +174,7 @@ router.post('/:clientId/grant-access', auth, async (req, res) => {
 
   try {
     // Verify client exists
-    const client = await Client.findById(clientId);
+    const client = await Client.findById(clientId, req.orgId);
     if (!client) {
       return res.status(404).json({ error: 'Client not found' });
     }
@@ -237,7 +237,7 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
 
   try {
     // Verify client exists
-    const client = await Client.findById(clientId);
+    const client = await Client.findById(clientId, req.orgId);
     if (!client) {
       return res.status(404).json({ error: 'Client not found' });
     }
@@ -391,7 +391,7 @@ router.delete('/:clientId', auth, async (req, res) => {
   const { clientId } = req.params;
 
   try {
-    const client = await Client.findById(clientId);
+    const client = await Client.findById(clientId, req.orgId);
     if (!client) {
       return res.status(404).json({ error: 'Client not found' });
     }

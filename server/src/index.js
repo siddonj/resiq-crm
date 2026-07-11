@@ -206,7 +206,7 @@ contactsRoutes.setWorkflowEngine(workflowEngine);
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/auth', authLimiter, clientAuthRoutes);
 app.use('/api/client', clientPortalRoutes);
-app.use('/api/clients', clientsRoutes);
+app.use('/api/clients', authMiddleware, resolveOrg, clientsRoutes);
 app.use('/api/stripe', stripeRoutes);
 
 // Global org management (not under :orgSlug)

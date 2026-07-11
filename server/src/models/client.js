@@ -7,10 +7,13 @@ const INVITATION_EXPIRY_HOURS = 48;
 /**
  * Find client by ID
  */
-async function findById(clientId) {
+async function findById(clientId, orgId) {
+  if (orgId === null || orgId === undefined) {
+    throw new Error('Client.findById: orgId is required');
+  }
   const result = await pool.query(
-    'SELECT * FROM clients WHERE id = $1',
-    [clientId]
+    'SELECT * FROM clients WHERE id = $1 AND organization_id = $2',
+    [clientId, orgId]
   );
   return result.rows[0] || null;
 }
@@ -142,7 +145,11 @@ async function verifyInvitationToken(token) {
  * Verify client password (for login)
  */
 async function verifyPassword(clientId, plainPassword) {
-  const client = await findById(clientId);
+  // Self-lookup: callers already resolved this client via email or their own
+  // JWT (see routes/clientAuth.js), so no org filter is applicable here —
+  // same "client authenticating as themselves" category as clientAuth.js.
+  const result = await pool.query('SELECT * FROM clients WHERE id = $1', [clientId]);
+  const client = result.rows[0] || null;
   if (!client || !client.password_hash) {
     return false;
   }
