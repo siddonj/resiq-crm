@@ -98,10 +98,10 @@ router.post('/search', async (req, res) => {
     for (const lead of filtered) {
       try {
         const result = await db.query(
-          `INSERT INTO unified_leads 
-           (source_id, source, author, title, content, url, company, relevance_score, 
-            lead_keywords, contact_email, contact_name, linkedin_url, discovered_at, metadata, is_synthetic, lead_source_confidence)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, TRUE, 5)
+          `INSERT INTO unified_leads
+           (source_id, source, author, title, content, url, company, relevance_score,
+            lead_keywords, contact_email, contact_name, linkedin_url, discovered_at, metadata, is_synthetic, lead_source_confidence, organization_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, TRUE, 5, $14)
            ON CONFLICT (source_id) DO UPDATE SET
              status = EXCLUDED.status,
              updated_at = NOW()
@@ -124,6 +124,7 @@ router.post('/search', async (req, res) => {
               source: lead.source,
               subreddit: lead.subreddit,
             }),
+            req.orgId,
           ]
         );
         stored.push(result.rows[0]);
@@ -230,10 +231,10 @@ router.post('/test-search', async (req, res) => {
     for (const lead of filtered) {
       try {
         const result = await db.query(
-          `INSERT INTO unified_leads 
-           (source_id, source, author, title, content, url, company, relevance_score, 
-            lead_keywords, contact_email, contact_name, linkedin_url, discovered_at, metadata, is_synthetic, lead_source_confidence)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, TRUE, 5)
+          `INSERT INTO unified_leads
+           (source_id, source, author, title, content, url, company, relevance_score,
+            lead_keywords, contact_email, contact_name, linkedin_url, discovered_at, metadata, is_synthetic, lead_source_confidence, organization_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), $13, TRUE, 5, $14)
            ON CONFLICT (source_id) DO UPDATE SET
              status = EXCLUDED.status,
              updated_at = NOW()
@@ -256,6 +257,7 @@ router.post('/test-search', async (req, res) => {
               source: lead.source,
               subreddit: lead.subreddit,
             }),
+            req.orgId,
           ]
         );
         stored.push(result.rows[0]);
@@ -313,9 +315,9 @@ router.get('/', async (req, res) => {
   try {
     const { status, source, minRelevance = 0 } = req.query;
 
-    let query = 'SELECT * FROM unified_leads WHERE relevance_score >= $1';
-    const params = [minRelevance];
-    let paramIndex = 2;
+    let query = 'SELECT * FROM unified_leads WHERE organization_id = $1 AND relevance_score >= $2';
+    const params = [req.orgId, minRelevance];
+    let paramIndex = 3;
 
     if (status) {
       query += ` AND status = $${paramIndex}`;
@@ -379,8 +381,8 @@ router.patch('/:id', async (req, res) => {
       paramIndex++;
     }
 
-    query += ` WHERE id = $${paramIndex} RETURNING *`;
-    params.push(id);
+    query += ` WHERE id = $${paramIndex} AND organization_id = $${paramIndex + 1} RETURNING *`;
+    params.push(id, req.orgId);
 
     const result = await db.query(query, params);
 
@@ -410,8 +412,8 @@ router.delete('/:id', async (req, res) => {
     const { id } = req.params;
 
     const result = await db.query(
-      'UPDATE unified_leads SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING id',
-      ['rejected', id]
+      'UPDATE unified_leads SET status = $1, updated_at = NOW() WHERE id = $2 AND organization_id = $3 RETURNING id',
+      ['rejected', id, req.orgId]
     );
 
     if (result.rows.length === 0) {
@@ -431,8 +433,8 @@ router.delete('/:id', async (req, res) => {
  */
 router.get('/stats/summary', async (req, res) => {
   try {
-    const stats = await db.query(`
-      SELECT 
+    const stats = await db.query(
+      `SELECT
         COUNT(*) as total_leads,
         SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_leads,
         SUM(CASE WHEN status = 'contacted' THEN 1 ELSE 0 END) as contacted_leads,
@@ -440,7 +442,9 @@ router.get('/stats/summary', async (req, res) => {
         AVG(relevance_score) as avg_relevance,
         COUNT(DISTINCT source) as sources_count
       FROM unified_leads
-    `);
+      WHERE organization_id = $1`,
+      [req.orgId]
+    );
 
     res.json(stats.rows[0]);
   } catch (err) {
@@ -455,8 +459,8 @@ router.get('/stats/summary', async (req, res) => {
  */
 router.get('/stats/by-source', async (req, res) => {
   try {
-    const stats = await db.query(`
-      SELECT 
+    const stats = await db.query(
+      `SELECT
         source,
         COUNT(*) as total_leads,
         SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_leads,
@@ -465,9 +469,11 @@ router.get('/stats/by-source', async (req, res) => {
         AVG(relevance_score) as avg_relevance,
         COUNT(DISTINCT company) as unique_companies
       FROM unified_leads
+      WHERE organization_id = $1
       GROUP BY source
-      ORDER BY total_leads DESC
-    `);
+      ORDER BY total_leads DESC`,
+      [req.orgId]
+    );
 
     res.json({
       bySource: stats.rows.reduce((acc, row) => {

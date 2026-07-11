@@ -36,7 +36,12 @@ the original build's ledger which flagged the raw-SQL files as a known gap:
 
 **Confirmed org-data, unfiltered — Task 6 audit set:**
 - `redditLeads` (reddit_leads) — raw `pool.query`, known gap
-- `multiSourceLeads` (unified_leads) — raw `pool.query`, known gap
+- `multiSourceLeads` — DONE (Task 6): confirmed real gap, not intentionally-global.
+  `unified_leads` IS in ORG_TABLES (migration 062, organization_id NOT NULL). Delegated
+  service (`services/multiSourceLeadService.js`) makes zero DB queries (Anthropic API only);
+  all 7 org-table `db.query` sites live directly in `routes/multiSourceLeads.js` and are now
+  organization_id-filtered/stamped. See org-isolation-progress.md Task 6 (multiSourceLeads)
+  entry.
 - `compliance` — raw `pool.query`, known gap (Task 5 worked example)
 - `sms` — verify tables; likely org-scoped
 - `workflows` (workflows, stage_automation_rules) — verify
