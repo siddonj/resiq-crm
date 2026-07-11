@@ -1,14 +1,15 @@
 const express = require('express');
 const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
-const { logAction } = require('../services/auditLogger');
+const { resolveOrg } = require('../middleware/resolveOrg');
+const { logAction, resolveOrgIdForUser } = require('../services/auditLogger');
 
 const router = express.Router();
 
 // ── Unified calendar feed ────────────────────────────────────────────────────
 // GET /api/calendar?start=ISO&end=ISO
 // Returns activities, reminders, and calendar_events in the date range
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, resolveOrg, async (req, res) => {
   const { start, end } = req.query;
   if (!start || !end) return res.status(400).json({ error: 'start and end are required' });
 
@@ -19,7 +20,7 @@ router.get('/', auth, async (req, res) => {
         FROM calendar_events e
         LEFT JOIN contacts c ON c.id = e.contact_id
         LEFT JOIN deals d ON d.id = e.deal_id
-        WHERE e.user_id = ${req.user.id} AND e.start_at < ${end} AND e.end_at > ${start}
+        WHERE e.organization_id = ${req.orgId} AND e.user_id = ${req.user.id} AND e.start_at < ${end} AND e.end_at > ${start}
         ORDER BY e.start_at
       `.execute(db),
       sql`
@@ -27,7 +28,7 @@ router.get('/', auth, async (req, res) => {
         FROM activities a
         LEFT JOIN contacts c ON c.id = a.contact_id
         LEFT JOIN deals d ON d.id = a.deal_id
-        WHERE a.user_id = ${req.user.id} AND a.occurred_at >= ${start} AND a.occurred_at < ${end}
+        WHERE a.organization_id = ${req.orgId} AND a.user_id = ${req.user.id} AND a.occurred_at >= ${start} AND a.occurred_at < ${end}
         ORDER BY a.occurred_at
       `.execute(db),
       sql`
@@ -35,7 +36,7 @@ router.get('/', auth, async (req, res) => {
         FROM reminders r
         LEFT JOIN contacts c ON c.id = r.contact_id
         LEFT JOIN deals d ON d.id = r.deal_id
-        WHERE r.user_id = ${req.user.id} AND r.remind_at >= ${start} AND r.remind_at < ${end}
+        WHERE r.organization_id = ${req.orgId} AND r.user_id = ${req.user.id} AND r.remind_at >= ${start} AND r.remind_at < ${end}
         ORDER BY r.remind_at
       `.execute(db),
     ]);
@@ -54,14 +55,14 @@ router.get('/', auth, async (req, res) => {
 });
 
 // ── Calendar events CRUD ─────────────────────────────────────────────────────
-router.get('/events', auth, async (req, res) => {
+router.get('/events', auth, resolveOrg, async (req, res) => {
   try {
     const rows = await sql`
       SELECT e.*, c.name AS contact_name, d.title AS deal_title
       FROM calendar_events e
       LEFT JOIN contacts c ON c.id = e.contact_id
       LEFT JOIN deals d ON d.id = e.deal_id
-      WHERE e.user_id = ${req.user.id}
+      WHERE e.organization_id = ${req.orgId} AND e.user_id = ${req.user.id}
       ORDER BY e.start_at DESC
       LIMIT 200
     `.execute(db);
@@ -71,7 +72,7 @@ router.get('/events', auth, async (req, res) => {
   }
 });
 
-router.post('/events', auth, async (req, res) => {
+router.post('/events', auth, resolveOrg, async (req, res) => {
   const { title, description, start_at, end_at, contact_id, deal_id } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Title is required' });
   if (!start_at || !end_at) return res.status(400).json({ error: 'start_at and end_at are required' });
@@ -112,7 +113,7 @@ router.post('/events', auth, async (req, res) => {
   }
 });
 
-router.put('/events/:id', auth, async (req, res) => {
+router.put('/events/:id', auth, resolveOrg, async (req, res) => {
   const { title, description, start_at, end_at, contact_id, deal_id } = req.body;
   try {
     const result = await db.updateTable('calendar_events')
@@ -136,7 +137,7 @@ router.put('/events/:id', auth, async (req, res) => {
   }
 });
 
-router.delete('/events/:id', auth, async (req, res) => {
+router.delete('/events/:id', auth, resolveOrg, async (req, res) => {
   try {
     const result = await db.deleteFrom('calendar_events')
       .$call(orgUserWhere(req.orgId, req.user.id))
@@ -234,6 +235,12 @@ router.post('/book/:slug', async (req, res) => {
 
     const settings = settingsRes.rows[0];
 
+    // The booker is anonymous (no req.orgId). organization_id must come from the
+    // booking-page OWNER (settings.user_id) — never a request-derived value. Fail closed
+    // (throws, surfaced as 500 by the outer catch) rather than insert with a missing/wrong org.
+    const ownerOrgId = await resolveOrgIdForUser(settings.user_id);
+    if (!ownerOrgId) throw new Error(`POST /book/:slug: could not resolve organization_id for user ${settings.user_id}`);
+
     // Check for conflicts
     const conflictRes = await sql`
       SELECT id FROM calendar_events
@@ -245,21 +252,21 @@ router.post('/book/:slug', async (req, res) => {
     const description = [email, notes].filter(Boolean).join('\n');
 
     const eventRes = await sql`
-      INSERT INTO calendar_events (user_id, title, description, start_at, end_at, source, booking_name, booking_email)
-      VALUES (${settings.user_id}, ${title}, ${description}, ${start_at}, ${end_at}, 'booking', ${name}, ${email})
+      INSERT INTO calendar_events (organization_id, user_id, title, description, start_at, end_at, source, booking_name, booking_email)
+      VALUES (${ownerOrgId}, ${settings.user_id}, ${title}, ${description}, ${start_at}, ${end_at}, 'booking', ${name}, ${email})
       RETURNING *
     `.execute(db);
 
     // Create reminder for the owner
     await sql`
-      INSERT INTO reminders (user_id, message, remind_at)
-      VALUES (${settings.user_id}, ${`Booking: ${title}`}, ${start_at})
+      INSERT INTO reminders (organization_id, user_id, message, remind_at)
+      VALUES (${ownerOrgId}, ${settings.user_id}, ${`Booking: ${title}`}, ${start_at})
     `.execute(db).catch(() => {});
 
     // Create activity for the owner
     await sql`
-      INSERT INTO activities (user_id, type, description, occurred_at)
-      VALUES (${settings.user_id}, 'meeting', ${`Scheduled meeting with ${name} (${email})`}, ${start_at})
+      INSERT INTO activities (organization_id, user_id, type, description, occurred_at)
+      VALUES (${ownerOrgId}, ${settings.user_id}, 'meeting', ${`Scheduled meeting with ${name} (${email})`}, ${start_at})
     `.execute(db).catch(() => {});
 
     res.status(201).json(eventRes.rows[0]);

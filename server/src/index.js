@@ -244,8 +244,10 @@ app.use('/api/proposals', authMiddleware, resolveOrg, proposalsRoutes);
 app.use('/api/invoices', authMiddleware, resolveOrg, invoicesRoutes);
 app.use('/api/time-entries', authMiddleware, resolveOrg, timeEntriesRoutes);
 // calendar.js has public booking routes (/book/:slug) alongside authed routes that DO read
-// req.orgId — mount-level auth/resolveOrg would break public booking. See report: this is a
-// flagged gap (authed sub-routes need per-route resolveOrg, out of scope for mount wiring).
+// req.orgId — mount-level auth/resolveOrg would break public booking. Fixed (Task 6): every
+// authed route now applies `auth, resolveOrg` at the ROUTE level (same pattern as
+// integrations.js's /gcal/sync); the public /book/:slug routes are untouched and stamp
+// organization_id from the booking-page OWNER (resolved server-side), never req.orgId.
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/sms', authMiddleware, resolveOrg, smsRoutes);
 app.use('/api/webhooks', webhookRoutes);
