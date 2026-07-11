@@ -15,34 +15,38 @@ const TwilioService = require('../services/twilioService');
 const WebhookReceiverService = require('../services/webhookReceiver');
 const { MessageQueueService } = require('../services/messageQueue');
 
-// Helper to get client by ID
-async function getContact(contactId) {
+// Helper to get client by ID (org-scoped)
+async function getContact(contactId, orgId) {
   try {
-    return await Client.findById(contactId);
+    return await Client.findById(contactId, orgId);
   } catch (err) {
     return null;
   }
 }
 
-// Helper to update contact
-async function updateContact(contactId, updates) {
+// Helper to update contact (org-scoped)
+async function updateContact(contactId, updates, orgId) {
   const setClauses = [];
-  
+
   if (updates.sms_opted_in !== undefined) setClauses.push(sql`sms_opted_in = ${updates.sms_opted_in}`);
   if (updates.phone_number !== undefined) setClauses.push(sql`phone_number = ${updates.phone_number}`);
-  
+
   if (setClauses.length === 0) return;
-  
-  await sql`UPDATE clients SET ${sql.join(setClauses, sql`, `)} WHERE id = ${contactId}`.execute(db);
+
+  await sql`UPDATE clients SET ${sql.join(setClauses, sql`, `)} WHERE id = ${contactId} AND organization_id = ${orgId}`.execute(db);
 }
 
 // Helper to log activity
+// NOTE: '../models/Activity' does not exist anywhere in this codebase, so this
+// has always silently no-op'd (require throws, caught below). Pre-existing,
+// out of scope for org-isolation — left as-is rather than building a new
+// Activity model as part of this task.
 async function logActivity(metadata) {
   // Activity logging is optional - just warn if it fails
   try {
     const Activity = require('../models/Activity');
     if (Activity && Activity.log) {
-      await logActivity(metadata);
+      await Activity.log(metadata);
     }
   } catch (err) {
     console.warn('Could not log activity:', err.message);
@@ -64,7 +68,7 @@ router.post('/send', authenticate, async (req, res) => {
     }
 
     // Get contact
-    const contact = await getContact(contactId);
+    const contact = await getContact(contactId, req.orgId);
     if (!contact) {
       return res.status(404).json({ error: 'Contact not found' });
     }
@@ -75,13 +79,13 @@ router.post('/send', authenticate, async (req, res) => {
     }
 
     // Check if contact opted out
-    const isOptedOut = await TwilioService.isOptedOut(contactId);
+    const isOptedOut = await TwilioService.isOptedOut(contactId, req.orgId);
     if (isOptedOut) {
       return res.status(403).json({ error: 'Contact has opted out of SMS' });
     }
 
     // Check rate limit
-    const rateLimit = await TwilioService.checkRateLimit(contactId);
+    const rateLimit = await TwilioService.checkRateLimit(contactId, req.orgId);
     if (!rateLimit.isAllowed) {
       return res.status(429).json({
         error: 'Rate limit exceeded',
@@ -95,7 +99,7 @@ router.post('/send', authenticate, async (req, res) => {
 
     if (templateId) {
       // Render from template
-      const template = await SMSTemplate.getById(templateId);
+      const template = await SMSTemplate.getById(templateId, req.orgId);
       const renderResult = await SMSTemplate.render(template, variables || {});
       smsContent = renderResult.content;
 
@@ -115,6 +119,7 @@ router.post('/send', authenticate, async (req, res) => {
     // Create SMS message record (pending)
     const message = await SMS.send({
       contactId,
+      organizationId: req.orgId,
       employeeId: userId,
       content: smsContent,
       phoneFrom: process.env.TWILIO_PHONE_NUMBER || '+1-555-RESIQ-1',
@@ -179,7 +184,7 @@ router.post('/send-batch', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'templateId is required for batch send' });
     }
 
-    const template = await SMSTemplate.getById(templateId);
+    const template = await SMSTemplate.getById(templateId, req.orgId);
 
     const results = {
       sent: [],
@@ -189,7 +194,7 @@ router.post('/send-batch', authenticate, async (req, res) => {
 
     for (const contactId of contactIds) {
       try {
-        const contact = await getContact(contactId);
+        const contact = await getContact(contactId, req.orgId);
 
         if (!contact) {
           results.skipped.push({ contactId, reason: 'Contact not found' });
@@ -201,13 +206,13 @@ router.post('/send-batch', authenticate, async (req, res) => {
           continue;
         }
 
-        const isOptedOut = await TwilioService.isOptedOut(contactId);
+        const isOptedOut = await TwilioService.isOptedOut(contactId, req.orgId);
         if (isOptedOut) {
           results.skipped.push({ contactId, reason: 'Opted out' });
           continue;
         }
 
-        const rateLimit = await TwilioService.checkRateLimit(contactId);
+        const rateLimit = await TwilioService.checkRateLimit(contactId, req.orgId);
         if (!rateLimit.isAllowed) {
           results.skipped.push({ contactId, reason: 'Rate limit exceeded' });
           continue;
@@ -221,6 +226,7 @@ router.post('/send-batch', authenticate, async (req, res) => {
         // Create message
         const message = await SMS.send({
           contactId,
+          organizationId: req.orgId,
           employeeId: userId,
           content: smsContent,
           phoneFrom: process.env.TWILIO_PHONE_NUMBER || '+1-555-RESIQ-1',
@@ -281,13 +287,13 @@ router.get('/:contactId/history', authenticate, async (req, res) => {
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
     // Verify contact exists
-    const contact = await getContact(contactId);
+    const contact = await getContact(contactId, req.orgId);
     if (!contact) {
       return res.status(404).json({ error: 'Contact not found' });
     }
 
     // Get SMS history
-    const result = await SMS.queryByContactWithCount(contactId, limit, offset);
+    const result = await SMS.queryByContactWithCount(contactId, req.orgId, limit, offset);
 
     return res.json({
       success: true,
@@ -313,7 +319,7 @@ router.get('/messages/:messageId', authenticate, async (req, res) => {
   try {
     const { messageId } = req.params;
 
-    const message = await SMS.getById(messageId);
+    const message = await SMS.getById(messageId, req.orgId);
 
     return res.json({
       success: true,
@@ -333,7 +339,7 @@ router.delete('/messages/:messageId', authenticate, async (req, res) => {
   try {
     const { messageId } = req.params;
 
-    const success = await SMS.delete(messageId);
+    const success = await SMS.delete(messageId, req.orgId);
 
     if (!success) {
       return res.status(404).json({ error: 'Message not found' });
@@ -361,7 +367,7 @@ module.exports = router;
  */
 router.get('/templates', authenticate, async (req, res) => {
   try {
-    const templates = await SMSTemplate.list();
+    const templates = await SMSTemplate.list(req.orgId);
 
     return res.json({
       success: true,
@@ -400,7 +406,8 @@ router.post('/templates', authenticate, async (req, res) => {
       content,
       description,
       variables: variables || validation.variables,
-      createdBy: userId
+      createdBy: userId,
+      organizationId: req.orgId
     });
 
     return res.status(201).json({
@@ -421,7 +428,7 @@ router.get('/templates/:templateId', authenticate, async (req, res) => {
   try {
     const { templateId } = req.params;
 
-    const template = await SMSTemplate.getById(templateId);
+    const template = await SMSTemplate.getById(templateId, req.orgId);
 
     return res.json({
       success: true,
@@ -450,7 +457,7 @@ router.patch('/templates/:templateId', authenticate, async (req, res) => {
       }
     }
 
-    const template = await SMSTemplate.update(templateId, updates);
+    const template = await SMSTemplate.update(templateId, updates, req.orgId);
 
     return res.json({
       success: true,
@@ -470,7 +477,7 @@ router.delete('/templates/:templateId', authenticate, async (req, res) => {
   try {
     const { templateId } = req.params;
 
-    const success = await SMSTemplate.delete(templateId);
+    const success = await SMSTemplate.delete(templateId, req.orgId);
 
     if (!success) {
       return res.status(404).json({ error: 'Template not found' });
@@ -499,7 +506,7 @@ router.post('/:contactId/optout', authenticate, async (req, res) => {
     const { contactId } = req.params;
     const userId = req.user.id;
 
-    const contact = await getContact(contactId);
+    const contact = await getContact(contactId, req.orgId);
     if (!contact) {
       return res.status(404).json({ error: 'Contact not found' });
     }
@@ -509,22 +516,22 @@ router.post('/:contactId/optout', authenticate, async (req, res) => {
     }
 
     // Check if already opted out
-    const isOptedOut = await TwilioService.isOptedOut(contactId);
+    const isOptedOut = await TwilioService.isOptedOut(contactId, req.orgId);
     if (isOptedOut) {
       return res.status(400).json({ error: 'Contact is already opted out' });
     }
 
     // Create opt-out record
-    const { db } = require('../models/index');
-    const result = await db.query(
-      `INSERT INTO sms_optouts (contact_id, phone_number, reason, opted_out_by)
-       VALUES ($1, $2, 'manual', $3)
+    const pool = require('../models/db');
+    const result = await pool.query(
+      `INSERT INTO sms_optouts (contact_id, phone_number, reason, opted_out_by, organization_id)
+       VALUES ($1, $2, 'manual', $3, $4)
        RETURNING *`,
-      [contactId, contact.phone_number, userId]
+      [contactId, contact.phone_number, userId, req.orgId]
     );
 
     // Update contact SMS preferences
-    await updateContact(contactId, { sms_opted_in: false });
+    await updateContact(contactId, { sms_opted_in: false }, req.orgId);
 
     // Log activity
     await logActivity({
@@ -553,7 +560,7 @@ router.post('/:contactId/optin', authenticate, async (req, res) => {
     const { contactId } = req.params;
     const userId = req.user.id;
 
-    const contact = await getContact(contactId);
+    const contact = await getContact(contactId, req.orgId);
     if (!contact) {
       return res.status(404).json({ error: 'Contact not found' });
     }
@@ -563,17 +570,17 @@ router.post('/:contactId/optin', authenticate, async (req, res) => {
     }
 
     // Remove opt-out record if exists
-    const { db } = require('../models/index');
-    await db.query(
-      'DELETE FROM sms_optouts WHERE contact_id = $1',
-      [contactId]
+    const pool = require('../models/db');
+    await pool.query(
+      'DELETE FROM sms_optouts WHERE contact_id = $1 AND organization_id = $2',
+      [contactId, req.orgId]
     );
 
     // Update contact SMS preferences
-    await updateContact(contactId, { 
+    await updateContact(contactId, {
       sms_opted_in: true,
       sms_opted_in_at: new Date()
-    });
+    }, req.orgId);
 
     // Log activity
     await logActivity({
@@ -602,17 +609,21 @@ router.get('/optouts', authenticate, async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 100, 500);
     const offset = Math.max(parseInt(req.query.offset) || 0, 0);
 
-    const { db } = require('../models/index');
-    const result = await db.query(
-      `SELECT o.*, c.name, c.email, c.phone_number 
+    const pool = require('../models/db');
+    const result = await pool.query(
+      `SELECT o.*, c.name, c.email, c.phone_number
        FROM sms_optouts o
        LEFT JOIN contacts c ON o.contact_id = c.id
+       WHERE o.organization_id = $1
        ORDER BY o.opted_out_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
+       LIMIT $2 OFFSET $3`,
+      [req.orgId, limit, offset]
     );
 
-    const countResult = await db.query('SELECT COUNT(*) as total FROM sms_optouts');
+    const countResult = await pool.query(
+      'SELECT COUNT(*) as total FROM sms_optouts WHERE organization_id = $1',
+      [req.orgId]
+    );
     const total = parseInt(countResult.rows[0].total);
 
     return res.json({

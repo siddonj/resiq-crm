@@ -155,7 +155,7 @@ class TwilioService {
 
     // Find contact by phone number
     const contactResult = await pool.query(
-      'SELECT id FROM clients WHERE phone_number = $1 LIMIT 1',
+      'SELECT id, organization_id FROM clients WHERE phone_number = $1 LIMIT 1',
       [phoneFrom]
     );
     const contact = contactResult.rows[0];
@@ -170,7 +170,7 @@ class TwilioService {
 
     // Check for STOP keyword
     if (this.isSTOPKeyword(content)) {
-      await this.handleSTOPKeyword(contact.id, phoneFrom);
+      await this.handleSTOPKeyword(contact.id, phoneFrom, contact.organization_id);
       return {
         success: true,
         isSTOP: true,
@@ -181,6 +181,7 @@ class TwilioService {
     // Create inbound message
     const message = await SMS.receive({
       contactId: contact.id,
+      organizationId: contact.organization_id,
       content,
       phoneFrom,
       phoneTo,
@@ -283,27 +284,33 @@ class TwilioService {
    * Handle STOP keyword - opt-out contact
    * @param {string} contactId - UUID of contact
    * @param {string} phoneNumber - Phone number of opt-out
+   * @param {string} organizationId - UUID of the contact's organization
    * @returns {Object} { success, optoutId }
    */
-  static async handleSTOPKeyword(contactId, phoneNumber) {
+  static async handleSTOPKeyword(contactId, phoneNumber, organizationId) {
     if (!contactId || !phoneNumber) {
       throw new Error('Missing required fields: contactId, phoneNumber');
     }
 
+    if (!organizationId) {
+      throw new Error('TwilioService.handleSTOPKeyword: organizationId is required');
+    }
+
     try {
-      // Insert or update opt-out record
+      // Insert or update opt-out record. organization_id is never reassigned
+      // on conflict (matches this codebase's ON CONFLICT convention).
       const result = await pool.query(
-        `INSERT INTO sms_optouts (contact_id, phone_number, reason)
-         VALUES ($1, $2, 'stop_keyword')
+        `INSERT INTO sms_optouts (contact_id, phone_number, reason, organization_id)
+         VALUES ($1, $2, 'stop_keyword', $3)
          ON CONFLICT (contact_id) DO UPDATE SET reason = 'stop_keyword', opted_out_at = NOW()
          RETURNING *`,
-        [contactId, phoneNumber]
+        [contactId, phoneNumber, organizationId]
       );
 
       // Update contact SMS preferences
       await pool.query(
-        'UPDATE clients SET sms_opted_in = false WHERE id = $1',
-        [contactId]
+        'UPDATE clients SET sms_opted_in = false WHERE id = $1 AND organization_id = $2',
+        [contactId, organizationId]
       );
 
       // Log as activity (optional - Activity model may not exist)
@@ -343,19 +350,23 @@ class TwilioService {
   /**
    * Check rate limit for contact
    * @param {string} contactId - UUID of contact
+   * @param {string} organizationId - UUID of the caller's organization
    * @param {number} limitPerHour - SMS limit per hour (default from env)
    * @returns {Object} { isAllowed, sentInLastHour, remaining }
    */
-  static async checkRateLimit(contactId, limitPerHour = RATE_LIMIT_PER_HOUR) {
-    const { db } = require('../models/index');
+  static async checkRateLimit(contactId, organizationId, limitPerHour = RATE_LIMIT_PER_HOUR) {
+    if (!organizationId) {
+      throw new Error('TwilioService.checkRateLimit: organizationId is required');
+    }
 
     // Count SMS sent to this contact in the last hour
-    const result = await db.query(
-      `SELECT COUNT(*) as count FROM sms_messages 
-       WHERE contact_id = $1 
+    const result = await pool.query(
+      `SELECT COUNT(*) as count FROM sms_messages
+       WHERE contact_id = $1
+       AND organization_id = $2
        AND direction = 'outbound'
        AND created_at > NOW() - INTERVAL '1 hour'`,
-      [contactId]
+      [contactId, organizationId]
     );
 
     const sentInLastHour = parseInt(result.rows[0].count);
@@ -392,14 +403,17 @@ class TwilioService {
   /**
    * Check if contact is opted out
    * @param {string} contactId - UUID of contact
+   * @param {string} organizationId - UUID of the caller's organization
    * @returns {boolean}
    */
-  static async isOptedOut(contactId) {
-    const { db } = require('../models/index');
+  static async isOptedOut(contactId, organizationId) {
+    if (!organizationId) {
+      throw new Error('TwilioService.isOptedOut: organizationId is required');
+    }
 
-    const result = await db.query(
-      `SELECT id FROM sms_optouts WHERE contact_id = $1`,
-      [contactId]
+    const result = await pool.query(
+      `SELECT id FROM sms_optouts WHERE contact_id = $1 AND organization_id = $2`,
+      [contactId, organizationId]
     );
 
     return result.rows.length > 0;

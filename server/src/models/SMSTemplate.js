@@ -8,7 +8,7 @@ const db = require('./db');
 class SMSTemplate {
   /**
    * Create a new SMS template
-   * @param {Object} options - { name, slug, content, description, variables, createdBy }
+   * @param {Object} options - { name, slug, content, description, variables, createdBy, organizationId }
    * @returns {Object} Created template
    */
   static async create(options) {
@@ -18,11 +18,16 @@ class SMSTemplate {
       content,
       description = null,
       variables = [],
-      createdBy = null
+      createdBy = null,
+      organizationId
     } = options;
 
     if (!name || !slug || !content) {
       throw new Error('Missing required fields: name, slug, content');
+    }
+
+    if (!organizationId) {
+      throw new Error('SMSTemplate.create: organizationId is required');
     }
 
     // Check for duplicate slug
@@ -31,25 +36,32 @@ class SMSTemplate {
       throw new Error(`Template slug already exists: ${slug}`);
     }
 
+    // Custom templates are always org-scoped (is_default defaults to FALSE).
     const result = await db.query(
-      `INSERT INTO sms_templates (name, slug, content, description, variables, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO sms_templates (name, slug, content, description, variables, created_by, organization_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [name, slug, content, description, variables, createdBy]
+      [name, slug, content, description, variables, createdBy, organizationId]
     );
 
     return result.rows[0];
   }
 
   /**
-   * Get template by ID
+   * Get template by ID. Visible if it's a platform-wide default template
+   * (is_default = TRUE, organization_id IS NULL) or belongs to the caller's org.
    * @param {string} templateId - UUID of template
+   * @param {string} organizationId - UUID of the caller's organization
    * @returns {Object} Template
    */
-  static async getById(templateId) {
+  static async getById(templateId, organizationId) {
+    if (!organizationId) {
+      throw new Error('SMSTemplate.getById: organizationId is required');
+    }
+
     const result = await db.query(
-      'SELECT * FROM sms_templates WHERE id = $1',
-      [templateId]
+      'SELECT * FROM sms_templates WHERE id = $1 AND (is_default = TRUE OR organization_id = $2)',
+      [templateId, organizationId]
     );
 
     if (result.rows.length === 0) {
@@ -74,21 +86,24 @@ class SMSTemplate {
   }
 
   /**
-   * List all templates
+   * List templates visible to the caller's org: platform-wide defaults plus
+   * the org's own custom templates.
+   * @param {string} organizationId - UUID of the caller's organization
    * @param {boolean} includeDefault - Include default templates (default true)
    * @returns {Array} Templates
    */
-  static async list(includeDefault = true) {
-    let query = 'SELECT * FROM sms_templates';
-    const params = [];
-
-    if (!includeDefault) {
-      query += ' WHERE is_default = FALSE';
+  static async list(organizationId, includeDefault = true) {
+    if (!organizationId) {
+      throw new Error('SMSTemplate.list: organizationId is required');
     }
+
+    let query = includeDefault
+      ? 'SELECT * FROM sms_templates WHERE (is_default = TRUE OR organization_id = $1)'
+      : 'SELECT * FROM sms_templates WHERE is_default = FALSE AND organization_id = $1';
 
     query += ' ORDER BY is_default DESC, name ASC';
 
-    const result = await db.query(query, params);
+    const result = await db.query(query, [organizationId]);
     return result.rows;
   }
 
@@ -115,12 +130,15 @@ class SMSTemplate {
   }
 
   /**
-   * Update a template
+   * Update a template. Access is enforced by getById (platform default or
+   * caller's own org's custom template) — organization_id itself is never
+   * reassigned by an update.
    * @param {string} templateId - UUID of template
    * @param {Object} updates - { name, slug, content, description, variables }
+   * @param {string} organizationId - UUID of the caller's organization
    * @returns {Object} Updated template
    */
-  static async update(templateId, updates) {
+  static async update(templateId, updates, organizationId) {
     const {
       name,
       slug,
@@ -129,8 +147,8 @@ class SMSTemplate {
       variables
     } = updates;
 
-    // Get existing template first
-    const template = await this.getById(templateId);
+    // Get existing template first (org-scoped access check)
+    const template = await this.getById(templateId, organizationId);
 
     // Check if slug is being changed to a duplicate
     if (slug && slug !== template.slug) {
@@ -179,18 +197,21 @@ class SMSTemplate {
   /**
    * Delete a template
    * @param {string} templateId - UUID of template
+   * @param {string} organizationId - UUID of the caller's organization
    * @returns {boolean} Success
    */
-  static async delete(templateId) {
-    // Prevent deletion of default templates
-    const template = await this.getById(templateId);
+  static async delete(templateId, organizationId) {
+    // Org-scoped access check; also prevents deletion of default templates
+    const template = await this.getById(templateId, organizationId);
     if (template.is_default) {
       throw new Error('Cannot delete default templates');
     }
 
+    // By this point template.is_default is false, so organization_id is
+    // guaranteed NOT NULL and equal to organizationId (enforced by getById).
     const result = await db.query(
-      'DELETE FROM sms_templates WHERE id = $1',
-      [templateId]
+      'DELETE FROM sms_templates WHERE id = $1 AND organization_id = $2',
+      [templateId, organizationId]
     );
 
     return result.rowCount > 0;

@@ -265,7 +265,7 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
         // Send SMS if phone number and opted in
         try {
           if (client.phone_number && client.sms_opted_in) {
-            const isOptedOut = await TwilioService.isOptedOut(clientId);
+            const isOptedOut = await TwilioService.isOptedOut(clientId, req.orgId);
             if (!isOptedOut) {
               const template = await SMSTemplate.getBySlug('proposal_sent');
               if (template) {
@@ -280,6 +280,7 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
 
                 const smsMessage = await SMS.send({
                   contactId: clientId,
+                  organizationId: req.orgId,
                   employeeId: req.user.id,
                   content: renderResult.content,
                   phoneFrom: process.env.TWILIO_PHONE_NUMBER || '+1-555-RESIQ-1',
@@ -319,7 +320,7 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
         // Send SMS if phone number and opted in
         try {
           if (client.phone_number && client.sms_opted_in) {
-            const isOptedOut = await TwilioService.isOptedOut(clientId);
+            const isOptedOut = await TwilioService.isOptedOut(clientId, req.orgId);
             if (!isOptedOut) {
               const template = await SMSTemplate.getBySlug('invoice_due');
               if (template) {
@@ -333,6 +334,7 @@ router.post('/:clientId/share-item', auth, async (req, res) => {
 
                 const smsMessage = await SMS.send({
                   contactId: clientId,
+                  organizationId: req.orgId,
                   employeeId: req.user.id,
                   content: renderResult.content,
                   phoneFrom: process.env.TWILIO_PHONE_NUMBER || '+1-555-RESIQ-1',

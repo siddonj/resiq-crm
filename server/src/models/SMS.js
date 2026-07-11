@@ -8,12 +8,13 @@ const db = require('./db');
 class SMS {
   /**
    * Create an outbound SMS message
-   * @param {Object} options - { contactId, employeeId, content, phoneFrom, phoneTo, templateId }
+   * @param {Object} options - { contactId, organizationId, employeeId, content, phoneFrom, phoneTo, templateId }
    * @returns {Object} Created message
    */
   static async send(options) {
     const {
       contactId,
+      organizationId,
       employeeId,
       content,
       phoneFrom,
@@ -25,12 +26,16 @@ class SMS {
       throw new Error('Missing required fields: contactId, content, phoneFrom, phoneTo');
     }
 
+    if (!organizationId) {
+      throw new Error('SMS.send: organizationId is required');
+    }
+
     const result = await db.query(
-      `INSERT INTO sms_messages 
-       (contact_id, employee_id, direction, content, phone_from, phone_to, status)
-       VALUES ($1, $2, 'outbound', $3, $4, $5, 'pending')
+      `INSERT INTO sms_messages
+       (contact_id, employee_id, direction, content, phone_from, phone_to, status, organization_id)
+       VALUES ($1, $2, 'outbound', $3, $4, $5, 'pending', $6)
        RETURNING *`,
-      [contactId, employeeId, content, phoneFrom, phoneTo]
+      [contactId, employeeId, content, phoneFrom, phoneTo, organizationId]
     );
 
     return result.rows[0];
@@ -38,12 +43,13 @@ class SMS {
 
   /**
    * Create an inbound SMS message (from webhook)
-   * @param {Object} options - { contactId, content, phoneFrom, phoneTo, twilioMessageSid }
+   * @param {Object} options - { contactId, organizationId, content, phoneFrom, phoneTo, twilioMessageSid }
    * @returns {Object} Created message
    */
   static async receive(options) {
     const {
       contactId,
+      organizationId,
       content,
       phoneFrom,
       phoneTo,
@@ -56,12 +62,16 @@ class SMS {
       );
     }
 
+    if (!organizationId) {
+      throw new Error('SMS.receive: organizationId is required');
+    }
+
     const result = await db.query(
-      `INSERT INTO sms_messages 
-       (contact_id, direction, content, phone_from, phone_to, status, twilio_message_sid)
-       VALUES ($1, 'inbound', $2, $3, $4, 'delivered', $5)
+      `INSERT INTO sms_messages
+       (contact_id, direction, content, phone_from, phone_to, status, twilio_message_sid, organization_id)
+       VALUES ($1, 'inbound', $2, $3, $4, 'delivered', $5, $6)
        RETURNING *`,
-      [contactId, content, phoneFrom, phoneTo, twilioMessageSid]
+      [contactId, content, phoneFrom, phoneTo, twilioMessageSid, organizationId]
     );
 
     return result.rows[0];
@@ -121,17 +131,22 @@ class SMS {
   /**
    * Get SMS history for a contact (paginated)
    * @param {string} contactId - UUID of contact
+   * @param {string} organizationId - UUID of the caller's organization
    * @param {number} limit - Records per page (default 50)
    * @param {number} offset - Pagination offset (default 0)
    * @returns {Array} SMS messages
    */
-  static async queryByContact(contactId, limit = 50, offset = 0) {
+  static async queryByContact(contactId, organizationId, limit = 50, offset = 0) {
+    if (!organizationId) {
+      throw new Error('SMS.queryByContact: organizationId is required');
+    }
+
     const result = await db.query(
-      `SELECT * FROM sms_messages 
-       WHERE contact_id = $1
+      `SELECT * FROM sms_messages
+       WHERE contact_id = $1 AND organization_id = $2
        ORDER BY created_at DESC
-       LIMIT $2 OFFSET $3`,
-      [contactId, limit, offset]
+       LIMIT $3 OFFSET $4`,
+      [contactId, organizationId, limit, offset]
     );
 
     return result.rows;
@@ -140,16 +155,17 @@ class SMS {
   /**
    * Get SMS history for a contact with count
    * @param {string} contactId - UUID of contact
+   * @param {string} organizationId - UUID of the caller's organization
    * @param {number} limit - Records per page (default 50)
    * @param {number} offset - Pagination offset (default 0)
    * @returns {Object} { messages, total }
    */
-  static async queryByContactWithCount(contactId, limit = 50, offset = 0) {
-    const messages = await this.queryByContact(contactId, limit, offset);
+  static async queryByContactWithCount(contactId, organizationId, limit = 50, offset = 0) {
+    const messages = await this.queryByContact(contactId, organizationId, limit, offset);
 
     const countResult = await db.query(
-      `SELECT COUNT(*) as total FROM sms_messages WHERE contact_id = $1`,
-      [contactId]
+      `SELECT COUNT(*) as total FROM sms_messages WHERE contact_id = $1 AND organization_id = $2`,
+      [contactId, organizationId]
     );
 
     return {
@@ -202,12 +218,17 @@ class SMS {
   /**
    * Get a single message by ID
    * @param {string} messageId - UUID of message
+   * @param {string} organizationId - UUID of the caller's organization
    * @returns {Object} Message
    */
-  static async getById(messageId) {
+  static async getById(messageId, organizationId) {
+    if (!organizationId) {
+      throw new Error('SMS.getById: organizationId is required');
+    }
+
     const result = await db.query(
-      `SELECT * FROM sms_messages WHERE id = $1`,
-      [messageId]
+      `SELECT * FROM sms_messages WHERE id = $1 AND organization_id = $2`,
+      [messageId, organizationId]
     );
 
     if (result.rows.length === 0) {
@@ -234,12 +255,17 @@ class SMS {
   /**
    * Delete a message
    * @param {string} messageId - UUID of message
+   * @param {string} organizationId - UUID of the caller's organization
    * @returns {boolean} Success
    */
-  static async delete(messageId) {
+  static async delete(messageId, organizationId) {
+    if (!organizationId) {
+      throw new Error('SMS.delete: organizationId is required');
+    }
+
     const result = await db.query(
-      `DELETE FROM sms_messages WHERE id = $1`,
-      [messageId]
+      `DELETE FROM sms_messages WHERE id = $1 AND organization_id = $2`,
+      [messageId, organizationId]
     );
 
     return result.rowCount > 0;

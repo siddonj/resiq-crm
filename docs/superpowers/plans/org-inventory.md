@@ -50,7 +50,21 @@ the original build's ledger which flagged the raw-SQL files as a known gap:
   organization_id-filtered/stamped. See org-isolation-progress.md Task 6 (multiSourceLeads)
   entry.
 - `compliance` — raw `pool.query`, known gap (Task 5 worked example)
-- `sms` — verify tables; likely org-scoped
+- `sms` — DONE (Task 6): confirmed real gap, not intentionally-global. sms_messages,
+  sms_optouts, sms_templates (migration 008) predate migration 062 and had no
+  organization_id at all — added via migration 064 (sms_messages/sms_optouts derived
+  precisely from their linked contact's org, NOT NULL; sms_templates nullable —
+  NULL = platform-wide default template, set = org-owned custom template). All
+  routes/sms.js queries + models/SMS.js + models/SMSTemplate.js + services/twilioService.js
+  now org-filtered/stamped. Also fixed 5 call sites of a nonexistent `../models/index`
+  module (POST /optout, POST /optin, GET /optouts, TwilioService.checkRateLimit,
+  TwilioService.isOptedOut) that made those code paths always throw — a prerequisite
+  to adding org filtering there at all. Fixed the Task-4-flagged Client.findById(contactId)
+  single-arg regression (now org-scoped). See org-isolation-progress.md Task 6 (sms) entry
+  and .superpowers/sdd/task-6-sms-report.md for full detail, including two pre-existing
+  bugs found but left unfixed (out of scope): sms.js's contact helpers actually query the
+  `clients` (client-portal) table/columns rather than `contacts`, and `models/Activity`
+  does not exist anywhere in the codebase (SMS activity logging has always silently no-op'd).
 - `workflows` (workflows, stage_automation_rules) — verify
 - `agents` — DONE (Task 6): agents.js has no direct queries, but its /prospect/import route
   delegates to agentProspectService.importProspects, which raw-inserts into `contacts` and
