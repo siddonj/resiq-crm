@@ -40,14 +40,18 @@ the original build's ledger which flagged the raw-SQL files as a known gap:
 - `compliance` — raw `pool.query`, known gap (Task 5 worked example)
 - `sms` — verify tables; likely org-scoped
 - `workflows` (workflows, stage_automation_rules) — verify
-- `agents` — verify whether its tables are in ORG_TABLES (may be intentionally global)
+- `agents` — DONE (Task 6): agents.js has no direct queries, but its /prospect/import route
+  delegates to agentProspectService.importProspects, which raw-inserts into `contacts` and
+  `deals` (both ORG_TABLES). Confirmed NOT intentionally-global — organization_id now
+  stamped on both inserts. See org-isolation-progress.md Task 6 (agents) entry.
 - `appSettings` — likely global config; verify
 - `auditLogs` (audit_logs) — org-scoped; verify read path
 - `deliverability` — verify tables
 - `integrations` — verify whether integration tokens are org-scoped
 
 **Reclassify to intentionally-global if their tables are NOT in ORG_TABLES** (record reason here
-during Task 6): candidates are `agents`, `appSettings`, `integrations`, `deliverability`.
+during Task 6): candidates are `appSettings`, `integrations`, `deliverability`. (`agents` ruled
+out — see entry above; it does touch ORG_TABLES via a shared service.)
 
 **Confirmed global (no change):** auth, clientAuth, stripe, webhooks, unsubscribe, orgs,
 clientPortal (client-scoped via req.client.id).

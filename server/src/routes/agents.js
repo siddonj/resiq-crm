@@ -46,6 +46,7 @@ router.post('/prospect/import', auth, async (req, res) => {
   try {
     const contacts = await importProspects({
       userId: req.user.id,
+      orgId: req.orgId,
       auditActor: req.user.email,
       prompt,
       prospects,

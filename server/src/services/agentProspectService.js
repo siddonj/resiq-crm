@@ -19,17 +19,22 @@ function normalizeProspect(prospect = {}, index = 0) {
   };
 }
 
-async function importProspects({ userId, auditActor = 'Agent', prompt = '', prospects = [] }) {
+async function importProspects({ userId, orgId, auditActor = 'Agent', prompt = '', prospects = [] }) {
+  if (!orgId) {
+    throw new Error('importProspects requires orgId');
+  }
+
   const createdContacts = [];
   const normalizedProspects = prospects.map((item, index) => normalizeProspect(item, index));
 
   for (const prospect of normalizedProspects) {
     const notesContext = prospect.notes || prompt;
     const contactResult = await pool.query(
-      `INSERT INTO contacts (user_id, name, email, phone, company, type, service_line, notes) 
-       VALUES ($1, $2, $3, $4, $5, 'prospect', $6, $7) RETURNING *`,
+      `INSERT INTO contacts (user_id, organization_id, name, email, phone, company, type, service_line, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, 'prospect', $7, $8) RETURNING *`,
       [
         userId,
+        orgId,
         prospect.name,
         prospect.email,
         prospect.phone,
@@ -42,10 +47,11 @@ async function importProspects({ userId, auditActor = 'Agent', prompt = '', pros
     const newContact = contactResult.rows[0];
 
     await pool.query(
-      `INSERT INTO deals (user_id, contact_id, title, stage, service_line, notes) 
-       VALUES ($1, $2, $3, 'lead', $4, $5)`,
+      `INSERT INTO deals (user_id, organization_id, contact_id, title, stage, service_line, notes)
+       VALUES ($1, $2, $3, $4, 'lead', $5, $6)`,
       [
         userId,
+        orgId,
         newContact.id,
         `AI Prospect: ${newContact.company}`,
         prospect.service_line,
