@@ -99,13 +99,50 @@ the original build's ledger which flagged the raw-SQL files as a known gap:
   user who belongs to two orgs gets identical mailbox data from both org-slug URLs. Functional
   quirk, not a security gap; note for whoever eventually builds org-wide mailbox visibility,
   since that feature would naturally start by making this existing path respect `req.orgId`.
-- `integrations` — verify whether integration tokens are org-scoped
+- `integrations` — RESOLVED (Task 6). Not intentionally-global — was a real gap, fixed. See
+  `integrations` entry below.
 
 **Reclassify to intentionally-global if their tables are NOT in ORG_TABLES** (record reason here
-during Task 6): candidates are `integrations`. (`agents` ruled out — see entry above; it does
-touch ORG_TABLES via a shared service. `appSettings` CONFIRMED intentionally-global — see entry
-above. `deliverability` CONFIRMED intentionally per-user-scoped (stronger than org-level
-isolation) — see entry above.)
+during Task 6): (`agents` ruled out — see entry above; it does touch ORG_TABLES via a shared
+service. `appSettings` CONFIRMED intentionally-global — see entry above. `deliverability`
+CONFIRMED intentionally per-user-scoped (stronger than org-level isolation) — see entry above.
+`integrations` ruled out — see entry below; its own direct query touches an ORG_TABLES table.)
+
+- `integrations` (Task 6) — routes/integrations.js's OAuth token storage (`oauth_tokens`,
+  migration 054, keyed on `(user_id, service_type)` via `services/oauth.js`) is genuinely
+  per-user, not org-scoped — same shape as `deliverability`, no change needed there. But the
+  file's own `POST /gcal/sync` route makes a direct Kysely insert into `calendar_events`
+  (ORG_TABLES per migration 062, `organization_id` NOT NULL, no default) that omitted
+  `organization_id` entirely — a real, previously-undiscovered logAction-class gap: every
+  Google Calendar sync since 062 shipped has been throwing a not-null-violation per event,
+  silently swallowed by the route's per-item try/catch (zero events have ever synced
+  successfully). Fixed: added `organization_id: req.orgId` to the insert (never reassigned on
+  conflict, per convention), and added route-level `resolveOrg` (not mount-level — this file
+  also has public unauthenticated OAuth callbacks `/gmail/callback` and `/gcal/callback` that
+  must keep working, matching the calendar.js/track.js pattern) so `req.orgId` is populated on
+  both the flat `/api/integrations` mount and (redundantly/safely) the `/api/org/:orgSlug`
+  mount. `gmail.js`/`googleCalendar.js` services make no DB writes at all (external API only).
+  Isolation test: `server/src/tests/isolation/integrations.isolation.test.js`.
+  KNOWN SEPARATE, DEFERRED FINDING (not fixed in this task, out of scope for the `integrations`
+  route file itself): `POST /gmail/sync` queues a job processed by
+  `workers/emailSyncWorker.js`, which delegates to `services/emailMatcher.js`. That service's
+  `matchEmailToContact` does `INSERT INTO contacts (user_id, name, email, type)` — `contacts`
+  is ORG_TABLES with `organization_id` NOT NULL — with no `organization_id` set, and
+  `emailSyncWorker.js`'s `pauseActiveSequencesForInboundReplies` does
+  `INSERT INTO activities (user_id, contact_id, type, description, occurred_at)` — `activities`
+  is also ORG_TABLES NOT NULL — same gap. Both are wrapped in try/catch (contacts: swallowed
+  per-contact; activities: unwrapped, would fail the whole sync job and trigger Bull retries).
+  This is the same class of bug as the `logAction` finding from the `auditLogs` task (worker
+  has no `req` in scope, needs the fail-closed `resolveOrgIdForUser`-style fallback threaded
+  through job data). Left unfixed here to keep this task's diff to `integrations.js`'s own
+  direct query, matching the precedent set by the `auditLogs` task (found `logAction`'s
+  systemic gap, deferred it, it became its own dedicated follow-up task). RECOMMEND: a
+  dedicated follow-up task for `emailMatcher.js` + `emailSyncWorker.js`, analogous to the
+  `logAction` fix — thread `orgId` through the Bull job payload (`emailSyncQueue.add({ userId,
+  labelIds, orgId })`) down through `syncUserEmails` → `processGmailMessage` →
+  `matchEmailToContact`, with `resolveOrgIdForUser(userId)` (already exported from
+  `services/auditLogger.js`) as the fail-closed fallback for any pre-existing queued jobs
+  without `orgId` in their payload.
 
 **Confirmed global (no change):** auth, clientAuth, stripe, webhooks, unsubscribe, orgs,
 clientPortal (client-scoped via req.client.id).

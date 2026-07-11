@@ -4,6 +4,7 @@ const GmailService = require('../services/gmail');
 const GoogleCalendarService = require('../services/googleCalendar');
 const tokenManager = require('../services/oauth');
 const auth = require('../middleware/auth');
+const { resolveOrg } = require('../middleware/resolveOrg');
 const crypto = require('crypto');
 const { db, sql, pool } = require('../db');
 const { emailSyncQueue } = require('../workers/emailSyncWorker');
@@ -295,7 +296,12 @@ router.get('/gcal/status', auth, async (req, res) => {
 });
 
 // Sync Google Calendar events into calendar_events table
-router.post('/gcal/sync', auth, async (req, res) => {
+// resolveOrg is required here (not at mount level — see index.js comment on the
+// /api/integrations mount) because this is the only route in this file that writes
+// to an ORG_TABLES table (calendar_events, organization_id NOT NULL since migration 062).
+// On the /api/org/:orgSlug mount, requireOrg has already set req.orgId; resolveOrg
+// no-ops in that case (it defers to req.params.orgSlug).
+router.post('/gcal/sync', auth, resolveOrg, async (req, res) => {
   try {
     const now = new Date();
     const end = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000); // 60 days
@@ -312,6 +318,7 @@ router.post('/gcal/sync', auth, async (req, res) => {
         await db.insertInto('calendar_events')
           .values({
             user_id: req.user.id,
+            organization_id: req.orgId,
             title: item.summary || '(no title)',
             description: item.description || null,
             start_at: startAt,
@@ -319,6 +326,8 @@ router.post('/gcal/sync', auth, async (req, res) => {
             google_event_id: item.id,
             source: 'google',
           })
+          // organization_id is never reassigned on conflict (see
+          // docs/superpowers/plans/org-inventory.md convention).
           .onConflict(c => c
             .constraint('uq_calendar_events_google_event_id')
             .doUpdateSet({
