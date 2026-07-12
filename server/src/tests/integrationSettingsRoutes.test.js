@@ -15,9 +15,16 @@ jest.mock('../services/integrationSettings', () => ({
 
 jest.mock('../services/auditLogger', () => ({ logAction: jest.fn() }));
 
+jest.mock('openai', () =>
+  jest.fn().mockImplementation(() => ({
+    models: { list: jest.fn().mockResolvedValue({ data: [] }) },
+  }))
+);
+
 const {
   getManagedCredentials,
   updateManagedCredentials,
+  resolveWithOverride,
 } = require('../services/integrationSettings');
 const { logAction } = require('../services/auditLogger');
 const router = require('../routes/integrationSettings');
@@ -77,5 +84,40 @@ describe('integration settings routes (GET/PUT)', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/Unsupported integration credential key/);
+  });
+});
+
+describe('integration settings routes (test-connection)', () => {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/integration-settings', router);
+
+  beforeEach(() => jest.clearAllMocks());
+
+  test('returns 400 for an unknown provider', async () => {
+    const res = await request(app).post('/api/integration-settings/unknown/test').send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Unknown provider/);
+  });
+
+  test('twilio: returns a validation error when credentials are missing', async () => {
+    resolveWithOverride.mockResolvedValue(null);
+
+    const res = await request(app).post('/api/integration-settings/twilio/test').send({ overrides: {} });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: false, error: 'Account SID and Auth Token are required' });
+  });
+
+  test('openai: succeeds when the resolved key works', async () => {
+    resolveWithOverride.mockResolvedValue('sk-test');
+
+    const res = await request(app)
+      .post('/api/integration-settings/openai/test')
+      .send({ overrides: { openai_api_key: 'sk-draft' } });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true });
   });
 });
