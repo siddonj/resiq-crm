@@ -1,3 +1,5 @@
+process.env.ENCRYPTION_KEY = 'a'.repeat(32);
+
 const express = require('express');
 const request = require('supertest');
 
@@ -12,6 +14,14 @@ jest.mock('../services/agentService', () => ({
 
 jest.mock('../services/agentProspectService', () => ({
   importProspects: jest.fn(),
+}));
+
+// isOpenAiConfigured()/getOpenAiClient() resolve credentials via integrationSettings,
+// which queries integration_credentials through this pool before falling back to env.
+// Mock it to return no rows so the OPENAI_API_KEY env fallback set below is used,
+// instead of attempting a real DB connection.
+jest.mock('../models/db', () => ({
+  query: jest.fn().mockResolvedValue({ rows: [] }),
 }));
 
 const { generateProspects } = require('../services/agentService');
