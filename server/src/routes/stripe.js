@@ -1,24 +1,24 @@
 const express = require('express');
 const { handlePaymentIntentSucceeded, handlePaymentIntentFailed, generateStripePaymentLink } = require('../services/stripeWebhooks');
+const { getStripeClient, getStripeWebhookSecret } = require('../services/stripeClient');
 const auth = require('../middleware/auth');
 
 const router = express.Router();
-
-// Only initialize Stripe if API key is provided
-const stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
 
 /**
  * POST /api/stripe/webhook
  * Webhook handler for Stripe events
  */
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const stripe = await getStripeClient();
   if (!stripe) {
     return res.status(503).json({ error: 'Stripe not configured' });
   }
 
   const sig = req.headers['stripe-signature'];
+  const webhookSecret = await getStripeWebhookSecret();
 
-  if (!sig || !process.env.STRIPE_WEBHOOK_SECRET) {
+  if (!sig || !webhookSecret) {
     return res.status(400).json({ error: 'Missing webhook signature or secret' });
   }
 
@@ -26,7 +26,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
     const event = stripe.webhooks.constructEvent(
       req.body,
       sig,
-      process.env.STRIPE_WEBHOOK_SECRET
+      webhookSecret
     );
 
     // Handle specific events
