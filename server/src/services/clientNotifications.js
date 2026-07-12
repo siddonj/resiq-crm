@@ -36,6 +36,19 @@ async function getMailTransporter() {
 }
 
 /**
+ * Resolve the envelope "from" address for outgoing mail, DB-first
+ * (falls back to the SMTP user, then the Gmail env var as a last resort).
+ */
+async function getMailFrom() {
+  const [from, user] = await Promise.all([
+    integrationSettings.getSetting('smtp_from'),
+    integrationSettings.getSetting('smtp_user'),
+  ])
+
+  return from || user || process.env.GMAIL_USER
+}
+
+/**
  * Send client invitation email
  * Called when employee invites a client
  */
@@ -98,7 +111,7 @@ async function sendClientInvitationEmail(email, name, invitationToken) {
 
     await (await getMailTransporter()).sendMail({
       html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `You're invited to access your project on ResiQ`),
-      from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
+      from: await getMailFrom(),
       to: email,
       subject: `You're invited to access your project on ResiQ`,
       
@@ -169,7 +182,7 @@ async function sendProposalSentEmail(clientEmail, clientName, proposalTitle, use
 
     await (await getMailTransporter()).sendMail({
       html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `New proposal: ${proposalTitle}`),
-      from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
+      from: await getMailFrom(),
       to: clientEmail,
       subject: `New proposal: ${proposalTitle}`,
       
@@ -253,7 +266,7 @@ async function sendInvoiceSentEmail(clientEmail, clientName, invoiceNumber, amou
 
     await (await getMailTransporter()).sendMail({
       html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `Invoice #${invoiceNumber} - ${amount.toFixed(2)} due by ${dueDateStr}`),
-      from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
+      from: await getMailFrom(),
       to: clientEmail,
       subject: `Invoice #${invoiceNumber} - ${amount.toFixed(2)} due by ${dueDateStr}`,
       
@@ -330,7 +343,7 @@ async function sendProposalSignedConfirmation(employeeEmail, clientName, proposa
 
     await (await getMailTransporter()).sendMail({
       html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `✓ Proposal signed by ${clientName}: ${proposalTitle}`),
-      from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
+      from: await getMailFrom(),
       to: employeeEmail,
       subject: `✓ Proposal signed by ${clientName}: ${proposalTitle}`,
       
@@ -406,7 +419,7 @@ async function sendInvoicePaidConfirmation(employeeEmail, clientName, invoiceNum
 
     await (await getMailTransporter()).sendMail({
       html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `✓ Invoice #${invoiceNumber} paid by ${clientName} ($${amount.toFixed(2)})`),
-      from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
+      from: await getMailFrom(),
       to: employeeEmail,
       subject: `✓ Invoice #${invoiceNumber} paid by ${clientName} ($${amount.toFixed(2)})`,
       
@@ -474,7 +487,7 @@ async function sendTicketAssignedNotification(employeeEmail, employeeName, clien
 
     await (await getMailTransporter()).sendMail({
       html: htmlContent,
-      from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
+      from: await getMailFrom(),
       to: employeeEmail,
       subject: `🎟️ New ticket assigned: ${ticketSubject}`,
       text: `Ticket "${ticketSubject}" from ${clientName} has been assigned to you.`,
@@ -540,7 +553,7 @@ async function sendTicketReplyNotification(employeeEmail, employeeName, clientNa
 
     await (await getMailTransporter()).sendMail({
       html: htmlContent,
-      from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
+      from: await getMailFrom(),
       to: employeeEmail,
       subject: `💬 New reply on ticket: ${ticketSubject}`,
       text: `${clientName} has replied to ticket "${ticketSubject}".`,
@@ -563,4 +576,5 @@ module.exports = {
   sendTicketAssignedNotification,
   sendTicketReplyNotification,
   getMailTransporter,
+  getMailFrom,
 }

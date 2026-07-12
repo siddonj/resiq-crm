@@ -8,7 +8,7 @@ jest.mock('nodemailer', () => ({
 
 const { getSetting } = require('../services/integrationSettings');
 const nodemailer = require('nodemailer');
-const { getMailTransporter } = require('../services/clientNotifications');
+const { getMailTransporter, getMailFrom } = require('../services/clientNotifications');
 
 describe('getMailTransporter', () => {
   beforeEach(() => {
@@ -50,5 +50,43 @@ describe('getMailTransporter', () => {
       service: 'gmail',
       auth: { user: 'gmail-user@example.com', pass: 'app-password' },
     });
+  });
+});
+
+describe('getMailFrom', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    delete process.env.GMAIL_USER;
+  });
+
+  test('resolves smtp_from from the DB when set', async () => {
+    getSetting.mockImplementation((key) => {
+      const values = {
+        smtp_from: 'noreply@example.com',
+        smtp_user: 'user@example.com',
+      };
+      return Promise.resolve(values[key] ?? null);
+    });
+
+    await expect(getMailFrom()).resolves.toBe('noreply@example.com');
+  });
+
+  test('falls back to smtp_user when smtp_from is unset', async () => {
+    getSetting.mockImplementation((key) => {
+      const values = {
+        smtp_from: null,
+        smtp_user: 'user@example.com',
+      };
+      return Promise.resolve(values[key] ?? null);
+    });
+
+    await expect(getMailFrom()).resolves.toBe('user@example.com');
+  });
+
+  test('falls back to process.env.GMAIL_USER when neither DB field resolves', async () => {
+    getSetting.mockResolvedValue(null);
+    process.env.GMAIL_USER = 'gmail-user@example.com';
+
+    await expect(getMailFrom()).resolves.toBe('gmail-user@example.com');
   });
 });
