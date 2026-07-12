@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { db, sql, ownershipWhere, orgWhere, orgUserWhere, pool } = require('../db');
 const auth = require('../middleware/auth');
-const { scoreLead } = require('../services/outboundScoring');
+const { scoreLead, getDailySendUsage, requireWithinDailyLimit } = require('../services/outboundScoring');
 const { logAction } = require('../services/auditLogger');
 const { getSetting } = require('../services/appSettings');
 const outboundUtils = require('../utils/outboundUtils');
@@ -179,40 +179,8 @@ async function recordLeadScoreHistory({ userId, leadId, score, source = 'manual_
   `.execute(db);
 }
 
-async function getDailySendUsage(userId, channel) {
-  const eventTypes = outboundUtils.SEND_EVENT_TYPES[channel] || [];
-  const limitSettingKey =
-    channel === 'email'
-      ? 'outbound_daily_email_send_limit'
-      : channel === 'linkedin'
-      ? 'outbound_daily_linkedin_send_limit'
-      : null;
-  const limit = limitSettingKey ? Number(await getSetting(limitSettingKey)) : 0;
-  if (eventTypes.length === 0) {
-    return { channel, used: 0, limit, remaining: limit };
-  }
-
-  const result = await sql`
-    SELECT COUNT(*)::int AS used
-    FROM lead_source_events
-    WHERE user_id = ${userId}
-      AND channel = ${channel}
-      AND event_type = ANY(${eventTypes}::text[])
-      AND created_at >= date_trunc('day', NOW())
-  `.execute(db);
-
-  const used = Number(result.rows[0]?.used || 0);
-  return {
-    channel,
-    used,
-    limit,
-    remaining: Math.max(0, limit - used),
-  };
-}
-
-function requireWithinDailyLimit(usage) {
-  return usage.used < usage.limit;
-}
+// getDailySendUsage / requireWithinDailyLimit moved to services/outboundScoring.js
+// so draftService and outboundSequenceWorker share the same enforcement.
 
 
 

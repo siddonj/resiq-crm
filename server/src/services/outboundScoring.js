@@ -172,6 +172,54 @@ function scoreLead(lead, options = {}) {
   };
 }
 
+/**
+ * Workspace-wide daily send usage for a channel, counted from
+ * lead_source_events against the configured daily limit. Previously a private
+ * helper in routes/outboundAutomation.js; shared here because draftService and
+ * outboundSequenceWorker enforce the same limit at send time. Dependencies are
+ * required lazily to keep scoreLead() free of DB imports for unit tests.
+ */
+async function getDailySendUsage(userId, channel) {
+  const { db, sql } = require('../db');
+  const { getSetting } = require('./appSettings');
+  const outboundUtils = require('../utils/outboundUtils');
+
+  const eventTypes = outboundUtils.SEND_EVENT_TYPES[channel] || [];
+  const limitSettingKey =
+    channel === 'email'
+      ? 'outbound_daily_email_send_limit'
+      : channel === 'linkedin'
+      ? 'outbound_daily_linkedin_send_limit'
+      : null;
+  const limit = limitSettingKey ? Number(await getSetting(limitSettingKey)) : 0;
+  if (eventTypes.length === 0) {
+    return { channel, used: 0, limit, remaining: limit };
+  }
+
+  const result = await sql`
+    SELECT COUNT(*)::int AS used
+    FROM lead_source_events
+    WHERE user_id = ${userId}
+      AND channel = ${channel}
+      AND event_type = ANY(${eventTypes}::text[])
+      AND created_at >= date_trunc('day', NOW())
+  `.execute(db);
+
+  const used = Number(result.rows[0]?.used || 0);
+  return {
+    channel,
+    used,
+    limit,
+    remaining: Math.max(0, limit - used),
+  };
+}
+
+function requireWithinDailyLimit(usage) {
+  return usage.used < usage.limit;
+}
+
 module.exports = {
   scoreLead,
+  getDailySendUsage,
+  requireWithinDailyLimit,
 };
