@@ -1,6 +1,7 @@
 const express = require('express');
 const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const { logAction } = require('../services/auditLogger');
+const { computeDedupeKey } = require('../utils/outboundUtils');
 
 const router = express.Router();
 
@@ -28,7 +29,41 @@ router.post('/:formId', async (req, res) => {
     const userId = form.user_id;
     const orgId = form.organization_id;
 
-    // 2. Create the Contact
+    // 2. Create the Contact — unless one with the same identity already exists,
+    // in which case log the repeat submission on it instead of duplicating.
+    const dedupeKey = computeDedupeKey({ email: email || null, name, company: company || null });
+    const existingContact = await db.selectFrom('contacts')
+      .selectAll()
+      .where('user_id', '=', userId)
+      .where('dedupe_key', '=', dedupeKey)
+      .executeTakeFirst();
+
+    if (existingContact) {
+      await db.insertInto('activities')
+        .values({
+          organization_id: orgId,
+          user_id: userId,
+          contact_id: existingContact.id,
+          type: 'form_submission',
+          description: `Repeat submission via web form: ${form.title}${notes ? `\n${notes}` : ''}`,
+          occurred_at: new Date(),
+        })
+        .execute();
+      logAction(userId, 'System (Web Form)', 'update', 'contact', existingContact.id, `Repeat form submission: ${form.title}`, {}, orgId);
+
+      if (req.headers.accept && req.headers.accept.includes('application/json')) {
+        return res.status(200).json({ success: true, message: 'Lead captured successfully' });
+      } else if (form.redirect_url) {
+        return res.redirect(form.redirect_url);
+      }
+      return res.send(`
+        <html><body>
+          <h2>Thank you!</h2>
+          <p>Your information has been submitted successfully.</p>
+        </body></html>
+      `);
+    }
+
     const newContact = await db.insertInto('contacts')
       .values({
         organization_id: orgId,
@@ -38,6 +73,7 @@ router.post('/:formId', async (req, res) => {
         phone: phone || null,
         company: company || null,
         type: 'prospect',
+        dedupe_key: dedupeKey,
         notes: `Captured via Web Form: ${form.title}\n\n${notes || ''}`,
         custom_fields: JSON.stringify(customFields),
       })

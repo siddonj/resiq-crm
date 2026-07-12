@@ -4,6 +4,7 @@ const { db, sql, ownershipWhere, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const Email = require('../models/email');
 const { logAction } = require('../services/auditLogger');
+const { computeDedupeKey } = require('../utils/outboundUtils');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -138,6 +139,8 @@ router.post('/import', auth, upload.single('file'), async (req, res) => {
     const VALID_TYPES = ['prospect', 'partner', 'vendor'];
     const created = [];
     const errors = [];
+    let skippedDuplicates = 0;
+    const seenKeys = new Set();
 
     for (const row of rows) {
       const name = row.name || row.full_name || '';
@@ -145,6 +148,21 @@ router.post('/import', auth, upload.single('file'), async (req, res) => {
 
       const type = VALID_TYPES.includes(row.type) ? row.type : 'prospect';
       try {
+        const dedupeKey = computeDedupeKey({
+          email: row.email || null,
+          linkedin_url: row.linkedin_url || row.linkedin || null,
+          name: name.trim(),
+          company: row.company || null,
+        });
+        if (seenKeys.has(dedupeKey)) { skippedDuplicates++; continue; }
+        const existing = await db.selectFrom('contacts')
+          .select('id')
+          .where('user_id', '=', req.user.id)
+          .where('dedupe_key', '=', dedupeKey)
+          .executeTakeFirst();
+        if (existing) { skippedDuplicates++; seenKeys.add(dedupeKey); continue; }
+        seenKeys.add(dedupeKey);
+
         const contact = await db.insertInto('contacts')
           .values({
             organization_id: req.orgId,
@@ -161,6 +179,7 @@ router.post('/import', auth, upload.single('file'), async (req, res) => {
             company_website: row.company_website || row.website || null,
             industry: row.industry || null,
             company_size: row.company_size || null,
+            dedupe_key: dedupeKey,
             custom_fields: JSON.stringify({}),
           })
           .returningAll()
@@ -180,6 +199,7 @@ router.post('/import', auth, upload.single('file'), async (req, res) => {
 
     res.status(201).json({
       imported: created.length,
+      skippedDuplicates,
       errors: errors.length,
       errorDetails: errors.slice(0, 10),
       enrichmentQueued: enrich && created.length > 0,
@@ -202,6 +222,7 @@ router.post('/', auth, async (req, res) => {
         name, email, phone, company,
         type: type || 'prospect',
         service_line, notes,
+        dedupe_key: computeDedupeKey({ email: email || null, linkedin_url: linkedin_url || null, name, company: company || null }),
         custom_fields: JSON.stringify(customFields),
         job_title: job_title || null,
         linkedin_url: linkedin_url || null,
@@ -530,56 +551,122 @@ router.post('/from-lead', auth, async (req, res) => {
       return res.status(404).json({ error: 'Lead not found' });
     }
 
-    // Check if contact already exists with same email
-    const existing = await db.selectFrom('contacts')
-      .$call(orgWhere(req.orgId))
-      .selectAll()
-      .where('user_id', '=', req.user.id)
-      .where('email', '=', lead.email)
-      .where('email', 'is not', null)
-      .executeTakeFirst();
-
-    if (existing) {
-      return res.status(409).json({ error: 'Contact already exists with this email', contactId: existing.id });
+    // Idempotent re-promotion: if this lead was already converted and linked,
+    // return the existing contact/deal pair.
+    if (lead.contact_id && lead.deal_id) {
+      const linkedContact = await db.selectFrom('contacts')
+        .selectAll()
+        .where('id', '=', lead.contact_id)
+        .executeTakeFirst();
+      if (linkedContact) {
+        return res.status(200).json({ ...linkedContact, dealId: lead.deal_id, alreadyConverted: true });
+      }
     }
 
-    // Create the contact from the lead data
-    const newContact = await db.insertInto('contacts')
+    // If a contact already exists with the same email, link to it instead of
+    // failing — the point of promotion is to land the lead in the pipeline.
+    let newContact = null;
+    if (lead.email) {
+      newContact = await db.selectFrom('contacts')
+        .$call(orgWhere(req.orgId))
+        .selectAll()
+        .where('user_id', '=', req.user.id)
+        .where('email', '=', lead.email)
+        .executeTakeFirst();
+    }
+
+    const isNewContact = !newContact;
+    if (isNewContact) {
+      newContact = await db.insertInto('contacts')
+        .values({
+          organization_id: req.orgId,
+          user_id: req.user.id,
+          name: lead.name,
+          email: lead.email,
+          phone: lead.phone,
+          company: lead.company,
+          type: 'prospect',
+          service_line: null,
+          notes: lead.notes,
+          dedupe_key: lead.dedupe_key || computeDedupeKey(lead),
+          outbound_score: lead.total_score ?? null,
+          custom_fields: JSON.stringify({
+            source: 'lead_conversion',
+            lead_id: lead.id,
+            title: lead.title,
+            linkedin_url: lead.linkedin_url,
+            website: lead.website,
+            location: lead.location,
+            fit_score: lead.fit_score,
+            intent_score: lead.intent_score,
+            total_score: lead.total_score,
+            dedupe_key: lead.dedupe_key,
+          }),
+          job_title: lead.title || null,
+          linkedin_url: lead.linkedin_url || null,
+          company_website: lead.website || null,
+          industry: null,
+          company_size: null,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+    } else if (lead.total_score != null) {
+      await db.updateTable('contacts')
+        .set({ outbound_score: lead.total_score })
+        .where('id', '=', newContact.id)
+        .execute();
+    }
+
+    // Always land the lead in the deal pipeline, stage mapped from lead status.
+    const STATUS_TO_STAGE = { replied: 'lead', meeting: 'qualified', opportunity: 'proposal' };
+    const dealStage = STATUS_TO_STAGE[lead.status] || 'lead';
+    let deal = await db.selectFrom('deals')
+      .selectAll()
+      .where('user_id', '=', req.user.id)
+      .where('contact_id', '=', newContact.id)
+      .where('stage', 'not in', ['closed_won', 'closed_lost'])
+      .executeTakeFirst();
+    if (!deal) {
+      deal = await db.insertInto('deals')
+        .values({
+          organization_id: req.orgId,
+          user_id: req.user.id,
+          contact_id: newContact.id,
+          title: `Outbound: ${lead.company || lead.name}`,
+          stage: dealStage,
+          notes: 'Auto-created from outbound lead promotion',
+          custom_fields: JSON.stringify({ source: 'lead_conversion', lead_id: lead.id }),
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+    }
+
+    // Link the lead to its canonical records and advance its status.
+    await db.updateTable('outbound_leads')
+      .set({
+        contact_id: newContact.id,
+        deal_id: deal.id,
+        status: ['meeting', 'opportunity'].includes(lead.status) ? lead.status : 'opportunity',
+        updated_at: new Date(),
+      })
+      .where('id', '=', lead.id)
+      .execute();
+
+    await db.insertInto('activities')
       .values({
         organization_id: req.orgId,
         user_id: req.user.id,
-        name: lead.name,
-        email: lead.email,
-        phone: lead.phone,
-        company: lead.company,
-        type: 'prospect',
-        service_line: null,
-        notes: lead.notes,
-        custom_fields: JSON.stringify({
-          source: 'lead_conversion',
-          lead_id: lead.id,
-          title: lead.title,
-          linkedin_url: lead.linkedin_url,
-          website: lead.website,
-          location: lead.location,
-          fit_score: lead.fit_score,
-          intent_score: lead.intent_score,
-          total_score: lead.total_score,
-          dedupe_key: lead.dedupe_key,
-        }),
-        job_title: lead.title || null,
-        linkedin_url: lead.linkedin_url || null,
-        company_website: lead.website || null,
-        industry: null,
-        company_size: null,
+        contact_id: newContact.id,
+        type: 'lead_converted',
+        description: `Converted from outbound lead (score: ${lead.total_score ?? 'n/a'}, status: ${lead.status}) into deal "${deal.title}".`,
+        occurred_at: new Date(),
       })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+      .execute();
 
-    logAction(req.user.id, req.user.email, 'convert_lead_to_contact', 'contact', newContact.id, newContact.name, {}, req.orgId);
+    logAction(req.user.id, req.user.email, 'convert_lead_to_contact', 'contact', newContact.id, newContact.name, { dealId: deal.id }, req.orgId);
 
     // Remove any workflow triggers that use 'contact.created'
-    if (workflowEngine) {
+    if (workflowEngine && isNewContact) {
       const tags = await db.selectFrom('tags')
         .$call(orgWhere(req.orgId))
         .innerJoin('contact_tags', 'contact_tags.tag_id', 'tags.id')
@@ -592,7 +679,7 @@ router.post('/from-lead', auth, async (req, res) => {
       }).catch(err => console.error('Error dispatching workflow trigger:', err));
     }
 
-    res.status(201).json(newContact);
+    res.status(isNewContact ? 201 : 200).json({ ...newContact, dealId: deal.id });
   } catch (err) {
     console.error('Error converting lead to contact:', err);
     res.status(500).json({ error: 'Server error' });

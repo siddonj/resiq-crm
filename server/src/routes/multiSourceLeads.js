@@ -404,6 +404,76 @@ router.patch('/:id', async (req, res) => {
 });
 
 /**
+ * POST /api/multi-source-leads/:id/promote-to-outbound
+ * Send a social/unified lead into the outbound engine (dedup + scoring),
+ * so it can be worked through campaigns/sequences like any other lead.
+ */
+router.post('/:id/promote-to-outbound', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { computeDedupeKey } = require('../utils/outboundUtils');
+    const { scoreLead } = require('../services/outboundScoring');
+
+    const result = await db.query(
+      `SELECT * FROM unified_leads WHERE id = $1 AND organization_id = $2`,
+      [id, req.orgId]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Lead not found' });
+    }
+    const source = result.rows[0];
+
+    const candidate = {
+      name: source.contact_name || source.author,
+      email: source.contact_email || null,
+      company: source.company || null,
+      title: null,
+      linkedin_url: source.linkedin_url || null,
+      website: null,
+      location: null,
+      phone: null,
+      notes: source.notes || null,
+    };
+    const dedupeKey = computeDedupeKey(candidate);
+
+    const existing = await db.query(
+      `SELECT id FROM outbound_leads WHERE user_id = $1 AND dedupe_key = $2`,
+      [req.user.id, dedupeKey]
+    );
+    if (existing.rows.length) {
+      return res.status(200).json({ outboundLeadId: existing.rows[0].id, duplicate: true });
+    }
+
+    const score = scoreLead(candidate);
+    const inserted = await db.query(
+      `INSERT INTO outbound_leads
+        (user_id, organization_id, source_type, source_reference, source_confidence, is_synthetic,
+         name, email, company, linkedin_url, notes, raw_data, dedupe_key,
+         fit_score, intent_score, total_score, status, next_recommended_action)
+       VALUES ($1, $2, 'other', $3, $4, FALSE, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+       RETURNING id`,
+      [
+        req.user.id, req.orgId, `unified_lead:${source.source}:${source.id}`,
+        Math.round(Number(source.relevance_score || 0) * 100),
+        candidate.name, candidate.email, candidate.company, candidate.linkedin_url,
+        candidate.notes, JSON.stringify(source), dedupeKey,
+        score.fitScore, score.intentScore, score.totalScore, score.status, score.nextRecommendedAction,
+      ]
+    );
+
+    await db.query(
+      `UPDATE unified_leads SET status = 'converted', updated_at = NOW() WHERE id = $1`,
+      [source.id]
+    );
+
+    res.status(201).json({ outboundLeadId: inserted.rows[0].id, score: score.totalScore, status: score.status });
+  } catch (err) {
+    console.error('Promote-to-outbound error:', err);
+    res.status(500).json({ error: 'Failed to promote lead' });
+  }
+});
+
+/**
  * DELETE /api/leads/:id
  * Delete/reject a lead
  */

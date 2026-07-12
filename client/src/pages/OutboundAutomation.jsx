@@ -573,7 +573,7 @@ export default function OutboundAutomation() {
   const handleSendEmailDraft = async (draft) => {
     await runAction(`send-email-${draft.id}`, async () => {
       await sendDraft.mutateAsync(draft.id)
-      setMessage('Email draft marked as sent.')
+      setMessage('Email sent.')
     })
   }
 
@@ -957,15 +957,17 @@ export default function OutboundAutomation() {
   const handleAddLeadToContact = async (leadId) => {
     await runAction(`contact-${leadId}`, async () => {
       try {
-        await addLeadToContacts.mutateAsync(leadId)
-        setMessage('Lead added to contacts.')
-      } catch (err) {
-        const msg = err.response?.data?.error || 'Failed to add lead to contacts.'
-        if (msg.includes('already exists')) {
-          setMessage('A contact with this email already exists.')
+        const { data } = await addLeadToContacts.mutateAsync(leadId)
+        if (data?.alreadyConverted) {
+          setMessage('Lead was already converted — opening its deal.')
         } else {
-          setError(msg)
+          setMessage('Lead promoted to contact + deal.')
         }
+        if (data?.dealId) {
+          navigate('/pipeline')
+        }
+      } catch (err) {
+        setError(err.response?.data?.error || 'Failed to promote lead.')
       }
     })
   }
