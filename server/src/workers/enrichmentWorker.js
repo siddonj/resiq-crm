@@ -183,6 +183,10 @@ async function processEnrichmentJob(job) {
 
     // ── OpenAI company intelligence ───────────────────────────────────────────
     const openai = await getOpenAiClient();
+    if (!openai) {
+      console.warn('AI enrichment unavailable: OpenAI is not configured.');
+      return { skipped: 'AI enrichment unavailable, OpenAI not configured.' };
+    }
     const hunterContext = hunterDomain
       ? `Hunter.io data: organization="${hunterDomain.organization}", industry="${hunterDomain.industry}", company_size="${hunterDomain.company_size}", twitter="${hunterDomain.twitter}", linkedin="${hunterDomain.linkedin}"`
       : '';
