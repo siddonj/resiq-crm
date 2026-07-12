@@ -419,18 +419,22 @@ async function initDatabase() {
         );
         if (rows.length > 0) continue;
 
-        const filePath = path.join(migrationsDir, file);
-        const migrationSql = fs.readFileSync(filePath, 'utf8');
+        try {
+          const filePath = path.join(migrationsDir, file);
+          const migrationSql = fs.readFileSync(filePath, 'utf8');
 
-        await pool.query(migrationSql);
+          await pool.query(migrationSql);
 
-        // Record as applied
-        await pool.query(
-          'INSERT INTO _schema_version (version, description) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [file.replace(/\.sql$/, ''), file]
-        );
+          // Record as applied
+          await pool.query(
+            'INSERT INTO _schema_version (version, description) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+            [file.replace(/\.sql$/, ''), file]
+          );
 
-        logger.info({ migration: file }, 'Migration applied on boot');
+          logger.info({ migration: file }, 'Migration applied on boot');
+        } catch (err) {
+          logger.warn({ err, migration: file }, 'Migration failed on boot (non-fatal, skipping to next)');
+        }
       }
     }
   } catch (err) {
