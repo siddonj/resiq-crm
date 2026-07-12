@@ -1,11 +1,12 @@
 const Queue = require('bull');
 const { Pool } = require('pg');
-const OpenAI = require('openai');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const dns = require('dns').promises;
 const net = require('net');
 const { logAction } = require('../services/auditLogger');
+const integrationSettings = require('../services/integrationSettings');
+const { getOpenAiClient } = require('../services/openaiClient');
 
 // SSRF guard: block requests that resolve to private / reserved IP ranges.
 function isPrivateIp(ip) {
@@ -47,7 +48,7 @@ const genericFreeDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.co
 
 // Hunter.io: verify an email address and return verification status
 async function hunterVerifyEmail(email) {
-  const apiKey = process.env.HUNTER_API_KEY;
+  const apiKey = await integrationSettings.getSetting('hunter_api_key');
   if (!apiKey || !email) return null;
   try {
     const res = await axios.get('https://api.hunter.io/v2/email-verifier', {
@@ -63,7 +64,7 @@ async function hunterVerifyEmail(email) {
 
 // Hunter.io: look up a person by domain + name to find email, job title, LinkedIn
 async function hunterFindPerson(domain, firstName, lastName) {
-  const apiKey = process.env.HUNTER_API_KEY;
+  const apiKey = await integrationSettings.getSetting('hunter_api_key');
   if (!apiKey || !domain) return null;
   try {
     const params = { domain, api_key: apiKey };
@@ -82,7 +83,7 @@ async function hunterFindPerson(domain, firstName, lastName) {
 
 // Hunter.io: get company/domain info including social links and company size
 async function hunterDomainSearch(domain) {
-  const apiKey = process.env.HUNTER_API_KEY;
+  const apiKey = await integrationSettings.getSetting('hunter_api_key');
   if (!apiKey || !domain) return null;
   try {
     const res = await axios.get('https://api.hunter.io/v2/domain-search', {
@@ -181,7 +182,7 @@ async function processEnrichmentJob(job) {
     }
 
     // ── OpenAI company intelligence ───────────────────────────────────────────
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = await getOpenAiClient();
     const hunterContext = hunterDomain
       ? `Hunter.io data: organization="${hunterDomain.organization}", industry="${hunterDomain.industry}", company_size="${hunterDomain.company_size}", twitter="${hunterDomain.twitter}", linkedin="${hunterDomain.linkedin}"`
       : '';
