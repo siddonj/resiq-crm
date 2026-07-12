@@ -42,6 +42,15 @@ const PROVIDERS = [
     label: 'OpenAI (AI Features)',
     fields: [{ key: 'openai_api_key', label: 'API Key' }],
   },
+  {
+    key: 'sendgrid',
+    label: 'SendGrid (Outbound Email)',
+    fields: [
+      { key: 'sendgrid_api_key', label: 'API Key' },
+      { key: 'sendgrid_webhook_verification_key', label: 'Event Webhook Verification Key' },
+      { key: 'outbound_from_default', label: 'Default From Address' },
+    ],
+  },
 ]
 
 export default function IntegrationCredentials() {

@@ -15,6 +15,9 @@ const SETTING_DEFINITIONS = {
   smtp_secure: { provider: 'smtp', type: 'boolean', secret: false, envName: 'SMTP_SECURE', label: 'Use TLS' },
   hunter_api_key: { provider: 'hunter', type: 'string', secret: true, envName: 'HUNTER_API_KEY', label: 'API Key' },
   openai_api_key: { provider: 'openai', type: 'string', secret: true, envName: 'OPENAI_API_KEY', label: 'API Key' },
+  sendgrid_api_key: { provider: 'sendgrid', type: 'string', secret: true, envName: 'SENDGRID_API_KEY', label: 'API Key' },
+  sendgrid_webhook_verification_key: { provider: 'sendgrid', type: 'string', secret: true, envName: 'SENDGRID_WEBHOOK_VERIFICATION_KEY', label: 'Event Webhook Verification Key' },
+  outbound_from_default: { provider: 'sendgrid', type: 'string', secret: false, envName: 'OUTBOUND_FROM_DEFAULT', label: 'Default From Address' },
 };
 
 function normalizeBoolean(value, fallback = false) {

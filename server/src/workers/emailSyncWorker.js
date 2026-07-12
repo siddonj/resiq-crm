@@ -109,6 +109,73 @@ async function pauseActiveSequencesForInboundReplies(userId, syncResults = [], o
 }
 
 /**
+ * Mirror of the contact-sequence auto-pause for the lead-based outbound
+ * engine: an inbound reply from an outbound lead's email pauses its active
+ * outbound_sequence_enrollments and flips the lead to 'replied'.
+ */
+async function pauseOutboundEnrollmentsForInboundReplies(userId, syncResults = []) {
+  let pausedEnrollments = 0;
+
+  for (const result of syncResults) {
+    if (!result?.success || !result.email || result.email.is_outbound !== false) {
+      continue;
+    }
+    const senderEmail = extractPrimaryEmail(result.email.sender_email);
+    if (!senderEmail) continue;
+
+    const leadRes = await pool.query(
+      `SELECT id FROM outbound_leads WHERE user_id = $1 AND lower(email) = $2`,
+      [userId, senderEmail.toLowerCase()]
+    );
+    if (!leadRes.rows.length) continue;
+
+    for (const lead of leadRes.rows) {
+      const updateRes = await pool.query(
+        `UPDATE outbound_sequence_enrollments
+         SET status = 'paused',
+             pause_reason = 'Inbound reply received',
+             paused_at = NOW(),
+             last_transition_at = NOW(),
+             updated_at = NOW()
+         WHERE lead_id = $1 AND user_id = $2 AND status = 'active'
+         RETURNING id`,
+        [lead.id, userId]
+      );
+
+      await pool.query(
+        `UPDATE outbound_leads
+         SET status = CASE WHEN status IN ('new', 'qualified', 'queued', 'contacted') THEN 'replied' ELSE status END,
+             updated_at = NOW()
+         WHERE id = $1 AND user_id = $2`,
+        [lead.id, userId]
+      );
+
+      if (updateRes.rowCount > 0) {
+        pausedEnrollments += updateRes.rowCount;
+        for (const row of updateRes.rows) {
+          await pool.query(
+            `INSERT INTO sequence_enrollment_transitions
+               (enrollment_id, user_id, from_state, to_state, reason, trigger_source, metadata)
+             VALUES ($1, $2, 'active', 'paused', 'Inbound reply received', 'system', $3::jsonb)`,
+            [row.id, userId, JSON.stringify({ leadId: lead.id })]
+          );
+        }
+        await pool.query(
+          `INSERT INTO lead_source_events (user_id, lead_id, event_type, channel, metadata)
+           VALUES ($1, $2, 'reply_received', 'email', $3::jsonb)`,
+          [userId, lead.id, JSON.stringify({ pausedEnrollments: updateRes.rowCount })]
+        );
+        console.log(
+          `[Auto-Pause] Paused ${updateRes.rowCount} outbound enrollment(s) for lead ${lead.id} due to inbound reply`
+        );
+      }
+    }
+  }
+
+  return { pausedEnrollments };
+}
+
+/**
  * Process email sync job for a user
  * Max 2 concurrent jobs with exponential backoff retry
  */
@@ -165,6 +232,7 @@ emailSyncQueue.process(2, async (job) => {
           `[Auto-Pause] Total paused enrollments: ${pauseSummary.pausedEnrollments} across ${pauseSummary.pausedContacts} contact(s)`
         );
       }
+      await pauseOutboundEnrollmentsForInboundReplies(userId, result.results);
     }
 
     // If there's a next page, queue another job to continue pagination
@@ -272,6 +340,7 @@ module.exports = {
   emailSyncQueue,
   initEmailSyncWorker,
   pauseActiveSequencesForInboundReplies,
+  pauseOutboundEnrollmentsForInboundReplies,
   isInboundReplyFromMatchedContact,
   resolveOrgIdForUser,
 };

@@ -3,6 +3,8 @@ const outboundUtils = require('../../utils/outboundUtils');
 const { getDailySendUsage, requireWithinDailyLimit } = require('../outboundScoring');
 const { logAction } = require('../auditLogger');
 const compliance = require('./complianceService');
+const deliverability = require('./deliverabilityService');
+const espSendService = require('../espSendService');
 
 /**
  * Generate an email or LinkedIn draft for a lead.
@@ -230,15 +232,42 @@ async function sendDraft({ userId, orgId, draftId, logLeadEventFn }) {
   // CAN-SPAM: ensure the transmitted body carries the unsubscribe link + physical address.
   const finalBody = await compliance.appendComplianceFooter({ userId, email: lead.email, body: draft.body });
 
+  if (!lead.email) {
+    throw new Error('Lead has no email address to send to.');
+  }
+
+  // Pick a sending mailbox through the deliverability layer (warmup ramp,
+  // engagement throttle, rotation, per-mailbox daily caps).
+  const mailbox = await deliverability.pickSendingMailbox(userId);
+  if (!mailbox) {
+    const err = new Error('No sending mailbox available — all mailboxes are paused or at their daily cap. Check Deliverability settings.');
+    err.statusCode = 429;
+    throw err;
+  }
+
+  // Actually transmit via the ESP. On failure the draft stays 'approved'.
+  const { messageId } = await espSendService.sendEmail({
+    userId,
+    mailbox,
+    to: lead.email,
+    subject: draft.subject || '(no subject)',
+    text: finalBody,
+    metadata: { draftId: draft.id, leadId: draft.lead_id, mailboxId: mailbox.id },
+  });
+
+  await deliverability.recordMailboxEvent(userId, mailbox.id, 'sent');
+
   const updatedRes = await pool.query(
     `UPDATE outbound_message_drafts
      SET status = 'sent',
          body = $3,
+         esp_message_id = $4,
+         mailbox_id = $5,
          sent_at = NOW(),
          updated_at = NOW()
      WHERE id = $1 AND user_id = $2
      RETURNING *`,
-    [draftId, userId, finalBody]
+    [draftId, userId, finalBody, messageId, mailbox.id]
   );
   const updatedDraft = updatedRes.rows[0];
 

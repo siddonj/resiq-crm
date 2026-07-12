@@ -115,6 +115,12 @@ const PROVIDER_TESTERS = {
     const openai = new OpenAI({ apiKey });
     await openai.models.list();
   },
+  sendgrid: async (overrides) => {
+    const apiKey = await resolveWithOverride('sendgrid_api_key', overrides);
+    if (!apiKey) throw new Error('API Key is required');
+    const { testConnection } = require('../services/espSendService');
+    await testConnection(apiKey);
+  },
 };
 
 /**

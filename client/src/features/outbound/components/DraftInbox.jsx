@@ -113,7 +113,7 @@ export default function DraftInbox({
                       disabled={busyKey === `send-email-${draft.id}`}
                       className="text-xs border border-blue-200 text-blue-700 rounded px-2 py-1 hover:bg-blue-50 disabled:opacity-60"
                     >
-                      Mark Sent
+                      Send
                     </button>
                   )}
                   {draft.channel === 'linkedin' && draft.status === 'approved' && draft.linkedinTask?.status !== 'completed' && (

@@ -62,6 +62,7 @@ const { initEmailSyncWorker } = require('./workers/emailSyncWorker');
 const { workflowQueue, initWorkflowQueueWorker } = require('./workers/workflowQueueWorker');
 const { agentQueue, initAgentWorker } = require('./workers/agentWorker');
 const { initSequenceWorker } = require('./workers/sequenceWorker');
+const { initOutboundSequenceWorker } = require('./workers/outboundSequenceWorker');
 const { MessageQueueService } = require('./services/messageQueue');
 const WorkflowEngine = require('./services/workflowEngine');
 const trackRoutes = require('./routes/track');
@@ -95,6 +96,10 @@ app.use(
     credentials: true,
   })
 );
+// ESP event webhook needs the raw request body for signature verification,
+// so it mounts before the global JSON parser.
+app.use('/api/webhooks/sendgrid', require('./routes/espWebhooks'));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -485,6 +490,14 @@ server.listen(PORT, async () => {
     logger.info('Sequence worker initialized');
   } catch (err) {
     logger.warn({ err }, 'Sequence worker init failed');
+  }
+
+  // Initialize outbound (lead-based) sequence send worker
+  try {
+    initOutboundSequenceWorker();
+    logger.info('Outbound sequence worker initialized');
+  } catch (err) {
+    logger.warn({ err }, 'Outbound sequence worker init failed');
   }
 
   // Initialize enrichment worker (requires Redis)
