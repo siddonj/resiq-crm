@@ -3,6 +3,7 @@ const { db, sql, ownershipWhere, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
 const { sendTicketAssignedNotification, sendTicketReplyNotification } = require('../services/clientNotifications');
+const { getOpenAiClient } = require('../services/openaiClient');
 
 const router = express.Router();
 
@@ -490,10 +491,10 @@ ${contextPieces.join('\n')}
 DRAFT REPLY:`;
 
     // Call OpenAI
-    const OpenAI = require('openai');
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+    const openai = await getOpenAiClient();
+    if (!openai) {
+      return res.status(503).json({ error: 'AI is not configured. Set OPENAI_API_KEY on the server to enable this feature.' });
+    }
 
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',

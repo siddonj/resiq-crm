@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const mammoth = require('mammoth');
 const { randomUUID } = require('crypto');
-const OpenAI = require('openai');
+const { getOpenAiClient, isOpenAiConfigured } = require('../services/openaiClient');
 const { db, sql, orgWhere, orgUserWhere } = require('../db');
 const auth = require('../middleware/auth');
 const { logAction } = require('../services/auditLogger');
@@ -43,7 +43,7 @@ router.post('/parse-doc', auth, (req, res) => {
 
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    if (!process.env.OPENAI_API_KEY?.trim()) {
+    if (!(await isOpenAiConfigured())) {
       return res.status(503).json({ error: 'AI is not configured. Set OPENAI_API_KEY on the server to enable this feature.' });
     }
 
@@ -64,7 +64,7 @@ router.post('/parse-doc', auth, (req, res) => {
       // Truncate to first 12,000 characters to stay within token limits
       const truncated = rawText.slice(0, 12000);
 
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const openai = await getOpenAiClient();
 
       const systemPrompt = `You are an expert at reading proposal documents and extracting structured data.
 Given the raw text of a proposal document, extract the following and respond ONLY with valid JSON — no markdown, no explanation:

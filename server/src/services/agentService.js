@@ -1,19 +1,11 @@
-const OpenAI = require('openai');
-require('dotenv').config();
-
-function getOpenAIClient() {
-  const apiKey = process.env.OPENAI_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY is not set. AI prospecting is unavailable.');
-  }
-
-  return new OpenAI({ apiKey });
-}
+const { getOpenAiClient } = require('./openaiClient');
 
 async function generateProspects(prompt) {
   try {
-    const openai = getOpenAIClient();
+    const openai = await getOpenAiClient();
+    if (!openai) {
+      throw new Error('OPENAI_API_KEY is not set. AI prospecting is unavailable.');
+    }
 
     // Step 1: Search the web for real companies matching the criteria
     const searchResponse = await openai.responses.create({

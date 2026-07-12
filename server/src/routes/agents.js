@@ -2,12 +2,9 @@ const express = require('express');
 const auth = require('../middleware/auth');
 const { generateProspects } = require('../services/agentService');
 const { importProspects } = require('../services/agentProspectService');
+const { getOpenAiClient, isOpenAiConfigured } = require('../services/openaiClient');
 
 const router = express.Router();
-
-function isOpenAIConfigured() {
-  return Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim());
-}
 
 function aiConfigMissingResponse(res) {
   return res.status(503).json({
@@ -22,7 +19,7 @@ router.post('/prospect', auth, async (req, res) => {
     return res.status(400).json({ error: 'Prompt is required' });
   }
 
-  if (!isOpenAIConfigured()) {
+  if (!(await isOpenAiConfigured())) {
     return aiConfigMissingResponse(res);
   }
 
@@ -67,13 +64,12 @@ router.post('/form-suggestions', auth, async (req, res) => {
   const { title } = req.body;
   if (!title) return res.status(400).json({ error: 'Title is required' });
 
-  if (!isOpenAIConfigured()) {
+  if (!(await isOpenAiConfigured())) {
     return aiConfigMissingResponse(res);
   }
 
   try {
-    const OpenAI = require('openai');
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = await getOpenAiClient();
 
     const prompt = `I am creating a lead capture form for my CRM. The internal name/goal for the form is: "${title}".
 Give me 3 Lead Magnet ideas to offer in exchange for contact info, a punchy Landing Page Headline, Subheadline, and a Call-To-Action (CTA) button text.
@@ -108,13 +104,12 @@ router.post('/advice', auth, async (req, res) => {
   const { tool, contextData, goal } = req.body;
   if (!tool) return res.status(400).json({ error: 'Tool name is required' });
 
-  if (!isOpenAIConfigured()) {
+  if (!(await isOpenAiConfigured())) {
     return aiConfigMissingResponse(res);
   }
 
   try {
-    const OpenAI = require('openai');
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const openai = await getOpenAiClient();
 
     const prompt = `You are the built-in AI Copilot for ResiQ CRM. 
 The user is currently using the "${tool}" tool.
