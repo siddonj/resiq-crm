@@ -1,21 +1,27 @@
 const nodemailer = require('nodemailer')
 const pool = require('../models/db')
 const trackingService = require('./trackingService')
+const integrationSettings = require('./integrationSettings')
 
 /**
- * Initialize email transporter
- * Uses SMTP or Gmail credentials from environment
+ * Build a fresh email transporter, resolving SMTP credentials from the DB
+ * (falls back to env vars), or Gmail app-password auth as a last resort.
  */
-function getTransporter() {
-  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+async function getMailTransporter() {
+  const [host, user, pass, port, secure] = await Promise.all([
+    integrationSettings.getSetting('smtp_host'),
+    integrationSettings.getSetting('smtp_user'),
+    integrationSettings.getSetting('smtp_pass'),
+    integrationSettings.getSetting('smtp_port'),
+    integrationSettings.getSetting('smtp_secure'),
+  ])
+
+  if (host && user && pass) {
     return nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: process.env.SMTP_PORT || 587,
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
+      host,
+      port: port || 587,
+      secure: !!secure,
+      auth: { user, pass },
     })
   }
 
@@ -28,8 +34,6 @@ function getTransporter() {
     },
   })
 }
-
-const transporter = getTransporter()
 
 /**
  * Send client invitation email
@@ -92,7 +96,7 @@ async function sendClientInvitationEmail(email, name, invitationToken) {
       </html>
     `
 
-    await transporter.sendMail({
+    await (await getMailTransporter()).sendMail({
       html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `You're invited to access your project on ResiQ`),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: email,
@@ -163,7 +167,7 @@ async function sendProposalSentEmail(clientEmail, clientName, proposalTitle, use
       </html>
     `
 
-    await transporter.sendMail({
+    await (await getMailTransporter()).sendMail({
       html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `New proposal: ${proposalTitle}`),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: clientEmail,
@@ -247,7 +251,7 @@ async function sendInvoiceSentEmail(clientEmail, clientName, invoiceNumber, amou
       </html>
     `
 
-    await transporter.sendMail({
+    await (await getMailTransporter()).sendMail({
       html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `Invoice #${invoiceNumber} - ${amount.toFixed(2)} due by ${dueDateStr}`),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: clientEmail,
@@ -324,7 +328,7 @@ async function sendProposalSignedConfirmation(employeeEmail, clientName, proposa
       </html>
     `
 
-    await transporter.sendMail({
+    await (await getMailTransporter()).sendMail({
       html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `✓ Proposal signed by ${clientName}: ${proposalTitle}`),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: employeeEmail,
@@ -400,7 +404,7 @@ async function sendInvoicePaidConfirmation(employeeEmail, clientName, invoiceNum
       </html>
     `
 
-    await transporter.sendMail({
+    await (await getMailTransporter()).sendMail({
       html: trackingService.injectTrackingIntoHtml(htmlContent, typeof userId !== "undefined" ? userId : null, typeof contactId !== "undefined" ? contactId : null, `✓ Invoice #${invoiceNumber} paid by ${clientName} ($${amount.toFixed(2)})`),
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: employeeEmail,
@@ -468,7 +472,7 @@ async function sendTicketAssignedNotification(employeeEmail, employeeName, clien
       </html>
     `
 
-    await transporter.sendMail({
+    await (await getMailTransporter()).sendMail({
       html: htmlContent,
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: employeeEmail,
@@ -534,7 +538,7 @@ async function sendTicketReplyNotification(employeeEmail, employeeName, clientNa
       </html>
     `
 
-    await transporter.sendMail({
+    await (await getMailTransporter()).sendMail({
       html: htmlContent,
       from: process.env.SMTP_FROM || process.env.SMTP_USER || process.env.GMAIL_USER,
       to: employeeEmail,
@@ -558,4 +562,5 @@ module.exports = {
   sendInvoicePaidConfirmation,
   sendTicketAssignedNotification,
   sendTicketReplyNotification,
+  getMailTransporter,
 }
