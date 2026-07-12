@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import GmailConnect from '../components/GmailConnect'
+import IntegrationCredentials from '../components/IntegrationCredentials'
 import AutomationRules from '../components/AutomationRules'
 import { useAuth } from '../context/AuthContext'
 import { ALL_ROLES as ROLES, ROLE_LABELS } from '../constants/roles'
@@ -289,7 +290,15 @@ export default function Settings() {
           </div>
         )}
 
-        {activeTab === 'integrations' && <GmailConnect />}
+        {activeTab === 'integrations' && (
+          <div className="space-y-8">
+            <GmailConnect />
+            <div>
+              <h3 className="font-syne text-lg font-semibold text-navy mb-4">API Keys &amp; Integrations</h3>
+              <IntegrationCredentials />
+            </div>
+          </div>
+        )}
 
         {activeTab === 'system' && (
           <div className="bg-white rounded-xl shadow-sm p-6">
