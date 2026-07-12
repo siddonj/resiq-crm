@@ -1,4 +1,6 @@
 // server/src/tests/isolation/sms.isolation.test.js
+process.env.ENCRYPTION_KEY = 'a'.repeat(32);
+
 const express = require('express');
 const request = require('supertest');
 const { makeOrg, makeUser, makeSuperAdmin, buildIsolationApp } = require('../helpers/orgTestHelpers');

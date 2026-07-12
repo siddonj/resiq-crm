@@ -7,22 +7,26 @@ const twilio = require('twilio');
 const libphonenumber = require('libphonenumber-js');
 const SMS = require('../models/SMS');
 const pool = require('../models/db');
+const integrationSettings = require('./integrationSettings');
 
-// Twilio client initialization (optional - server continues without it)
-let twilioClient = null;
-
-try {
-  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
-    twilioClient = twilio(
-      process.env.TWILIO_ACCOUNT_SID,
-      process.env.TWILIO_AUTH_TOKEN
-    );
+async function buildTwilioClient() {
+  const [accountSid, authToken] = await Promise.all([
+    integrationSettings.getSetting('twilio_account_sid'),
+    integrationSettings.getSetting('twilio_auth_token'),
+  ]);
+  if (!accountSid || !authToken) return null;
+  try {
+    return twilio(accountSid, authToken);
+  } catch (error) {
+    console.warn('⚠️  Twilio not configured - SMS features will be unavailable');
+    return null;
   }
-} catch (error) {
-  console.warn('⚠️  Twilio not configured - SMS features will be unavailable');
 }
 
-const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || '+1-555-RESIQ-1';
+async function getTwilioPhoneNumber() {
+  return (await integrationSettings.getSetting('twilio_phone_number')) || '+1-555-RESIQ-1';
+}
+
 const RATE_LIMIT_PER_HOUR = parseInt(process.env.SMS_RATE_LIMIT_PER_HOUR || '10', 10);
 
 class TwilioService {
@@ -30,8 +34,8 @@ class TwilioService {
    * Check if Twilio is configured
    * @returns {boolean}
    */
-  static isConfigured() {
-    return twilioClient !== null;
+  static async isConfigured() {
+    return (await buildTwilioClient()) !== null;
   }
 
   /**
@@ -67,7 +71,8 @@ class TwilioService {
   static async sendSMS(options) {
     const { to, content, messageId } = options;
 
-    if (!this.isConfigured()) {
+    const client = await buildTwilioClient();
+    if (!client) {
       return {
         success: false,
         error: 'Twilio not configured'
@@ -83,9 +88,10 @@ class TwilioService {
     }
 
     try {
-      const message = await twilioClient.messages.create({
+      const fromNumber = await getTwilioPhoneNumber();
+      const message = await client.messages.create({
         body: content,
-        from: TWILIO_PHONE_NUMBER,
+        from: fromNumber,
         to
       });
 
@@ -115,21 +121,15 @@ class TwilioService {
    * @param {Object} data - POST data
    * @returns {boolean} Signature is valid
    */
-  static verifyWebhookSignature(twilioSignature, requestUrl, data) {
-    if (!this.isConfigured()) {
+  static async verifyWebhookSignature(twilioSignature, requestUrl, data) {
+    const authToken = await integrationSettings.getSetting('twilio_auth_token');
+    if (!authToken) {
       console.warn('⚠️  Cannot verify Twilio webhook - Twilio not configured');
       return false;
     }
 
     try {
-      const validationResult = twilio.webhook.validateRequest(
-        process.env.TWILIO_AUTH_TOKEN,
-        twilioSignature,
-        requestUrl,
-        data
-      );
-
-      return validationResult;
+      return twilio.webhook.validateRequest(authToken, twilioSignature, requestUrl, data);
     } catch (error) {
       console.error('❌ Webhook signature verification error:', error.message);
       return false;
@@ -387,12 +387,13 @@ class TwilioService {
    * @returns {Object} Twilio message object
    */
   static async getMessageStatus(messageSid) {
-    if (!this.isConfigured()) {
+    const client = await buildTwilioClient();
+    if (!client) {
       return null;
     }
 
     try {
-      const message = await twilioClient.messages(messageSid).fetch();
+      const message = await client.messages(messageSid).fetch();
       return message;
     } catch (error) {
       console.error('❌ Error fetching message status:', error.message);

@@ -93,7 +93,7 @@ function initSequenceWorker() {
                throw new Error('Contact has no phone number');
             }
             
-            if (!twilioService.isConfigured()) {
+            if (!(await twilioService.isConfigured())) {
               console.log(`[Sequence] Twilio not configured. Mocking SMS to ${enrollment.contact_phone} | Body: ${body}`);
               success = true; // Still mark true so the sequence doesn't halt indefinitely in dev
             } else {

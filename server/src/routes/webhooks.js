@@ -20,7 +20,7 @@ const WebhookReceiverService = require('../services/webhookReceiver');
 router.post('/twilio', async (req, res) => {
   try {
     // Validate Twilio signature (security check)
-    const isValid = WebhookReceiverService.validateSignature(req);
+    const isValid = await WebhookReceiverService.validateSignature(req);
     
     if (!isValid) {
       console.warn('⚠️  Invalid Twilio webhook signature - rejecting');

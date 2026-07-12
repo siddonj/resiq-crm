@@ -129,7 +129,7 @@ class WebhookReceiverService {
    * @param {Object} req - Express request object
    * @returns {boolean} Signature is valid
    */
-  static validateSignature(req) {
+  static async validateSignature(req) {
     const twilioSignature = req.get('X-Twilio-Signature');
     const requestUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
     const data = req.body;
@@ -137,7 +137,7 @@ class WebhookReceiverService {
     if (!twilioSignature) {
       console.warn('⚠️  Missing Twilio signature header');
       // Allow if Twilio not configured (for development)
-      if (!TwilioService.isConfigured()) {
+      if (!(await TwilioService.isConfigured())) {
         console.warn('⚠️  Skipping signature verification - Twilio not configured');
         return true;
       }
@@ -196,7 +196,7 @@ class WebhookReceiverService {
    */
   static async getHealthStatus() {
     return {
-      twilioConfigured: TwilioService.isConfigured(),
+      twilioConfigured: await TwilioService.isConfigured(),
       timestamp: new Date().toISOString()
     };
   }
