@@ -50,7 +50,7 @@ function textToHtml(text) {
  * @returns {Promise<{messageId: string|null}>}
  */
 async function sendEmail({ userId, mailbox = null, to, subject, html = null, text = null, fromName = null, metadata = {} }) {
-  const apiKey = await integrationSettings.getSetting('sendgrid_api_key');
+  const apiKey = String((await integrationSettings.getSetting('sendgrid_api_key')) || '').trim();
   if (!apiKey) {
     const err = new Error('SendGrid is not configured. Add the API key in Integration Settings.');
     err.statusCode = 503;
@@ -117,13 +117,40 @@ async function sendEmail({ userId, mailbox = null, to, subject, html = null, tex
  * Used by the integration-settings connection tester.
  */
 async function testConnection(apiKey) {
-  const res = await axios.get('https://api.sendgrid.com/v3/scopes', {
-    headers: { Authorization: `Bearer ${apiKey}` },
-    timeout: 10000,
-  });
-  if (!Array.isArray(res.data?.scopes)) throw new Error('Unexpected response from SendGrid');
-  if (!res.data.scopes.includes('mail.send')) {
-    throw new Error('API key is valid but lacks the mail.send scope.');
+  const key = String(apiKey || '').trim();
+  if (!key.startsWith('SG.')) {
+    throw new Error('That does not look like a SendGrid API key — keys start with "SG.". Make sure you copied the full key (shown only once at creation), not the Key ID.');
+  }
+  try {
+    const res = await axios.get('https://api.sendgrid.com/v3/scopes', {
+      headers: { Authorization: `Bearer ${key}` },
+      timeout: 10000,
+    });
+    if (Array.isArray(res.data?.scopes) && !res.data.scopes.includes('mail.send')) {
+      throw new Error('API key is valid but lacks the Mail Send permission.');
+    }
+  } catch (err) {
+    const status = err.response?.status;
+    if (status === 401) {
+      throw new Error('SendGrid rejected the key (401). Copy the full key again — it is shown only once when created — and check for stray spaces.');
+    }
+    if (status === 403) {
+      // Restricted keys can't read /v3/scopes; verify sendability instead via
+      // a sandbox-mode send (validated but never delivered).
+      await axios.post(
+        SENDGRID_SEND_URL,
+        {
+          personalizations: [{ to: [{ email: 'test@example.com' }] }],
+          from: { email: 'test@example.com' },
+          subject: 'connection test',
+          content: [{ type: 'text/plain', value: 'test' }],
+          mail_settings: { sandbox_mode: { enable: true } },
+        },
+        { headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, timeout: 10000 }
+      );
+      return;
+    }
+    throw err;
   }
 }
 
